@@ -1,0 +1,21 @@
+# ============================================================
+# Vertex Football Scraper 2 - Production Dependencies
+# ============================================================
+# Networking (async)
+aiohttp>=3.9.0,<4.0.0
+
+# HTML Parsing
+beautifulsoup4>=4.12.0,<5.0.0
+lxml>=5.0.0              # fast parser backend for BS4
+
+# Data Validation
+pydantic>=2.5.0,<3.0.0
+
+# Retry / Resilience
+tenacity>=8.2.0,<9.0.0
+
+# Data Processing & Export
+pandas>=2.1.0,<3.0.0
+
+# Logging helpers (stdlib is enough but colorlog is nice)
+colorlog>=6.8.0,<7.0.0
