@@ -105,6 +105,9 @@ def _upsert(
 
 # ────────────────────────────────────────────────────────────
 # Individual table loaders
+# LOAD ORDER: phải load parent tables TRƯỚC child tables
+#   match_stats  → parent cho shots, player_match_stats
+#   standings    → parent cho squad_rosters, squad_stats, player_season_stats
 # ────────────────────────────────────────────────────────────
 
 def load_shots(conn, league_id: str = "EPL") -> int:
@@ -185,17 +188,104 @@ def load_player_season_stats(conn, league_id: str = "EPL") -> int:
 
 
 # ────────────────────────────────────────────────────────────
+# Cross-reference builder: Understat player_id ↔ FBref player_id
+# ────────────────────────────────────────────────────────────
+
+def rebuild_crossref(conn, league_id: str = "EPL") -> int:
+    """
+    Build bảng player_crossref bằng cách match tên cầu thủ giữa
+    Understat (shots.player) và FBref (player_season_stats.player_name).
+
+    Thuật toán:
+      1. Lấy distinct (player_id, player) từ shots  → normalize tên
+      2. Lấy (player_id, player_name) từ player_season_stats → normalize tên
+      3. INNER JOIN trên tên đã normalize (lower + strip)
+      4. Upsert vào player_crossref với matched_by = 'name_exact'
+
+    Trả về số rows đã upsert.
+    """
+    # Bước 1: Distinct Understat players (BIGINT id, text name)
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT DISTINCT player_id, lower(trim(player)) AS norm_name
+            FROM shots
+            WHERE league_id = %s AND player_id IS NOT NULL AND player IS NOT NULL
+            """,
+            (league_id,),
+        )
+        understat_rows = cur.fetchall()  # [(player_id, norm_name), ...]
+
+    if not understat_rows:
+        logger.warning("  crossref: shots bảng rỗng hoặc không có data cho league %s", league_id)
+        return 0
+
+    # Bước 2: FBref players (TEXT id, text name)
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT DISTINCT player_id, lower(trim(player_name)) AS norm_name
+            FROM player_season_stats
+            WHERE league_id = %s AND player_id IS NOT NULL AND player_name IS NOT NULL
+            """,
+            (league_id,),
+        )
+        fbref_rows = cur.fetchall()  # [(player_id, norm_name), ...]
+
+    if not fbref_rows:
+        logger.warning("  crossref: player_season_stats bảng rỗng hoặc không có data cho league %s", league_id)
+        return 0
+
+    # Bước 3: In-memory name JOIN
+    fbref_by_name: dict[str, str] = {norm: pid for pid, norm in fbref_rows}
+    matched: list[tuple] = []
+    for us_id, norm_name in understat_rows:
+        fb_id = fbref_by_name.get(norm_name)
+        if fb_id:
+            matched.append((us_id, fb_id, norm_name, league_id, "name_exact"))
+
+    if not matched:
+        logger.warning("  crossref: không match được cầu thủ nào (tên không khớp)")
+        return 0
+
+    # Bước 4: Upsert vào player_crossref
+    sql = """
+        INSERT INTO player_crossref
+            (understat_player_id, fbref_player_id, canonical_name, league_id, matched_by)
+        VALUES (%s, %s, %s, %s, %s)
+        ON CONFLICT (understat_player_id, fbref_player_id, league_id)
+        DO UPDATE SET
+            canonical_name = EXCLUDED.canonical_name,
+            matched_by     = EXCLUDED.matched_by,
+            loaded_at      = NOW()
+    """
+    with conn.cursor() as cur:
+        psycopg2.extras.execute_batch(cur, sql, matched, page_size=500)
+    conn.commit()
+
+    logger.info("  crossref: %d players matched (Understat→FBref) ← name_exact", len(matched))
+    return len(matched)
+
+
+# ────────────────────────────────────────────────────────────
 # Load all tables
 # ────────────────────────────────────────────────────────────
 
+# QUAN TRỌNG: thứ tự dict này = thứ tự load.
+# Parent tables PHẢI đứng trước child tables để FK không bị lỗi.
 LOADERS: dict[str, callable] = {
-    "shots": load_shots,
-    "player_match_stats": load_player_match_stats,
-    "match_stats": load_match_stats,
-    "standings": load_standings,
-    "squad_rosters": load_squad_rosters,
-    "squad_stats": load_squad_stats,
-    "player_season_stats": load_player_season_stats,
+    # ── Nhóm A: Parent tables ─────────────────────────────
+    "match_stats":          load_match_stats,          # parent: shots, player_match_stats
+    "standings":            load_standings,             # parent: squad_*, player_season_stats
+    # ── Nhóm B: Child tables (Understat) ─────────────────
+    "shots":                load_shots,
+    "player_match_stats":   load_player_match_stats,
+    # ── Nhóm C: Child tables (FBref) ─────────────────────
+    "squad_rosters":        load_squad_rosters,
+    "squad_stats":          load_squad_stats,
+    "player_season_stats":  load_player_season_stats,
+    # ── Nhóm D: Cross-source mapping (build sau cùng) ─────
+    "crossref":             rebuild_crossref,
 }
 
 
@@ -245,7 +335,7 @@ def cli() -> None:
     parser = argparse.ArgumentParser(description="Load CSVs into PostgreSQL")
     parser.add_argument("--league", default="EPL")
     parser.add_argument("--table", nargs="+", choices=list(LOADERS.keys()),
-                        help="Chỉ load bảng cụ thể (mặc định: tất cả)")
+                        help="Chỉ load bảng cụ thể (mặc định: tất cả). Thứ tự: match_stats → standings → shots → ...")
     args = parser.parse_args()
 
     load_all(league_id=args.league.upper(), tables=args.table)
