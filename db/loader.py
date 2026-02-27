@@ -43,10 +43,12 @@ logging.basicConfig(
 
 def _csv_path(league_id: str, suffix: str) -> Path:
     prefix = league_id.lower()
-    # Try new-style output subdir first, then flat output/
+    # Try source-specific subdirs first, then flat output/
     candidates = [
         ROOT / "output" / "understat" / prefix / f"dataset_{prefix}_{suffix}.csv",
         ROOT / "output" / "fbref" / prefix / f"dataset_{prefix}_{suffix}.csv",
+        ROOT / "output" / "sofascore" / prefix / f"dataset_{prefix}_{suffix}.csv",
+        ROOT / "output" / "transfermarkt" / prefix / f"dataset_{prefix}_{suffix}.csv",
         ROOT / "output" / f"dataset_{prefix}_{suffix}.csv",
     ]
     for p in candidates:
@@ -188,6 +190,97 @@ def load_player_season_stats(conn, league_id: str = "EPL") -> int:
 
 
 # ────────────────────────────────────────────────────────────
+# FBref — fixtures, gk_stats
+# ────────────────────────────────────────────────────────────
+
+def load_fixtures(conn, league_id: str = "EPL") -> int:
+    path = _csv_path(league_id, "fixtures")
+    if not path.exists():
+        logger.warning("  File không tồn tại: %s", path)
+        return 0
+    df = pd.read_csv(path)
+    # Bỏ fixtures chưa có match_id (trận chưa diễn ra)
+    df = df.dropna(subset=["match_id"])
+    count = _upsert(conn, "fixtures", df, ["match_id", "league_id"], league_id=league_id)
+    logger.info("  fixtures: %d rows upserted ← %s", count, path.name)
+    return count
+
+
+def load_gk_stats(conn, league_id: str = "EPL") -> int:
+    path = _csv_path(league_id, "gk_stats")
+    if not path.exists():
+        logger.warning("  File không tồn tại: %s", path)
+        return 0
+    df = pd.read_csv(path)
+    count = _upsert(conn, "gk_stats", df, ["player_id", "team_id", "league_id"], league_id=league_id)
+    logger.info("  gk_stats: %d rows upserted ← %s", count, path.name)
+    return count
+
+
+# ────────────────────────────────────────────────────────────
+# SofaScore — ss_events, player_avg_positions, heatmaps
+# ────────────────────────────────────────────────────────────
+
+def load_ss_events(conn, league_id: str = "EPL") -> int:
+    path = _csv_path(league_id, "ss_events")
+    if not path.exists():
+        logger.warning("  File không tồn tại: %s", path)
+        return 0
+    df = pd.read_csv(path)
+    count = _upsert(conn, "ss_events", df, ["event_id", "league_id"], league_id=league_id)
+    logger.info("  ss_events: %d rows upserted ← %s", count, path.name)
+    return count
+
+
+def load_player_avg_positions(conn, league_id: str = "EPL") -> int:
+    path = _csv_path(league_id, "player_avg_positions")
+    if not path.exists():
+        logger.warning("  File không tồn tại: %s", path)
+        return 0
+    df = pd.read_csv(path)
+    count = _upsert(conn, "player_avg_positions", df, ["event_id", "player_id", "league_id"], league_id=league_id)
+    logger.info("  player_avg_positions: %d rows upserted ← %s", count, path.name)
+    return count
+
+
+def load_heatmaps(conn, league_id: str = "EPL") -> int:
+    path = _csv_path(league_id, "heatmaps")
+    if not path.exists():
+        logger.warning("  File không tồn tại: %s", path)
+        return 0
+    df = pd.read_csv(path)
+    count = _upsert(conn, "heatmaps", df, ["event_id", "player_id", "league_id"], league_id=league_id)
+    logger.info("  heatmaps: %d rows upserted ← %s", count, path.name)
+    return count
+
+
+# ────────────────────────────────────────────────────────────
+# Transfermarkt — team_metadata, market_values
+# ────────────────────────────────────────────────────────────
+
+def load_team_metadata(conn, league_id: str = "EPL") -> int:
+    path = _csv_path(league_id, "team_metadata")
+    if not path.exists():
+        logger.warning("  File không tồn tại: %s", path)
+        return 0
+    df = pd.read_csv(path)
+    count = _upsert(conn, "team_metadata", df, ["team_id", "league_id"], league_id=league_id)
+    logger.info("  team_metadata: %d rows upserted ← %s", count, path.name)
+    return count
+
+
+def load_market_values(conn, league_id: str = "EPL") -> int:
+    path = _csv_path(league_id, "market_values")
+    if not path.exists():
+        logger.warning("  File không tồn tại: %s", path)
+        return 0
+    df = pd.read_csv(path)
+    count = _upsert(conn, "market_values", df, ["player_id", "team_id", "league_id"], league_id=league_id)
+    logger.info("  market_values: %d rows upserted ← %s", count, path.name)
+    return count
+
+
+# ────────────────────────────────────────────────────────────
 # Cross-reference builder: Understat player_id ↔ FBref player_id
 # ────────────────────────────────────────────────────────────
 
@@ -275,17 +368,26 @@ def rebuild_crossref(conn, league_id: str = "EPL") -> int:
 # Parent tables PHẢI đứng trước child tables để FK không bị lỗi.
 LOADERS: dict[str, callable] = {
     # ── Nhóm A: Parent tables ─────────────────────────────
-    "match_stats":          load_match_stats,          # parent: shots, player_match_stats
-    "standings":            load_standings,             # parent: squad_*, player_season_stats
+    "match_stats":           load_match_stats,           # parent: shots, player_match_stats
+    "standings":             load_standings,              # parent: squad_*, player_season_stats
     # ── Nhóm B: Child tables (Understat) ─────────────────
-    "shots":                load_shots,
-    "player_match_stats":   load_player_match_stats,
+    "shots":                 load_shots,
+    "player_match_stats":    load_player_match_stats,
     # ── Nhóm C: Child tables (FBref) ─────────────────────
-    "squad_rosters":        load_squad_rosters,
-    "squad_stats":          load_squad_stats,
-    "player_season_stats":  load_player_season_stats,
-    # ── Nhóm D: Cross-source mapping (build sau cùng) ─────
-    "crossref":             rebuild_crossref,
+    "squad_rosters":         load_squad_rosters,
+    "squad_stats":           load_squad_stats,
+    "player_season_stats":   load_player_season_stats,
+    "fixtures":              load_fixtures,
+    "gk_stats":              load_gk_stats,
+    # ── Nhóm D: SofaScore ────────────────────────────────
+    "ss_events":             load_ss_events,
+    "player_avg_positions":  load_player_avg_positions,
+    "heatmaps":              load_heatmaps,
+    # ── Nhóm E: Transfermarkt ────────────────────────────
+    "team_metadata":         load_team_metadata,
+    "market_values":         load_market_values,
+    # ── Nhóm F: Cross-source mapping (build sau cùng) ────
+    "crossref":              rebuild_crossref,
 }
 
 

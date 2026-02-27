@@ -1,0 +1,381 @@
+﻿gameweek,date,start_time,dayofweek,home_team,home_xg,score,away_xg,away_team,attendance,venue,referee,match_report_url,home_team_id,away_team_id,match_id
+1,2025-08-15,20:00 (02:00),Fri,Liverpool,,4–2,,Bournemouth,"60,315",Anfield,Anthony Taylor,https://fbref.com/en/matches/a071faa8/Liverpool-Bournemouth-August-15-2025-Premier-League,822bd0ba,4ba7cbea,a071faa8
+1,2025-08-16,12:30 (18:30),Sat,Aston Villa,,0–0,,Newcastle United,"42,526",Villa Park,Craig Pawson,https://fbref.com/en/matches/bbdf4739/Aston-Villa-Newcastle-United-August-16-2025-Premier-League,8602292d,b2b47a98,bbdf4739
+1,2025-08-16,15:00 (21:00),Sat,Sunderland,,3–0,,West Ham United,"46,233",Stadium of Light,Robert Jones,https://fbref.com/en/matches/e1058522/Sunderland-West-Ham-United-August-16-2025-Premier-League,8ef52968,7c21e445,e1058522
+1,2025-08-16,15:00 (21:00),Sat,Brighton,,1–1,,Fulham,"31,478",The American Express Stadium,Samuel Barrott,https://fbref.com/en/matches/57c49bae/Brighton-and-Hove-Albion-Fulham-August-16-2025-Premier-League,d07537b9,fd962109,57c49bae
+1,2025-08-16,15:00 (21:00),Sat,Tottenham Hotspur,,3–0,,Burnley,"61,077",Tottenham Hotspur Stadium,Michael Oliver,https://fbref.com/en/matches/d41bb8b3/Tottenham-Hotspur-Burnley-August-16-2025-Premier-League,361ca564,943e8050,d41bb8b3
+1,2025-08-16,17:30 (23:30),Sat,Wolves,,0–4,,Manchester City,"31,456",Molineux Stadium,Jarred Gillett,https://fbref.com/en/matches/8613020d/Wolverhampton-Wanderers-Manchester-City-August-16-2025-Premier-League,8cec06e1,b8fd03ef,8613020d
+1,2025-08-17,14:00 (20:00),Sun,Chelsea,,0–0,,Crystal Palace,"39,678",Stamford Bridge,Darren England,https://fbref.com/en/matches/2185fc64/Chelsea-Crystal-Palace-August-17-2025-Premier-League,cff3d9bb,47c64c55,2185fc64
+1,2025-08-17,14:00 (20:00),Sun,Nottingham Forest,,3–1,,Brentford,"29,949",The City Ground,Peter Bankes,https://fbref.com/en/matches/855f8b5e/Nottingham-Forest-Brentford-August-17-2025-Premier-League,e4a775cb,cd051869,855f8b5e
+1,2025-08-17,16:30 (22:30),Sun,Manchester Utd,,0–1,,Arsenal,"73,475",Old Trafford,Simon Hooper,https://fbref.com/en/matches/643d26fd/Manchester-United-Arsenal-August-17-2025-Premier-League,19538871,18bb7c10,643d26fd
+1,2025-08-18,20:00 (02:00),Mon,Leeds United,,1–0,,Everton,"36,820",Elland Road,Chris Kavanagh,https://fbref.com/en/matches/0701e218/Leeds-United-Everton-August-18-2025-Premier-League,5bfb9659,d3fd31cc,0701e218
+2,2025-08-22,20:00 (02:00),Fri,West Ham United,,1–5,,Chelsea,"62,462",London Stadium,Michael Oliver,https://fbref.com/en/matches/57b35843/West-Ham-United-Chelsea-August-22-2025-Premier-League,7c21e445,cff3d9bb,57b35843
+2,2025-08-23,12:30 (18:30),Sat,Manchester City,,0–2,,Tottenham Hotspur,"51,785",Etihad Stadium,Peter Bankes,https://fbref.com/en/matches/f7e2c9c7/Manchester-City-Tottenham-Hotspur-August-23-2025-Premier-League,b8fd03ef,361ca564,f7e2c9c7
+2,2025-08-23,15:00 (21:00),Sat,Bournemouth,,1–0,,Wolves,"11,070",Vitality Stadium,Thomas Bramall,https://fbref.com/en/matches/a515fb3a/Bournemouth-Wolverhampton-Wanderers-August-23-2025-Premier-League,4ba7cbea,8cec06e1,a515fb3a
+2,2025-08-23,15:00 (21:00),Sat,Brentford,,1–0,,Aston Villa,"16,838",Gtech Community Stadium,Tony Harrington,https://fbref.com/en/matches/860c7af2/Brentford-Aston-Villa-August-23-2025-Premier-League,cd051869,8602292d,860c7af2
+2,2025-08-23,15:00 (21:00),Sat,Burnley,,2–0,,Sunderland,"21,285",Turf Moor,Michael Salisbury,https://fbref.com/en/matches/4e287736/Burnley-Sunderland-August-23-2025-Premier-League,943e8050,8ef52968,4e287736
+2,2025-08-23,17:30 (23:30),Sat,Arsenal,,5–0,,Leeds United,"60,110",Emirates Stadium,Jarred Gillett,https://fbref.com/en/matches/e8724659/Arsenal-Leeds-United-August-23-2025-Premier-League,18bb7c10,5bfb9659,e8724659
+2,2025-08-24,14:00 (20:00),Sun,Crystal Palace,,1–1,,Nottingham Forest,"24,876",Selhurst Park,Anthony Taylor,https://fbref.com/en/matches/a3984be1/Crystal-Palace-Nottingham-Forest-August-24-2025-Premier-League,47c64c55,e4a775cb,a3984be1
+2,2025-08-24,14:00 (20:00),Sun,Everton,,2–0,,Brighton,"51,759",Hill Dickinson Stadium,Stuart Attwell,https://fbref.com/en/matches/0bad74e2/Everton-Brighton-and-Hove-Albion-August-24-2025-Premier-League,d3fd31cc,d07537b9,0bad74e2
+2,2025-08-24,16:30 (22:30),Sun,Fulham,,1–1,,Manchester Utd,"27,512",Craven Cottage,Chris Kavanagh,https://fbref.com/en/matches/fc45a8b2/Fulham-Manchester-United-August-24-2025-Premier-League,fd962109,19538871,fc45a8b2
+2,2025-08-25,20:00 (02:00),Mon,Newcastle United,,2–3,,Liverpool,"52,230",St James' Park,Simon Hooper,https://fbref.com/en/matches/2c75d21a/Newcastle-United-Liverpool-August-25-2025-Premier-League,b2b47a98,822bd0ba,2c75d21a
+3,2025-08-30,12:30 (18:30),Sat,Chelsea,,2–0,,Fulham,"39,745",Stamford Bridge,Robert Jones,https://fbref.com/en/matches/2dbd7fbd/Chelsea-Fulham-August-30-2025-Premier-League,cff3d9bb,fd962109,2dbd7fbd
+3,2025-08-30,15:00 (21:00),Sat,Wolves,,2–3,,Everton,"30,271",Molineux Stadium,Michael Oliver,https://fbref.com/en/matches/3c399f5e/Wolverhampton-Wanderers-Everton-August-30-2025-Premier-League,8cec06e1,d3fd31cc,3c399f5e
+3,2025-08-30,15:00 (21:00),Sat,Manchester Utd,,3–2,,Burnley,"74,257",Old Trafford,Samuel Barrott,https://fbref.com/en/matches/0050df89/Manchester-United-Burnley-August-30-2025-Premier-League,19538871,943e8050,0050df89
+3,2025-08-30,15:00 (21:00),Sat,Sunderland,,2–1,,Brentford,"46,267",Stadium of Light,Anthony Taylor,https://fbref.com/en/matches/f03152d1/Sunderland-Brentford-August-30-2025-Premier-League,8ef52968,cd051869,f03152d1
+3,2025-08-30,15:00 (21:00),Sat,Tottenham Hotspur,,0–1,,Bournemouth,"61,250",Tottenham Hotspur Stadium,Simon Hooper,https://fbref.com/en/matches/0e30cf4b/Tottenham-Hotspur-Bournemouth-August-30-2025-Premier-League,361ca564,4ba7cbea,0e30cf4b
+3,2025-08-30,17:30 (23:30),Sat,Leeds United,,0–0,,Newcastle United,"36,727",Elland Road,Peter Bankes,https://fbref.com/en/matches/bc110e0b/Leeds-United-Newcastle-United-August-30-2025-Premier-League,5bfb9659,b2b47a98,bc110e0b
+3,2025-08-31,14:00 (20:00),Sun,Nottingham Forest,,0–3,,West Ham United,"30,215",The City Ground,Craig Pawson,https://fbref.com/en/matches/299beb27/Nottingham-Forest-West-Ham-United-August-31-2025-Premier-League,e4a775cb,7c21e445,299beb27
+3,2025-08-31,14:00 (20:00),Sun,Brighton,,2–1,,Manchester City,"31,485",The American Express Stadium,Darren England,https://fbref.com/en/matches/810d81e7/Brighton-and-Hove-Albion-Manchester-City-August-31-2025-Premier-League,d07537b9,b8fd03ef,810d81e7
+3,2025-08-31,16:30 (22:30),Sun,Liverpool,,1–0,,Arsenal,"60,455",Anfield,Chris Kavanagh,https://fbref.com/en/matches/b0005978/Liverpool-Arsenal-August-31-2025-Premier-League,822bd0ba,18bb7c10,b0005978
+3,2025-08-31,19:00 (01:00),Sun,Aston Villa,,0–3,,Crystal Palace,"41,036",Villa Park,Stuart Attwell,https://fbref.com/en/matches/cd51ed93/Aston-Villa-Crystal-Palace-August-31-2025-Premier-League,8602292d,47c64c55,cd51ed93
+4,2025-09-13,12:30 (18:30),Sat,Arsenal,,3–0,,Nottingham Forest,"60,167",Emirates Stadium,Darren England,https://fbref.com/en/matches/4fe3e679/Arsenal-Nottingham-Forest-September-13-2025-Premier-League,18bb7c10,e4a775cb,4fe3e679
+4,2025-09-13,15:00 (21:00),Sat,Newcastle United,,1–0,,Wolves,"52,145",St James' Park,Chris Kavanagh,https://fbref.com/en/matches/55fbbbe6/Newcastle-United-Wolverhampton-Wanderers-September-13-2025-Premier-League,b2b47a98,8cec06e1,55fbbbe6
+4,2025-09-13,15:00 (21:00),Sat,Fulham,,1–0,,Leeds United,"27,327",Craven Cottage,Craig Pawson,https://fbref.com/en/matches/ab8543fb/Fulham-Leeds-United-September-13-2025-Premier-League,fd962109,5bfb9659,ab8543fb
+4,2025-09-13,15:00 (21:00),Sat,Crystal Palace,,0–0,,Sunderland,"25,154",Selhurst Park,Thomas Bramall,https://fbref.com/en/matches/e3cade07/Crystal-Palace-Sunderland-September-13-2025-Premier-League,47c64c55,8ef52968,e3cade07
+4,2025-09-13,15:00 (21:00),Sat,Everton,,0–0,,Aston Villa,"52,114",Hill Dickinson Stadium,Simon Hooper,https://fbref.com/en/matches/a624dc89/Everton-Aston-Villa-September-13-2025-Premier-League,d3fd31cc,8602292d,a624dc89
+4,2025-09-13,15:00 (21:00),Sat,Bournemouth,,2–1,,Brighton,"11,167",Vitality Stadium,Peter Bankes,https://fbref.com/en/matches/8398bbef/Bournemouth-Brighton-and-Hove-Albion-September-13-2025-Premier-League,4ba7cbea,d07537b9,8398bbef
+4,2025-09-13,17:30 (23:30),Sat,West Ham United,,0–3,,Tottenham Hotspur,"62,459",London Stadium,Jarred Gillett,https://fbref.com/en/matches/86c7261a/West-Ham-United-Tottenham-Hotspur-September-13-2025-Premier-League,7c21e445,361ca564,86c7261a
+4,2025-09-13,20:00 (02:00),Sat,Brentford,,2–2,,Chelsea,"16,795",Gtech Community Stadium,Stuart Attwell,https://fbref.com/en/matches/d8104c65/Brentford-Chelsea-September-13-2025-Premier-League,cd051869,cff3d9bb,d8104c65
+4,2025-09-14,14:00 (20:00),Sun,Burnley,,0–1,,Liverpool,"21,678",Turf Moor,Michael Oliver,https://fbref.com/en/matches/fed27aaa/Burnley-Liverpool-September-14-2025-Premier-League,943e8050,822bd0ba,fed27aaa
+4,2025-09-14,16:30 (22:30),Sun,Manchester City,,3–0,,Manchester Utd,"52,534",Etihad Stadium,Anthony Taylor,https://fbref.com/en/matches/f2b1061a/Manchester-Derby-Manchester-City-Manchester-United-September-14-2025-Premier-League,b8fd03ef,19538871,f2b1061a
+5,2025-09-20,12:30 (18:30),Sat,Liverpool,,2–1,,Everton,"60,342",Anfield,Darren England,https://fbref.com/en/matches/5da72d0e/Merseyside-Derby-Liverpool-Everton-September-20-2025-Premier-League,822bd0ba,d3fd31cc,5da72d0e
+5,2025-09-20,15:00 (21:00),Sat,Wolves,,1–3,,Leeds United,"30,807",Molineux Stadium,Anthony Taylor,https://fbref.com/en/matches/45650a33/Wolverhampton-Wanderers-Leeds-United-September-20-2025-Premier-League,8cec06e1,5bfb9659,45650a33
+5,2025-09-20,15:00 (21:00),Sat,Brighton,,2–2,,Tottenham Hotspur,"31,488",The American Express Stadium,Chris Kavanagh,https://fbref.com/en/matches/fa03feeb/Brighton-and-Hove-Albion-Tottenham-Hotspur-September-20-2025-Premier-League,d07537b9,361ca564,fa03feeb
+5,2025-09-20,15:00 (21:00),Sat,Burnley,,1–1,,Nottingham Forest,"21,475",Turf Moor,Thomas Bramall,https://fbref.com/en/matches/e523c1cd/Burnley-Nottingham-Forest-September-20-2025-Premier-League,943e8050,e4a775cb,e523c1cd
+5,2025-09-20,15:00 (21:00),Sat,West Ham United,,1–2,,Crystal Palace,"62,455",London Stadium,Tony Harrington,https://fbref.com/en/matches/15b707b3/West-Ham-United-Crystal-Palace-September-20-2025-Premier-League,7c21e445,47c64c55,15b707b3
+5,2025-09-20,17:30 (23:30),Sat,Manchester Utd,,2–1,,Chelsea,"74,124",Old Trafford,Peter Bankes,https://fbref.com/en/matches/a562da13/Manchester-United-Chelsea-September-20-2025-Premier-League,19538871,cff3d9bb,a562da13
+5,2025-09-20,20:00 (02:00),Sat,Fulham,,3–1,,Brentford,"26,113",Craven Cottage,Michael Oliver,https://fbref.com/en/matches/295b388b/Fulham-Brentford-September-20-2025-Premier-League,fd962109,cd051869,295b388b
+5,2025-09-21,14:00 (20:00),Sun,Bournemouth,,0–0,,Newcastle United,"11,212",Vitality Stadium,Robert Jones,https://fbref.com/en/matches/f55b1b65/Bournemouth-Newcastle-United-September-21-2025-Premier-League,4ba7cbea,b2b47a98,f55b1b65
+5,2025-09-21,14:00 (20:00),Sun,Sunderland,,1–1,,Aston Villa,"46,261",Stadium of Light,Samuel Barrott,https://fbref.com/en/matches/4e615d10/Sunderland-Aston-Villa-September-21-2025-Premier-League,8ef52968,8602292d,4e615d10
+5,2025-09-21,16:30 (22:30),Sun,Arsenal,,1–1,,Manchester City,"60,161",Emirates Stadium,Stuart Attwell,https://fbref.com/en/matches/2045939c/Arsenal-Manchester-City-September-21-2025-Premier-League,18bb7c10,b8fd03ef,2045939c
+6,2025-09-27,12:30 (18:30),Sat,Brentford,,3–1,,Manchester Utd,"17,193",Gtech Community Stadium,Craig Pawson,https://fbref.com/en/matches/f96a49ea/Brentford-Manchester-United-September-27-2025-Premier-League,cd051869,19538871,f96a49ea
+6,2025-09-27,15:00 (21:00),Sat,Crystal Palace,,2–1,,Liverpool,"25,118",Selhurst Park,Chris Kavanagh,https://fbref.com/en/matches/8a5edb7f/Crystal-Palace-Liverpool-September-27-2025-Premier-League,47c64c55,822bd0ba,8a5edb7f
+6,2025-09-27,15:00 (21:00),Sat,Manchester City,,5–1,,Burnley,"52,427",Etihad Stadium,Robert Jones,https://fbref.com/en/matches/53db8cb5/Manchester-City-Burnley-September-27-2025-Premier-League,b8fd03ef,943e8050,53db8cb5
+6,2025-09-27,15:00 (21:00),Sat,Chelsea,,1–3,,Brighton,"39,597",Stamford Bridge,Simon Hooper,https://fbref.com/en/matches/b3a3df9a/Chelsea-Brighton-and-Hove-Albion-September-27-2025-Premier-League,cff3d9bb,d07537b9,b3a3df9a
+6,2025-09-27,15:00 (21:00),Sat,Leeds United,,2–2,,Bournemouth,"36,574",Elland Road,Michael Oliver,https://fbref.com/en/matches/d2fc69e6/Leeds-United-Bournemouth-September-27-2025-Premier-League,5bfb9659,4ba7cbea,d2fc69e6
+6,2025-09-27,17:30 (23:30),Sat,Nottingham Forest,,0–1,,Sunderland,"30,226",The City Ground,Tony Harrington,https://fbref.com/en/matches/78970349/Nottingham-Forest-Sunderland-September-27-2025-Premier-League,e4a775cb,8ef52968,78970349
+6,2025-09-27,20:00 (02:00),Sat,Tottenham Hotspur,,1–1,,Wolves,"60,537",Tottenham Hotspur Stadium,Michael Salisbury,https://fbref.com/en/matches/116cff7d/Tottenham-Hotspur-Wolverhampton-Wanderers-September-27-2025-Premier-League,361ca564,8cec06e1,116cff7d
+6,2025-09-28,14:00 (20:00),Sun,Aston Villa,,3–1,,Fulham,"40,350",Villa Park,Andy Madley,https://fbref.com/en/matches/7345f259/Aston-Villa-Fulham-September-28-2025-Premier-League,8602292d,fd962109,7345f259
+6,2025-09-28,16:30 (22:30),Sun,Newcastle United,,1–2,,Arsenal,"52,199",St James' Park,Jarred Gillett,https://fbref.com/en/matches/e851cb5c/Newcastle-United-Arsenal-September-28-2025-Premier-League,b2b47a98,18bb7c10,e851cb5c
+6,2025-09-29,20:00 (02:00),Mon,Everton,,1–1,,West Ham United,"51,890",Hill Dickinson Stadium,Samuel Barrott,https://fbref.com/en/matches/1163f46d/Everton-West-Ham-United-September-29-2025-Premier-League,d3fd31cc,7c21e445,1163f46d
+7,2025-10-03,20:00 (02:00),Fri,Bournemouth,,3–1,,Fulham,"11,165",Vitality Stadium,Simon Hooper,https://fbref.com/en/matches/200f4acc/Bournemouth-Fulham-October-3-2025-Premier-League,4ba7cbea,fd962109,200f4acc
+7,2025-10-04,12:30 (18:30),Sat,Leeds United,,1–2,,Tottenham Hotspur,"36,703",Elland Road,Thomas Bramall,https://fbref.com/en/matches/3e588df8/Leeds-United-Tottenham-Hotspur-October-4-2025-Premier-League,5bfb9659,361ca564,3e588df8
+7,2025-10-04,15:00 (21:00),Sat,Arsenal,,2–0,,West Ham United,"60,181",Emirates Stadium,John Brooks,https://fbref.com/en/matches/266bddc6/Arsenal-West-Ham-United-October-4-2025-Premier-League,18bb7c10,7c21e445,266bddc6
+7,2025-10-04,15:00 (21:00),Sat,Manchester Utd,,2–0,,Sunderland,"74,004",Old Trafford,Stuart Attwell,https://fbref.com/en/matches/e33ea33d/Manchester-United-Sunderland-October-4-2025-Premier-League,19538871,8ef52968,e33ea33d
+7,2025-10-04,17:30 (23:30),Sat,Chelsea,,2–1,,Liverpool,"39,538",Stamford Bridge,Anthony Taylor,https://fbref.com/en/matches/780d534e/Chelsea-Liverpool-October-4-2025-Premier-League,cff3d9bb,822bd0ba,780d534e
+7,2025-10-05,14:00 (20:00),Sun,Wolves,,1–1,,Brighton,"29,504",Molineux Stadium,Jarred Gillett,https://fbref.com/en/matches/1314f9fd/Wolverhampton-Wanderers-Brighton-and-Hove-Albion-October-5-2025-Premier-League,8cec06e1,d07537b9,1314f9fd
+7,2025-10-05,14:00 (20:00),Sun,Everton,,2–1,,Crystal Palace,"51,770",Hill Dickinson Stadium,Michael Salisbury,https://fbref.com/en/matches/88e53add/Everton-Crystal-Palace-October-5-2025-Premier-League,d3fd31cc,47c64c55,88e53add
+7,2025-10-05,14:00 (20:00),Sun,Aston Villa,,2–1,,Burnley,"40,308",Villa Park,Andrew Kitchen,https://fbref.com/en/matches/db870461/Aston-Villa-Burnley-October-5-2025-Premier-League,8602292d,943e8050,db870461
+7,2025-10-05,14:00 (20:00),Sun,Newcastle United,,2–0,,Nottingham Forest,"52,189",St James' Park,Peter Bankes,https://fbref.com/en/matches/e33f1657/Newcastle-United-Nottingham-Forest-October-5-2025-Premier-League,b2b47a98,e4a775cb,e33f1657
+7,2025-10-05,16:30 (22:30),Sun,Brentford,,0–1,,Manchester City,"17,028",Gtech Community Stadium,Darren England,https://fbref.com/en/matches/8c0ee359/Brentford-Manchester-City-October-5-2025-Premier-League,cd051869,b8fd03ef,8c0ee359
+8,2025-10-18,12:30 (18:30),Sat,Nottingham Forest,,0–3,,Chelsea,"30,495",The City Ground,Chris Kavanagh,https://fbref.com/en/matches/b3ac7e40/Nottingham-Forest-Chelsea-October-18-2025-Premier-League,e4a775cb,cff3d9bb,b3ac7e40
+8,2025-10-18,15:00 (21:00),Sat,Sunderland,,2–0,,Wolves,"46,578",Stadium of Light,Robert Jones,https://fbref.com/en/matches/fe212874/Sunderland-Wolverhampton-Wanderers-October-18-2025-Premier-League,8ef52968,8cec06e1,fe212874
+8,2025-10-18,15:00 (21:00),Sat,Burnley,,2–0,,Leeds United,"21,646",Turf Moor,Tim Robinson,https://fbref.com/en/matches/a31356f3/Burnley-Leeds-United-October-18-2025-Premier-League,943e8050,5bfb9659,a31356f3
+8,2025-10-18,15:00 (21:00),Sat,Brighton,,2–1,,Newcastle United,"31,620",The American Express Stadium,Craig Pawson,https://fbref.com/en/matches/7c25388b/Brighton-and-Hove-Albion-Newcastle-United-October-18-2025-Premier-League,d07537b9,b2b47a98,7c25388b
+8,2025-10-18,15:00 (21:00),Sat,Crystal Palace,,3–3,,Bournemouth,"25,125",Selhurst Park,Jarred Gillett,https://fbref.com/en/matches/7a0ab06b/Crystal-Palace-Bournemouth-October-18-2025-Premier-League,47c64c55,4ba7cbea,7a0ab06b
+8,2025-10-18,15:00 (21:00),Sat,Manchester City,,2–0,,Everton,"52,498",Etihad Stadium,Tony Harrington,https://fbref.com/en/matches/1340e41a/Manchester-City-Everton-October-18-2025-Premier-League,b8fd03ef,d3fd31cc,1340e41a
+8,2025-10-18,17:30 (23:30),Sat,Fulham,,0–1,,Arsenal,"27,736",Craven Cottage,Anthony Taylor,https://fbref.com/en/matches/94eefc1d/Fulham-Arsenal-October-18-2025-Premier-League,fd962109,18bb7c10,94eefc1d
+8,2025-10-19,14:00 (20:00),Sun,Tottenham Hotspur,,1–2,,Aston Villa,"61,291",Tottenham Hotspur Stadium,Simon Hooper,https://fbref.com/en/matches/810c0cb9/Tottenham-Hotspur-Aston-Villa-October-19-2025-Premier-League,361ca564,8602292d,810c0cb9
+8,2025-10-19,16:30 (22:30),Sun,Liverpool,,1–2,,Manchester Utd,"60,337",Anfield,Michael Oliver,https://fbref.com/en/matches/cbec79a5/North-West-Derby-Liverpool-Manchester-United-October-19-2025-Premier-League,822bd0ba,19538871,cbec79a5
+8,2025-10-20,20:00 (02:00),Mon,West Ham United,,0–2,,Brentford,"62,452",London Stadium,Andy Madley,https://fbref.com/en/matches/3322a47b/West-Ham-United-Brentford-October-20-2025-Premier-League,7c21e445,cd051869,3322a47b
+9,2025-10-24,20:00 (02:00),Fri,Leeds United,,2–1,,West Ham United,"36,788",Elland Road,Stuart Attwell,https://fbref.com/en/matches/236e3e4c/Leeds-United-West-Ham-United-October-24-2025-Premier-League,5bfb9659,7c21e445,236e3e4c
+9,2025-10-25,15:00 (21:00),Sat,Newcastle United,,2–1,,Fulham,"52,152",St James' Park,Peter Bankes,https://fbref.com/en/matches/0f6b6849/Newcastle-United-Fulham-October-25-2025-Premier-League,b2b47a98,fd962109,0f6b6849
+9,2025-10-25,15:00 (21:00),Sat,Chelsea,,1–2,,Sunderland,"39,489",Stamford Bridge,Andy Madley,https://fbref.com/en/matches/cfda878f/Chelsea-Sunderland-October-25-2025-Premier-League,cff3d9bb,8ef52968,cfda878f
+9,2025-10-25,17:30 (23:30),Sat,Manchester Utd,,4–2,,Brighton,"74,124",Old Trafford,Anthony Taylor,https://fbref.com/en/matches/a190da2c/Manchester-United-Brighton-and-Hove-Albion-October-25-2025-Premier-League,19538871,d07537b9,a190da2c
+9,2025-10-25,20:00 (02:00),Sat,Brentford,,3–2,,Liverpool,"17,214",Gtech Community Stadium,Simon Hooper,https://fbref.com/en/matches/26e5ca72/Brentford-Liverpool-October-25-2025-Premier-League,cd051869,822bd0ba,26e5ca72
+9,2025-10-26,14:00 (21:00),Sun,Arsenal,,1–0,,Crystal Palace,"60,103",Emirates Stadium,Thomas Bramall,https://fbref.com/en/matches/8e08b6c9/Arsenal-Crystal-Palace-October-26-2025-Premier-League,18bb7c10,47c64c55,8e08b6c9
+9,2025-10-26,14:00 (21:00),Sun,Aston Villa,,1–0,,Manchester City,"41,988",Villa Park,Michael Oliver,https://fbref.com/en/matches/2324c097/Aston-Villa-Manchester-City-October-26-2025-Premier-League,8602292d,b8fd03ef,2324c097
+9,2025-10-26,14:00 (21:00),Sun,Wolves,,2–3,,Burnley,"29,116",Molineux Stadium,Tony Harrington,https://fbref.com/en/matches/28244556/Wolverhampton-Wanderers-Burnley-October-26-2025-Premier-League,8cec06e1,943e8050,28244556
+9,2025-10-26,14:00 (21:00),Sun,Bournemouth,,2–0,,Nottingham Forest,"11,204",Vitality Stadium,Samuel Barrott,https://fbref.com/en/matches/0676a57a/Bournemouth-Nottingham-Forest-October-26-2025-Premier-League,4ba7cbea,e4a775cb,0676a57a
+9,2025-10-26,16:30 (23:30),Sun,Everton,,0–3,,Tottenham Hotspur,"51,781",Hill Dickinson Stadium,Craig Pawson,https://fbref.com/en/matches/4234aaa9/Everton-Tottenham-Hotspur-October-26-2025-Premier-League,d3fd31cc,361ca564,4234aaa9
+10,2025-11-01,15:00 (22:00),Sat,Crystal Palace,,2–0,,Brentford,"25,083",Selhurst Park,Peter Bankes,https://fbref.com/en/matches/96c4864b/Crystal-Palace-Brentford-November-1-2025-Premier-League,47c64c55,cd051869,96c4864b
+10,2025-11-01,15:00 (22:00),Sat,Nottingham Forest,,2–2,,Manchester Utd,"30,778",The City Ground,Darren England,https://fbref.com/en/matches/6f99be65/Nottingham-Forest-Manchester-United-November-1-2025-Premier-League,e4a775cb,19538871,6f99be65
+10,2025-11-01,15:00 (22:00),Sat,Fulham,,3–0,,Wolves,"26,413",Craven Cottage,John Brooks,https://fbref.com/en/matches/03f6bccd/Fulham-Wolverhampton-Wanderers-November-1-2025-Premier-League,fd962109,8cec06e1,03f6bccd
+10,2025-11-01,15:00 (22:00),Sat,Burnley,,0–2,,Arsenal,"21,538",Turf Moor,Chris Kavanagh,https://fbref.com/en/matches/2e2f2939/Burnley-Arsenal-November-1-2025-Premier-League,943e8050,18bb7c10,2e2f2939
+10,2025-11-01,15:00 (22:00),Sat,Brighton,,3–0,,Leeds United,"31,512",The American Express Stadium,Michael Oliver,https://fbref.com/en/matches/40e608f4/Brighton-and-Hove-Albion-Leeds-United-November-1-2025-Premier-League,d07537b9,5bfb9659,40e608f4
+10,2025-11-01,17:30 (00:30),Sat,Tottenham Hotspur,,0–1,,Chelsea,"61,202",Tottenham Hotspur Stadium,Jarred Gillett,https://fbref.com/en/matches/cb498e0b/Tottenham-Hotspur-Chelsea-November-1-2025-Premier-League,361ca564,cff3d9bb,cb498e0b
+10,2025-11-01,20:00 (03:00),Sat,Liverpool,,2–0,,Aston Villa,"60,407",Anfield,Stuart Attwell,https://fbref.com/en/matches/c15115cb/Liverpool-Aston-Villa-November-1-2025-Premier-League,822bd0ba,8602292d,c15115cb
+10,2025-11-02,14:00 (21:00),Sun,West Ham United,,3–1,,Newcastle United,"62,441",London Stadium,Robert Jones,https://fbref.com/en/matches/55587dfc/West-Ham-United-Newcastle-United-November-2-2025-Premier-League,7c21e445,b2b47a98,55587dfc
+10,2025-11-02,16:30 (23:30),Sun,Manchester City,,3–1,,Bournemouth,"52,387",Etihad Stadium,Anthony Taylor,https://fbref.com/en/matches/cc77588b/Manchester-City-Bournemouth-November-2-2025-Premier-League,b8fd03ef,4ba7cbea,cc77588b
+10,2025-11-03,20:00 (03:00),Mon,Sunderland,,1–1,,Everton,"41,476",Stadium of Light,Thomas Bramall,https://fbref.com/en/matches/bb37daa2/Sunderland-Everton-November-3-2025-Premier-League,8ef52968,d3fd31cc,bb37daa2
+11,2025-11-08,12:30 (19:30),Sat,Tottenham Hotspur,,2–2,,Manchester Utd,"61,210",Tottenham Hotspur Stadium,Samuel Barrott,https://fbref.com/en/matches/ad74e791/Tottenham-Hotspur-Manchester-United-November-8-2025-Premier-League,361ca564,19538871,ad74e791
+11,2025-11-08,15:00 (22:00),Sat,West Ham United,,3–2,,Burnley,"62,449",London Stadium,Michael Salisbury,https://fbref.com/en/matches/9a904d13/West-Ham-United-Burnley-November-8-2025-Premier-League,7c21e445,943e8050,9a904d13
+11,2025-11-08,15:00 (22:00),Sat,Everton,,2–0,,Fulham,"52,491",Hill Dickinson Stadium,Andy Madley,https://fbref.com/en/matches/0e46b968/Everton-Fulham-November-8-2025-Premier-League,d3fd31cc,fd962109,0e46b968
+11,2025-11-08,17:30 (00:30),Sat,Sunderland,,2–2,,Arsenal,"46,799",Stadium of Light,Craig Pawson,https://fbref.com/en/matches/34884979/Sunderland-Arsenal-November-8-2025-Premier-League,8ef52968,18bb7c10,34884979
+11,2025-11-08,20:00 (03:00),Sat,Chelsea,,3–0,,Wolves,"39,467",Stamford Bridge,Andrew Kitchen,https://fbref.com/en/matches/098d4b9c/Chelsea-Wolverhampton-Wanderers-November-8-2025-Premier-League,cff3d9bb,8cec06e1,098d4b9c
+11,2025-11-09,14:00 (21:00),Sun,Aston Villa,,4–0,,Bournemouth,"40,792",Villa Park,John Brooks,https://fbref.com/en/matches/b333094b/Aston-Villa-Bournemouth-November-9-2025-Premier-League,8602292d,4ba7cbea,b333094b
+11,2025-11-09,14:00 (21:00),Sun,Nottingham Forest,,3–1,,Leeds United,"30,708",The City Ground,Jarred Gillett,https://fbref.com/en/matches/c2217a56/Nottingham-Forest-Leeds-United-November-9-2025-Premier-League,e4a775cb,5bfb9659,c2217a56
+11,2025-11-09,14:00 (21:00),Sun,Crystal Palace,,0–0,,Brighton,"24,326",Selhurst Park,Tim Robinson,https://fbref.com/en/matches/d6740601/Crystal-Palace-Brighton-and-Hove-Albion-November-9-2025-Premier-League,47c64c55,d07537b9,d6740601
+11,2025-11-09,14:00 (21:00),Sun,Brentford,,3–1,,Newcastle United,"17,207",Gtech Community Stadium,Stuart Attwell,https://fbref.com/en/matches/7398b723/Brentford-Newcastle-United-November-9-2025-Premier-League,cd051869,b2b47a98,7398b723
+11,2025-11-09,16:30 (23:30),Sun,Manchester City,,3–0,,Liverpool,"52,432",Etihad Stadium,Chris Kavanagh,https://fbref.com/en/matches/a126a64c/Manchester-City-Liverpool-November-9-2025-Premier-League,b8fd03ef,822bd0ba,a126a64c
+12,2025-11-22,12:30 (19:30),Sat,Burnley,,0–2,,Chelsea,"21,499",Turf Moor,Peter Bankes,https://fbref.com/en/matches/43c673dd/Burnley-Chelsea-November-22-2025-Premier-League,943e8050,cff3d9bb,43c673dd
+12,2025-11-22,15:00 (22:00),Sat,Bournemouth,,2–2,,West Ham United,"11,216",Vitality Stadium,Thomas Bramall,https://fbref.com/en/matches/f5c9621e/Bournemouth-West-Ham-United-November-22-2025-Premier-League,4ba7cbea,7c21e445,f5c9621e
+12,2025-11-22,15:00 (22:00),Sat,Fulham,,1–0,,Sunderland,"27,560",Craven Cottage,Darren England,https://fbref.com/en/matches/5cd7ef12/Fulham-Sunderland-November-22-2025-Premier-League,fd962109,8ef52968,5cd7ef12
+12,2025-11-22,15:00 (22:00),Sat,Wolves,,0–2,,Crystal Palace,"29,976",Molineux Stadium,Anthony Taylor,https://fbref.com/en/matches/c90ed936/Wolverhampton-Wanderers-Crystal-Palace-November-22-2025-Premier-League,8cec06e1,47c64c55,c90ed936
+12,2025-11-22,15:00 (22:00),Sat,Liverpool,,0–3,,Nottingham Forest,"60,419",Anfield,Andy Madley,https://fbref.com/en/matches/2180fc9b/Liverpool-Nottingham-Forest-November-22-2025-Premier-League,822bd0ba,e4a775cb,2180fc9b
+12,2025-11-22,15:00 (22:00),Sat,Brighton,,2–1,,Brentford,"31,458",The American Express Stadium,Chris Kavanagh,https://fbref.com/en/matches/3ad15355/Brighton-and-Hove-Albion-Brentford-November-22-2025-Premier-League,d07537b9,cd051869,3ad15355
+12,2025-11-22,17:30 (00:30),Sat,Newcastle United,,2–1,,Manchester City,"52,181",St James' Park,Samuel Barrott,https://fbref.com/en/matches/efd005dc/Newcastle-United-Manchester-City-November-22-2025-Premier-League,b2b47a98,b8fd03ef,efd005dc
+12,2025-11-23,14:00 (21:00),Sun,Leeds United,,1–2,,Aston Villa,"36,819",Elland Road,Robert Jones,https://fbref.com/en/matches/53a69c4e/Leeds-United-Aston-Villa-November-23-2025-Premier-League,5bfb9659,8602292d,53a69c4e
+12,2025-11-23,16:30 (23:30),Sun,Arsenal,,4–1,,Tottenham Hotspur,"60,345",Emirates Stadium,Michael Oliver,https://fbref.com/en/matches/51a5792d/North-London-Derby-Arsenal-Tottenham-Hotspur-November-23-2025-Premier-League,18bb7c10,361ca564,51a5792d
+12,2025-11-24,20:00 (03:00),Mon,Manchester Utd,,0–1,,Everton,"74,158",Old Trafford,Tony Harrington,https://fbref.com/en/matches/69a9c9a3/Manchester-United-Everton-November-24-2025-Premier-League,19538871,d3fd31cc,69a9c9a3
+13,2025-11-29,15:00 (22:00),Sat,Sunderland,,3–2,,Bournemouth,"46,973",Stadium of Light,Tim Robinson,https://fbref.com/en/matches/e118da78/Sunderland-Bournemouth-November-29-2025-Premier-League,8ef52968,4ba7cbea,e118da78
+13,2025-11-29,15:00 (22:00),Sat,Brentford,,3–1,,Burnley,"17,176",Gtech Community Stadium,Samuel Barrott,https://fbref.com/en/matches/5615f800/Brentford-Burnley-November-29-2025-Premier-League,cd051869,943e8050,5615f800
+13,2025-11-29,15:00 (22:00),Sat,Manchester City,,3–2,,Leeds United,"52,483",Etihad Stadium,Peter Bankes,https://fbref.com/en/matches/bfa73051/Manchester-City-Leeds-United-November-29-2025-Premier-League,b8fd03ef,5bfb9659,bfa73051
+13,2025-11-29,17:30 (00:30),Sat,Everton,,1–4,,Newcastle United,"52,489",Hill Dickinson Stadium,Craig Pawson,https://fbref.com/en/matches/1e17ace9/Everton-Newcastle-United-November-29-2025-Premier-League,d3fd31cc,b2b47a98,1e17ace9
+13,2025-11-29,20:00 (03:00),Sat,Tottenham Hotspur,,1–2,,Fulham,"60,546",Tottenham Hotspur Stadium,Stuart Attwell,https://fbref.com/en/matches/34e802eb/Tottenham-Hotspur-Fulham-November-29-2025-Premier-League,361ca564,fd962109,34e802eb
+13,2025-11-30,12:00 (19:00),Sun,Crystal Palace,,1–2,,Manchester Utd,"25,189",Selhurst Park,Robert Jones,https://fbref.com/en/matches/6857b94e/Crystal-Palace-Manchester-United-November-30-2025-Premier-League,47c64c55,19538871,6857b94e
+13,2025-11-30,14:05 (21:05),Sun,Nottingham Forest,,0–2,,Brighton,"30,522",The City Ground,Michael Oliver,https://fbref.com/en/matches/2d580ed7/Nottingham-Forest-Brighton-and-Hove-Albion-November-30-2025-Premier-League,e4a775cb,d07537b9,2d580ed7
+13,2025-11-30,14:05 (21:05),Sun,Aston Villa,,1–0,,Wolves,"42,139",Villa Park,Chris Kavanagh,https://fbref.com/en/matches/117c4cab/Aston-Villa-Wolverhampton-Wanderers-November-30-2025-Premier-League,8602292d,8cec06e1,117c4cab
+13,2025-11-30,14:05 (21:05),Sun,West Ham United,,0–2,,Liverpool,"62,469",London Stadium,Darren England,https://fbref.com/en/matches/090b47a6/West-Ham-United-Liverpool-November-30-2025-Premier-League,7c21e445,822bd0ba,090b47a6
+13,2025-11-30,16:30 (23:30),Sun,Chelsea,,1–1,,Arsenal,"39,820",Stamford Bridge,Anthony Taylor,https://fbref.com/en/matches/455c69b8/North-West-London-Derby-Chelsea-Arsenal-November-30-2025-Premier-League,cff3d9bb,18bb7c10,455c69b8
+14,2025-12-02,19:30 (02:30),Tue,Bournemouth,,0–1,,Everton,"11,161",Vitality Stadium,Michael Salisbury,https://fbref.com/en/matches/6e2749c6/Bournemouth-Everton-December-2-2025-Premier-League,4ba7cbea,d3fd31cc,6e2749c6
+14,2025-12-02,19:30 (02:30),Tue,Fulham,,4–5,,Manchester City,"26,700",Craven Cottage,Craig Pawson,https://fbref.com/en/matches/83f0391d/Fulham-Manchester-City-December-2-2025-Premier-League,fd962109,b8fd03ef,83f0391d
+14,2025-12-02,20:15 (03:15),Tue,Newcastle United,,2–2,,Tottenham Hotspur,"52,007",St James' Park,Thomas Bramall,https://fbref.com/en/matches/7c5f15be/Newcastle-United-Tottenham-Hotspur-December-2-2025-Premier-League,b2b47a98,361ca564,7c5f15be
+14,2025-12-03,19:30 (02:30),Wed,Wolves,,0–1,,Nottingham Forest,"28,646",Molineux Stadium,Tim Robinson,https://fbref.com/en/matches/6f03844a/Wolverhampton-Wanderers-Nottingham-Forest-December-3-2025-Premier-League,8cec06e1,e4a775cb,6f03844a
+14,2025-12-03,19:30 (02:30),Wed,Burnley,,0–1,,Crystal Palace,"19,365",Turf Moor,Thomas Kirk,https://fbref.com/en/matches/9f1131fe/Burnley-Crystal-Palace-December-3-2025-Premier-League,943e8050,47c64c55,9f1131fe
+14,2025-12-03,19:30 (02:30),Wed,Arsenal,,2–0,,Brentford,"60,110",Emirates Stadium,Tony Harrington,https://fbref.com/en/matches/576f681d/Arsenal-Brentford-December-3-2025-Premier-League,18bb7c10,cd051869,576f681d
+14,2025-12-03,19:30 (02:30),Wed,Brighton,,3–4,,Aston Villa,"31,247",The American Express Stadium,Andy Madley,https://fbref.com/en/matches/96d69898/Brighton-and-Hove-Albion-Aston-Villa-December-3-2025-Premier-League,d07537b9,8602292d,96d69898
+14,2025-12-03,20:15 (03:15),Wed,Leeds United,,3–1,,Chelsea,"36,767",Elland Road,Darren England,https://fbref.com/en/matches/6218f36c/Leeds-United-Chelsea-December-3-2025-Premier-League,5bfb9659,cff3d9bb,6218f36c
+14,2025-12-03,20:15 (03:15),Wed,Liverpool,,1–1,,Sunderland,"60,146",Anfield,Stuart Attwell,https://fbref.com/en/matches/1666070b/Liverpool-Sunderland-December-3-2025-Premier-League,822bd0ba,8ef52968,1666070b
+14,2025-12-04,20:00 (03:00),Thu,Manchester Utd,,1–1,,West Ham United,"73,938",Old Trafford,Andrew Kitchen,https://fbref.com/en/matches/66fee216/Manchester-United-West-Ham-United-December-4-2025-Premier-League,19538871,7c21e445,66fee216
+15,2025-12-06,12:30 (19:30),Sat,Aston Villa,,2–1,,Arsenal,"42,888",Villa Park,Peter Bankes,https://fbref.com/en/matches/f6d068df/Aston-Villa-Arsenal-December-6-2025-Premier-League,8602292d,18bb7c10,f6d068df
+15,2025-12-06,15:00 (22:00),Sat,Newcastle United,,2–1,,Burnley,"52,041",St James' Park,Stuart Attwell,https://fbref.com/en/matches/e5ed4270/Newcastle-United-Burnley-December-6-2025-Premier-League,b2b47a98,943e8050,e5ed4270
+15,2025-12-06,15:00 (22:00),Sat,Manchester City,,3–0,,Sunderland,"52,436",Etihad Stadium,Andy Madley,https://fbref.com/en/matches/1f7cfc5f/Manchester-City-Sunderland-December-6-2025-Premier-League,b8fd03ef,8ef52968,1f7cfc5f
+15,2025-12-06,15:00 (22:00),Sat,Everton,,3–0,,Nottingham Forest,"52,501",Hill Dickinson Stadium,Chris Kavanagh,https://fbref.com/en/matches/cbe24427/Everton-Nottingham-Forest-December-6-2025-Premier-League,d3fd31cc,e4a775cb,cbe24427
+15,2025-12-06,15:00 (22:00),Sat,Tottenham Hotspur,,2–0,,Brentford,"60,759",Tottenham Hotspur Stadium,Robert Jones,https://fbref.com/en/matches/9a4fd973/Tottenham-Hotspur-Brentford-December-6-2025-Premier-League,361ca564,cd051869,9a4fd973
+15,2025-12-06,15:00 (22:00),Sat,Bournemouth,,0–0,,Chelsea,"11,240",Vitality Stadium,Michael Oliver,https://fbref.com/en/matches/c6875359/Bournemouth-Chelsea-December-6-2025-Premier-League,4ba7cbea,cff3d9bb,c6875359
+15,2025-12-06,17:30 (00:30),Sat,Leeds United,,3–3,,Liverpool,"36,842",Elland Road,Anthony Taylor,https://fbref.com/en/matches/c0fc0aac/Leeds-United-Liverpool-December-6-2025-Premier-League,5bfb9659,822bd0ba,c0fc0aac
+15,2025-12-07,14:00 (21:00),Sun,Brighton,,1–1,,West Ham United,"31,293",The American Express Stadium,Simon Hooper,https://fbref.com/en/matches/e5c1f07b/Brighton-and-Hove-Albion-West-Ham-United-December-7-2025-Premier-League,d07537b9,7c21e445,e5c1f07b
+15,2025-12-07,16:30 (23:30),Sun,Fulham,,1–2,,Crystal Palace,"27,283",Craven Cottage,Samuel Barrott,https://fbref.com/en/matches/c0ececfd/Fulham-Crystal-Palace-December-7-2025-Premier-League,fd962109,47c64c55,c0ececfd
+15,2025-12-08,20:00 (03:00),Mon,Wolves,,1–4,,Manchester Utd,"30,338",Molineux Stadium,Michael Salisbury,https://fbref.com/en/matches/d52338cb/Wolverhampton-Wanderers-Manchester-United-December-8-2025-Premier-League,8cec06e1,19538871,d52338cb
+16,2025-12-13,15:00 (22:00),Sat,Chelsea,,2–0,,Everton,"39,552",Stamford Bridge,Thomas Bramall,https://fbref.com/en/matches/33f5c26d/Chelsea-Everton-December-13-2025-Premier-League,cff3d9bb,d3fd31cc,33f5c26d
+16,2025-12-13,15:00 (22:00),Sat,Liverpool,,2–0,,Brighton,"60,429",Anfield,Craig Pawson,https://fbref.com/en/matches/9b6b7eac/Liverpool-Brighton-and-Hove-Albion-December-13-2025-Premier-League,822bd0ba,d07537b9,9b6b7eac
+16,2025-12-13,17:30 (00:30),Sat,Burnley,,2–3,,Fulham,"19,739",Turf Moor,Michael Oliver,https://fbref.com/en/matches/993fe4a5/Burnley-Fulham-December-13-2025-Premier-League,943e8050,fd962109,993fe4a5
+16,2025-12-13,20:00 (03:00),Sat,Arsenal,,2–1,,Wolves,"60,242",Emirates Stadium,Robert Jones,https://fbref.com/en/matches/5914e624/Arsenal-Wolverhampton-Wanderers-December-13-2025-Premier-League,18bb7c10,8cec06e1,5914e624
+16,2025-12-14,14:00 (21:00),Sun,Sunderland,,1–0,,Newcastle United,"47,158",Stadium of Light,Peter Bankes,https://fbref.com/en/matches/f0108982/Sunderland-Newcastle-United-December-14-2025-Premier-League,8ef52968,b2b47a98,f0108982
+16,2025-12-14,14:00 (21:00),Sun,West Ham United,,2–3,,Aston Villa,"62,447",London Stadium,Anthony Taylor,https://fbref.com/en/matches/88b3c085/West-Ham-United-Aston-Villa-December-14-2025-Premier-League,7c21e445,8602292d,88b3c085
+16,2025-12-14,14:00 (21:00),Sun,Crystal Palace,,0–3,,Manchester City,"25,166",Selhurst Park,Darren England,https://fbref.com/en/matches/88d54a65/Crystal-Palace-Manchester-City-December-14-2025-Premier-League,47c64c55,b8fd03ef,88d54a65
+16,2025-12-14,14:00 (21:00),Sun,Nottingham Forest,,3–0,,Tottenham Hotspur,"30,579",The City Ground,Samuel Barrott,https://fbref.com/en/matches/30741081/Nottingham-Forest-Tottenham-Hotspur-December-14-2025-Premier-League,e4a775cb,361ca564,30741081
+16,2025-12-14,16:30 (23:30),Sun,Brentford,,1–1,,Leeds United,"17,159",Gtech Community Stadium,John Brooks,https://fbref.com/en/matches/68c62e00/Brentford-Leeds-United-December-14-2025-Premier-League,cd051869,5bfb9659,68c62e00
+16,2025-12-15,20:00 (03:00),Mon,Manchester Utd,,4–4,,Bournemouth,"73,951",Old Trafford,Simon Hooper,https://fbref.com/en/matches/fe812068/Manchester-United-Bournemouth-December-15-2025-Premier-League,19538871,4ba7cbea,fe812068
+17,2025-12-20,12:30 (19:30),Sat,Newcastle United,,2–2,,Chelsea,"52,226",St James' Park,Andy Madley,https://fbref.com/en/matches/4972e40c/Newcastle-United-Chelsea-December-20-2025-Premier-League,b2b47a98,cff3d9bb,4972e40c
+17,2025-12-20,15:00 (22:00),Sat,Wolves,,0–2,,Brentford,"27,662",Molineux Stadium,Matt Donohue,https://fbref.com/en/matches/3c79be9f/Wolverhampton-Wanderers-Brentford-December-20-2025-Premier-League,8cec06e1,cd051869,3c79be9f
+17,2025-12-20,15:00 (22:00),Sat,Brighton,,0–0,,Sunderland,"31,426",The American Express Stadium,Darren England,https://fbref.com/en/matches/8751f2e2/Brighton-and-Hove-Albion-Sunderland-December-20-2025-Premier-League,d07537b9,8ef52968,8751f2e2
+17,2025-12-20,15:00 (22:00),Sat,Bournemouth,,1–1,,Burnley,"10,762",Vitality Stadium,Chris Kavanagh,https://fbref.com/en/matches/f248c97b/Bournemouth-Burnley-December-20-2025-Premier-League,4ba7cbea,943e8050,f248c97b
+17,2025-12-20,15:00 (22:00),Sat,Manchester City,,3–0,,West Ham United,"52,454",Etihad Stadium,Paul Tierney,https://fbref.com/en/matches/56b82593/Manchester-City-West-Ham-United-December-20-2025-Premier-League,b8fd03ef,7c21e445,56b82593
+17,2025-12-20,17:30 (00:30),Sat,Tottenham Hotspur,,1–2,,Liverpool,"61,138",Tottenham Hotspur Stadium,John Brooks,https://fbref.com/en/matches/30618752/Tottenham-Hotspur-Liverpool-December-20-2025-Premier-League,361ca564,822bd0ba,30618752
+17,2025-12-20,20:00 (03:00),Sat,Everton,,0–1,,Arsenal,"52,513",Hill Dickinson Stadium,Samuel Barrott,https://fbref.com/en/matches/9bf2aba0/Everton-Arsenal-December-20-2025-Premier-League,d3fd31cc,18bb7c10,9bf2aba0
+17,2025-12-20,20:00 (03:00),Sat,Leeds United,,4–1,,Crystal Palace,"36,334",Elland Road,Thomas Bramall,https://fbref.com/en/matches/a105af33/Leeds-United-Crystal-Palace-December-20-2025-Premier-League,5bfb9659,47c64c55,a105af33
+17,2025-12-21,16:30 (23:30),Sun,Aston Villa,,2–1,,Manchester Utd,"43,157",Villa Park,Michael Oliver,https://fbref.com/en/matches/0da8e4de/Aston-Villa-Manchester-United-December-21-2025-Premier-League,8602292d,19538871,0da8e4de
+17,2025-12-22,20:00 (03:00),Mon,Fulham,,1–0,,Nottingham Forest,"26,647",Craven Cottage,Anthony Taylor,https://fbref.com/en/matches/23ee8b09/Fulham-Nottingham-Forest-December-22-2025-Premier-League,fd962109,e4a775cb,23ee8b09
+18,2025-12-26,20:00 (03:00),Fri,Manchester Utd,,1–0,,Newcastle United,"73,996",Old Trafford,Anthony Taylor,https://fbref.com/en/matches/aff462b8/Manchester-United-Newcastle-United-December-26-2025-Premier-League,19538871,b2b47a98,aff462b8
+18,2025-12-27,12:30 (19:30),Sat,Nottingham Forest,,1–2,,Manchester City,"30,778",The City Ground,Robert Jones,https://fbref.com/en/matches/8d38f2e5/Nottingham-Forest-Manchester-City-December-27-2025-Premier-League,e4a775cb,b8fd03ef,8d38f2e5
+18,2025-12-27,15:00 (22:00),Sat,Brentford,,4–1,,Bournemouth,"17,152",Gtech Community Stadium,Peter Bankes,https://fbref.com/en/matches/512bb3b3/Brentford-Bournemouth-December-27-2025-Premier-League,cd051869,4ba7cbea,512bb3b3
+18,2025-12-27,15:00 (22:00),Sat,Burnley,,0–0,,Everton,"21,637",Turf Moor,Craig Pawson,https://fbref.com/en/matches/8f2a6c20/Burnley-Everton-December-27-2025-Premier-League,943e8050,d3fd31cc,8f2a6c20
+18,2025-12-27,15:00 (22:00),Sat,West Ham United,,0–1,,Fulham,"62,464",London Stadium,Chris Kavanagh,https://fbref.com/en/matches/424b7408/West-Ham-United-Fulham-December-27-2025-Premier-League,7c21e445,fd962109,424b7408
+18,2025-12-27,15:00 (22:00),Sat,Arsenal,,2–1,,Brighton,"60,209",Emirates Stadium,John Brooks,https://fbref.com/en/matches/ad61fc31/Arsenal-Brighton-and-Hove-Albion-December-27-2025-Premier-League,18bb7c10,d07537b9,ad61fc31
+18,2025-12-27,15:00 (22:00),Sat,Liverpool,,2–1,,Wolves,"60,466",Anfield,Simon Hooper,https://fbref.com/en/matches/b329ca7b/Liverpool-Wolverhampton-Wanderers-December-27-2025-Premier-League,822bd0ba,8cec06e1,b329ca7b
+18,2025-12-27,17:30 (00:30),Sat,Chelsea,,1–2,,Aston Villa,"39,765",Stamford Bridge,Stuart Attwell,https://fbref.com/en/matches/3ddb49f0/Chelsea-Aston-Villa-December-27-2025-Premier-League,cff3d9bb,8602292d,3ddb49f0
+18,2025-12-28,14:00 (21:00),Sun,Sunderland,,1–1,,Leeds United,"46,675",Stadium of Light,Tony Harrington,https://fbref.com/en/matches/9c510880/Sunderland-Leeds-United-December-28-2025-Premier-League,8ef52968,5bfb9659,9c510880
+18,2025-12-28,16:30 (23:30),Sun,Crystal Palace,,0–1,,Tottenham Hotspur,"25,186",Selhurst Park,Jarred Gillett,https://fbref.com/en/matches/da05abe0/Crystal-Palace-Tottenham-Hotspur-December-28-2025-Premier-League,47c64c55,361ca564,da05abe0
+19,2025-12-30,19:30 (02:30),Tue,Burnley,,1–3,,Newcastle United,"21,020",Turf Moor,Robert Jones,https://fbref.com/en/matches/7e8f51ca/Burnley-Newcastle-United-December-30-2025-Premier-League,943e8050,b2b47a98,7e8f51ca
+19,2025-12-30,19:30 (02:30),Tue,Nottingham Forest,,0–2,,Everton,"30,617",The City Ground,Michael Oliver,https://fbref.com/en/matches/9e232624/Nottingham-Forest-Everton-December-30-2025-Premier-League,e4a775cb,d3fd31cc,9e232624
+19,2025-12-30,19:30 (02:30),Tue,West Ham United,,2–2,,Brighton,"62,464",London Stadium,Michael Salisbury,https://fbref.com/en/matches/2ed2a547/West-Ham-United-Brighton-and-Hove-Albion-December-30-2025-Premier-League,7c21e445,d07537b9,2ed2a547
+19,2025-12-30,19:30 (02:30),Tue,Chelsea,,2–2,,Bournemouth,"39,765",Stamford Bridge,Samuel Barrott,https://fbref.com/en/matches/6abcb6e9/Chelsea-Bournemouth-December-30-2025-Premier-League,cff3d9bb,4ba7cbea,6abcb6e9
+19,2025-12-30,20:15 (03:15),Tue,Arsenal,,4–1,,Aston Villa,"60,279",Emirates Stadium,Darren England,https://fbref.com/en/matches/89b4ea51/Arsenal-Aston-Villa-December-30-2025-Premier-League,18bb7c10,8602292d,89b4ea51
+19,2025-12-30,20:15 (03:15),Tue,Manchester Utd,,1–1,,Wolves,"73,589",Old Trafford,Thomas Bramall,https://fbref.com/en/matches/bf3cb7a6/Manchester-United-Wolverhampton-Wanderers-December-30-2025-Premier-League,19538871,8cec06e1,bf3cb7a6
+19,2026-01-01,17:30 (00:30),Thu,Liverpool,,0–0,,Leeds United,"60,343",Anfield,Chris Kavanagh,https://fbref.com/en/matches/148c23a6/Liverpool-Leeds-United-January-1-2026-Premier-League,822bd0ba,5bfb9659,148c23a6
+19,2026-01-01,17:30 (00:30),Thu,Crystal Palace,,1–1,,Fulham,"25,111",Selhurst Park,Tony Harrington,https://fbref.com/en/matches/08780759/Crystal-Palace-Fulham-January-1-2026-Premier-League,47c64c55,fd962109,08780759
+19,2026-01-01,20:00 (03:00),Thu,Sunderland,,0–0,,Manchester City,"46,920",Stadium of Light,Jarred Gillett,https://fbref.com/en/matches/3f843d94/Sunderland-Manchester-City-January-1-2026-Premier-League,8ef52968,b8fd03ef,3f843d94
+19,2026-01-01,20:00 (03:00),Thu,Brentford,,0–0,,Tottenham Hotspur,"17,141",Gtech Community Stadium,Andy Madley,https://fbref.com/en/matches/560a0a6c/Brentford-Tottenham-Hotspur-January-1-2026-Premier-League,cd051869,361ca564,560a0a6c
+20,2026-01-03,12:30 (19:30),Sat,Aston Villa,,3–1,,Nottingham Forest,"43,039",Villa Park,Simon Hooper,https://fbref.com/en/matches/4ef85729/Aston-Villa-Nottingham-Forest-January-3-2026-Premier-League,8602292d,e4a775cb,4ef85729
+20,2026-01-03,15:00 (22:00),Sat,Brighton,,2–0,,Burnley,"31,373",The American Express Stadium,Tim Robinson,https://fbref.com/en/matches/987e9f89/Brighton-and-Hove-Albion-Burnley-January-3-2026-Premier-League,d07537b9,943e8050,987e9f89
+20,2026-01-03,15:00 (22:00),Sat,Wolves,,3–0,,West Ham United,"29,874",Molineux Stadium,Peter Bankes,https://fbref.com/en/matches/9364f40b/Wolverhampton-Wanderers-West-Ham-United-January-3-2026-Premier-League,8cec06e1,7c21e445,9364f40b
+20,2026-01-03,17:30 (00:30),Sat,Bournemouth,,2–3,,Arsenal,"11,240",Vitality Stadium,Chris Kavanagh,https://fbref.com/en/matches/db124c87/Bournemouth-Arsenal-January-3-2026-Premier-League,4ba7cbea,18bb7c10,db124c87
+20,2026-01-04,12:30 (19:30),Sun,Leeds United,,1–1,,Manchester Utd,"36,909",Elland Road,Jarred Gillett,https://fbref.com/en/matches/7ecdefc0/Leeds-United-Manchester-United-January-4-2026-Premier-League,5bfb9659,19538871,7ecdefc0
+20,2026-01-04,15:00 (22:00),Sun,Tottenham Hotspur,,1–1,,Sunderland,"60,877",Tottenham Hotspur Stadium,Stuart Attwell,https://fbref.com/en/matches/06bb7d71/Tottenham-Hotspur-Sunderland-January-4-2026-Premier-League,361ca564,8ef52968,06bb7d71
+20,2026-01-04,15:00 (22:00),Sun,Everton,,2–4,,Brentford,"52,514",Hill Dickinson Stadium,Anthony Taylor,https://fbref.com/en/matches/a67dd0e7/Everton-Brentford-January-4-2026-Premier-League,d3fd31cc,cd051869,a67dd0e7
+20,2026-01-04,15:00 (22:00),Sun,Newcastle United,,2–0,,Crystal Palace,"51,979",St James' Park,John Brooks,https://fbref.com/en/matches/b4262b3c/Newcastle-United-Crystal-Palace-January-4-2026-Premier-League,b2b47a98,47c64c55,b4262b3c
+20,2026-01-04,15:15 (22:15),Sun,Fulham,,2–2,,Liverpool,"27,547",Craven Cottage,Craig Pawson,https://fbref.com/en/matches/a5b3e9ba/Fulham-Liverpool-January-4-2026-Premier-League,fd962109,822bd0ba,a5b3e9ba
+20,2026-01-04,17:30 (00:30),Sun,Manchester City,,1–1,,Chelsea,"52,471",Etihad Stadium,Michael Oliver,https://fbref.com/en/matches/989daed4/Manchester-City-Chelsea-January-4-2026-Premier-League,b8fd03ef,cff3d9bb,989daed4
+21,2026-01-06,20:00 (03:00),Tue,West Ham United,,1–2,,Nottingham Forest,"62,429",London Stadium,Tony Harrington,https://fbref.com/en/matches/e0b5b423/West-Ham-United-Nottingham-Forest-January-6-2026-Premier-League,7c21e445,e4a775cb,e0b5b423
+21,2026-01-07,19:30 (02:30),Wed,Crystal Palace,,0–0,,Aston Villa,"24,841",Selhurst Park,Andy Madley,https://fbref.com/en/matches/f5a77398/Crystal-Palace-Aston-Villa-January-7-2026-Premier-League,47c64c55,8602292d,f5a77398
+21,2026-01-07,19:30 (02:30),Wed,Everton,,1–1,,Wolves,"51,768",Hill Dickinson Stadium,Thomas Kirk,https://fbref.com/en/matches/6512ce95/Everton-Wolverhampton-Wanderers-January-7-2026-Premier-League,d3fd31cc,8cec06e1,6512ce95
+21,2026-01-07,19:30 (02:30),Wed,Fulham,,2–1,,Chelsea,"26,990",Craven Cottage,Peter Bankes,https://fbref.com/en/matches/21522578/Fulham-Chelsea-January-7-2026-Premier-League,fd962109,cff3d9bb,21522578
+21,2026-01-07,19:30 (02:30),Wed,Brentford,,3–0,,Sunderland,"17,016",Gtech Community Stadium,Matt Donohue,https://fbref.com/en/matches/9c19f0b3/Brentford-Sunderland-January-7-2026-Premier-League,cd051869,8ef52968,9c19f0b3
+21,2026-01-07,19:30 (02:30),Wed,Manchester City,,1–1,,Brighton,"51,728",Etihad Stadium,Thomas Bramall,https://fbref.com/en/matches/009bbc59/Manchester-City-Brighton-and-Hove-Albion-January-7-2026-Premier-League,b8fd03ef,d07537b9,009bbc59
+21,2026-01-07,19:30 (02:30),Wed,Bournemouth,,3–2,,Tottenham Hotspur,"11,212",Vitality Stadium,Darren England,https://fbref.com/en/matches/269b2844/Bournemouth-Tottenham-Hotspur-January-7-2026-Premier-League,4ba7cbea,361ca564,269b2844
+21,2026-01-07,20:15 (03:15),Wed,Burnley,,2–2,,Manchester Utd,"21,047",Turf Moor,Stuart Attwell,https://fbref.com/en/matches/d85506f2/Burnley-Manchester-United-January-7-2026-Premier-League,943e8050,19538871,d85506f2
+21,2026-01-07,20:15 (03:15),Wed,Newcastle United,,4–3,,Leeds United,"51,176",St James' Park,Michael Salisbury,https://fbref.com/en/matches/460a6353/Newcastle-United-Leeds-United-January-7-2026-Premier-League,b2b47a98,5bfb9659,460a6353
+21,2026-01-08,20:00 (03:00),Thu,Arsenal,,0–0,,Liverpool,"60,258",Emirates Stadium,Anthony Taylor,https://fbref.com/en/matches/2b794de5/Arsenal-Liverpool-January-8-2026-Premier-League,18bb7c10,822bd0ba,2b794de5
+22,2026-01-17,12:30 (19:30),Sat,Manchester Utd,,2–0,,Manchester City,"74,004",Old Trafford,Anthony Taylor,https://fbref.com/en/matches/185626e2/Manchester-Derby-Manchester-United-Manchester-City-January-17-2026-Premier-League,19538871,b8fd03ef,185626e2
+22,2026-01-17,15:00 (22:00),Sat,Tottenham Hotspur,,1–2,,West Ham United,"60,857",Tottenham Hotspur Stadium,Jarred Gillett,https://fbref.com/en/matches/f320a9c9/Tottenham-Hotspur-West-Ham-United-January-17-2026-Premier-League,361ca564,7c21e445,f320a9c9
+22,2026-01-17,15:00 (22:00),Sat,Liverpool,,1–1,,Burnley,"60,431",Anfield,Andy Madley,https://fbref.com/en/matches/cf2163fd/Liverpool-Burnley-January-17-2026-Premier-League,822bd0ba,943e8050,cf2163fd
+22,2026-01-17,15:00 (22:00),Sat,Chelsea,,2–0,,Brentford,"39,704",Stamford Bridge,John Brooks,https://fbref.com/en/matches/ad299900/Chelsea-Brentford-January-17-2026-Premier-League,cff3d9bb,cd051869,ad299900
+22,2026-01-17,15:00 (22:00),Sat,Leeds United,,1–0,,Fulham,"36,300",Elland Road,Chris Kavanagh,https://fbref.com/en/matches/8179bcb9/Leeds-United-Fulham-January-17-2026-Premier-League,5bfb9659,fd962109,8179bcb9
+22,2026-01-17,15:00 (22:00),Sat,Sunderland,,2–1,,Crystal Palace,"47,257",Stadium of Light,Robert Jones,https://fbref.com/en/matches/fd2bfdd0/Sunderland-Crystal-Palace-January-17-2026-Premier-League,8ef52968,47c64c55,fd2bfdd0
+22,2026-01-17,17:30 (00:30),Sat,Nottingham Forest,,0–0,,Arsenal,"30,729",The City Ground,Michael Oliver,https://fbref.com/en/matches/345215db/Nottingham-Forest-Arsenal-January-17-2026-Premier-League,e4a775cb,18bb7c10,345215db
+22,2026-01-18,14:00 (21:00),Sun,Wolves,,0–0,,Newcastle United,"29,751",Molineux Stadium,Samuel Barrott,https://fbref.com/en/matches/318b1da4/Wolverhampton-Wanderers-Newcastle-United-January-18-2026-Premier-League,8cec06e1,b2b47a98,318b1da4
+22,2026-01-18,16:30 (23:30),Sun,Aston Villa,,0–1,,Everton,"43,059",Villa Park,Tony Harrington,https://fbref.com/en/matches/fb95c6a0/Aston-Villa-Everton-January-18-2026-Premier-League,8602292d,d3fd31cc,fb95c6a0
+22,2026-01-19,20:00 (03:00),Mon,Brighton,,1–1,,Bournemouth,"30,172",The American Express Stadium,Paul Tierney,https://fbref.com/en/matches/f118b5cb/Brighton-and-Hove-Albion-Bournemouth-January-19-2026-Premier-League,d07537b9,4ba7cbea,f118b5cb
+23,2026-01-24,12:30 (19:30),Sat,West Ham United,,3–1,,Sunderland,"62,456",London Stadium,Thomas Bramall,https://fbref.com/en/matches/0032e7a3/West-Ham-United-Sunderland-January-24-2026-Premier-League,7c21e445,8ef52968,0032e7a3
+23,2026-01-24,15:00 (22:00),Sat,Manchester City,,2–0,,Wolves,"52,469",Etihad Stadium,Farai Hallam,https://fbref.com/en/matches/ebde1961/Manchester-City-Wolverhampton-Wanderers-January-24-2026-Premier-League,b8fd03ef,8cec06e1,ebde1961
+23,2026-01-24,15:00 (22:00),Sat,Burnley,,2–2,,Tottenham Hotspur,"21,618",Turf Moor,Peter Bankes,https://fbref.com/en/matches/c4255de6/Burnley-Tottenham-Hotspur-January-24-2026-Premier-League,943e8050,361ca564,c4255de6
+23,2026-01-24,15:00 (22:00),Sat,Fulham,,2–1,,Brighton,"27,239",Craven Cottage,Michael Oliver,https://fbref.com/en/matches/c6401377/Fulham-Brighton-and-Hove-Albion-January-24-2026-Premier-League,fd962109,d07537b9,c6401377
+23,2026-01-24,17:30 (00:30),Sat,Bournemouth,,3–2,,Liverpool,"11,260",Vitality Stadium,Michael Salisbury,https://fbref.com/en/matches/accb3a02/Bournemouth-Liverpool-January-24-2026-Premier-League,4ba7cbea,822bd0ba,accb3a02
+23,2026-01-25,14:00 (21:00),Sun,Brentford,,0–2,,Nottingham Forest,"17,134",Gtech Community Stadium,Samuel Barrott,https://fbref.com/en/matches/6f5cb4ab/Brentford-Nottingham-Forest-January-25-2026-Premier-League,cd051869,e4a775cb,6f5cb4ab
+23,2026-01-25,14:00 (21:00),Sun,Newcastle United,,0–2,,Aston Villa,"52,134",St James' Park,Jarred Gillett,https://fbref.com/en/matches/fbd2a96b/Newcastle-United-Aston-Villa-January-25-2026-Premier-League,b2b47a98,8602292d,fbd2a96b
+23,2026-01-25,14:00 (21:00),Sun,Crystal Palace,,1–3,,Chelsea,"25,163",Selhurst Park,Darren England,https://fbref.com/en/matches/8aa8dc76/Crystal-Palace-Chelsea-January-25-2026-Premier-League,47c64c55,cff3d9bb,8aa8dc76
+23,2026-01-25,16:30 (23:30),Sun,Arsenal,,2–3,,Manchester Utd,"60,296",Emirates Stadium,Craig Pawson,https://fbref.com/en/matches/776b0a40/Arsenal-Manchester-United-January-25-2026-Premier-League,18bb7c10,19538871,776b0a40
+23,2026-01-26,20:00 (03:00),Mon,Everton,,1–1,,Leeds United,"51,979",Hill Dickinson Stadium,Simon Hooper,https://fbref.com/en/matches/2cd65ee9/Everton-Leeds-United-January-26-2026-Premier-League,d3fd31cc,5bfb9659,2cd65ee9
+24,2026-01-31,15:00 (22:00),Sat,Leeds United,,0–4,,Arsenal,"36,858",Elland Road,Stuart Attwell,https://fbref.com/en/matches/0b316a86/Leeds-United-Arsenal-January-31-2026-Premier-League,5bfb9659,18bb7c10,0b316a86
+24,2026-01-31,15:00 (22:00),Sat,Brighton,,1–1,,Everton,"31,419",The American Express Stadium,Chris Kavanagh,https://fbref.com/en/matches/3fccfdc9/Brighton-and-Hove-Albion-Everton-January-31-2026-Premier-League,d07537b9,d3fd31cc,3fccfdc9
+24,2026-01-31,15:00 (22:00),Sat,Wolves,,0–2,,Bournemouth,"30,161",Molineux Stadium,Michael Oliver,https://fbref.com/en/matches/535a977f/Wolverhampton-Wanderers-Bournemouth-January-31-2026-Premier-League,8cec06e1,4ba7cbea,535a977f
+24,2026-01-31,17:30 (00:30),Sat,Chelsea,,3–2,,West Ham United,"39,361",Stamford Bridge,Anthony Taylor,https://fbref.com/en/matches/a2d7d043/Chelsea-West-Ham-United-January-31-2026-Premier-League,cff3d9bb,7c21e445,a2d7d043
+24,2026-01-31,20:00 (03:00),Sat,Liverpool,,4–1,,Newcastle United,"60,416",Anfield,Simon Hooper,https://fbref.com/en/matches/753e73e5/Liverpool-Newcastle-United-January-31-2026-Premier-League,822bd0ba,b2b47a98,753e73e5
+24,2026-02-01,14:00 (21:00),Sun,Nottingham Forest,,1–1,,Crystal Palace,"30,334",The City Ground,Tony Harrington,https://fbref.com/en/matches/a68e5dc6/Nottingham-Forest-Crystal-Palace-February-1-2026-Premier-League,e4a775cb,47c64c55,a68e5dc6
+24,2026-02-01,14:00 (21:00),Sun,Manchester Utd,,3–2,,Fulham,"73,895",Old Trafford,John Brooks,https://fbref.com/en/matches/d35c00df/Manchester-United-Fulham-February-1-2026-Premier-League,19538871,fd962109,d35c00df
+24,2026-02-01,14:00 (21:00),Sun,Aston Villa,,0–1,,Brentford,"41,415",Villa Park,Tim Robinson,https://fbref.com/en/matches/291c58ad/Aston-Villa-Brentford-February-1-2026-Premier-League,8602292d,cd051869,291c58ad
+24,2026-02-01,16:30 (23:30),Sun,Tottenham Hotspur,,2–2,,Manchester City,"61,337",Tottenham Hotspur Stadium,Robert Jones,https://fbref.com/en/matches/bf964dbb/Tottenham-Hotspur-Manchester-City-February-1-2026-Premier-League,361ca564,b8fd03ef,bf964dbb
+24,2026-02-02,20:00 (03:00),Mon,Sunderland,,3–0,,Burnley,"46,370",Stadium of Light,Paul Tierney,https://fbref.com/en/matches/8e2fb73d/Sunderland-Burnley-February-2-2026-Premier-League,8ef52968,943e8050,8e2fb73d
+25,2026-02-06,20:00 (03:00),Fri,Leeds United,,3–1,,Nottingham Forest,"36,835",Elland Road,Peter Bankes,https://fbref.com/en/matches/58356b12/Leeds-United-Nottingham-Forest-February-6-2026-Premier-League,5bfb9659,e4a775cb,58356b12
+25,2026-02-07,12:30 (19:30),Sat,Manchester Utd,,2–0,,Tottenham Hotspur,"73,985",Old Trafford,Michael Oliver,https://fbref.com/en/matches/1de9b261/Manchester-United-Tottenham-Hotspur-February-7-2026-Premier-League,19538871,361ca564,1de9b261
+25,2026-02-07,15:00 (22:00),Sat,Wolves,,1–3,,Chelsea,"29,762",Molineux Stadium,Jarred Gillett,https://fbref.com/en/matches/a8e11f0c/Wolverhampton-Wanderers-Chelsea-February-7-2026-Premier-League,8cec06e1,cff3d9bb,a8e11f0c
+25,2026-02-07,15:00 (22:00),Sat,Bournemouth,,1–1,,Aston Villa,"11,248",Vitality Stadium,Anthony Taylor,https://fbref.com/en/matches/d946c716/Bournemouth-Aston-Villa-February-7-2026-Premier-League,4ba7cbea,8602292d,d946c716
+25,2026-02-07,15:00 (22:00),Sat,Arsenal,,3–0,,Sunderland,"60,312",Emirates Stadium,Samuel Barrott,https://fbref.com/en/matches/686d660a/Arsenal-Sunderland-February-7-2026-Premier-League,18bb7c10,8ef52968,686d660a
+25,2026-02-07,15:00 (22:00),Sat,Burnley,,0–2,,West Ham United,"21,273",Turf Moor,Darren England,https://fbref.com/en/matches/80ab7be1/Burnley-West-Ham-United-February-7-2026-Premier-League,943e8050,7c21e445,80ab7be1
+25,2026-02-07,15:00 (22:00),Sat,Fulham,,1–2,,Everton,"27,155",Craven Cottage,Stuart Attwell,https://fbref.com/en/matches/488d99a3/Fulham-Everton-February-7-2026-Premier-League,fd962109,d3fd31cc,488d99a3
+25,2026-02-07,17:30 (00:30),Sat,Newcastle United,,2–3,,Brentford,"52,032",St James' Park,Andy Madley,https://fbref.com/en/matches/c576b069/Newcastle-United-Brentford-February-7-2026-Premier-League,b2b47a98,cd051869,c576b069
+25,2026-02-08,14:00 (21:00),Sun,Brighton,,0–1,,Crystal Palace,"31,179",The American Express Stadium,Thomas Bramall,https://fbref.com/en/matches/d16c9a31/Brighton-and-Hove-Albion-Crystal-Palace-February-8-2026-Premier-League,d07537b9,47c64c55,d16c9a31
+25,2026-02-08,16:30 (23:30),Sun,Liverpool,,1–2,,Manchester City,"60,336",Anfield,Craig Pawson,https://fbref.com/en/matches/7fa414c3/Liverpool-Manchester-City-February-8-2026-Premier-League,822bd0ba,b8fd03ef,7fa414c3
+26,2026-02-10,19:30 (02:30),Tue,Tottenham Hotspur,,1–2,,Newcastle United,"59,773",Tottenham Hotspur Stadium,Anthony Taylor,https://fbref.com/en/matches/bacd18c5/Tottenham-Hotspur-Newcastle-United-February-10-2026-Premier-League,361ca564,b2b47a98,bacd18c5
+26,2026-02-10,19:30 (02:30),Tue,Everton,,1–2,,Bournemouth,"51,793",Hill Dickinson Stadium,Andy Madley,https://fbref.com/en/matches/5edb7f11/Everton-Bournemouth-February-10-2026-Premier-League,d3fd31cc,4ba7cbea,5edb7f11
+26,2026-02-10,19:30 (02:30),Tue,Chelsea,,2–2,,Leeds United,"39,253",Stamford Bridge,Robert Jones,https://fbref.com/en/matches/c2e2594b/Chelsea-Leeds-United-February-10-2026-Premier-League,cff3d9bb,5bfb9659,c2e2594b
+26,2026-02-10,20:15 (03:15),Tue,West Ham United,,1–1,,Manchester Utd,"62,473",London Stadium,Simon Hooper,https://fbref.com/en/matches/1c8e3956/West-Ham-United-Manchester-United-February-10-2026-Premier-League,7c21e445,19538871,1c8e3956
+26,2026-02-11,19:30 (02:30),Wed,Aston Villa,,1–0,,Brighton,"39,495",Villa Park,Peter Bankes,https://fbref.com/en/matches/0e41702d/Aston-Villa-Brighton-and-Hove-Albion-February-11-2026-Premier-League,8602292d,d07537b9,0e41702d
+26,2026-02-11,19:30 (02:30),Wed,Manchester City,,3–0,,Fulham,"50,717",Etihad Stadium,Paul Tierney,https://fbref.com/en/matches/d1da1b85/Manchester-City-Fulham-February-11-2026-Premier-League,b8fd03ef,fd962109,d1da1b85
+26,2026-02-11,19:30 (02:30),Wed,Nottingham Forest,,0–0,,Wolves,"29,921",The City Ground,Tim Robinson,https://fbref.com/en/matches/aecf5052/Nottingham-Forest-Wolverhampton-Wanderers-February-11-2026-Premier-League,e4a775cb,8cec06e1,aecf5052
+26,2026-02-11,19:40 (02:40),Wed,Crystal Palace,,2–3,,Burnley,"24,641",Selhurst Park,Farai Hallam,https://fbref.com/en/matches/2d7aef82/Crystal-Palace-Burnley-February-11-2026-Premier-League,47c64c55,943e8050,2d7aef82
+26,2026-02-11,20:15 (03:15),Wed,Sunderland,,0–1,,Liverpool,"47,159",Stadium of Light,Chris Kavanagh,https://fbref.com/en/matches/854a0e6b/Sunderland-Liverpool-February-11-2026-Premier-League,8ef52968,822bd0ba,854a0e6b
+26,2026-02-12,20:00 (03:00),Thu,Brentford,,1–1,,Arsenal,"17,224",Gtech Community Stadium,John Brooks,https://fbref.com/en/matches/33167c49/Brentford-Arsenal-February-12-2026-Premier-League,cd051869,18bb7c10,33167c49
+31,2026-02-18,20:00 (03:00),Wed,Wolves,,2–2,,Arsenal,"29,843",Molineux Stadium,Paul Tierney,https://fbref.com/en/matches/96241478/Wolverhampton-Wanderers-Arsenal-February-18-2026-Premier-League,8cec06e1,18bb7c10,96241478
+27,2026-02-21,15:00 (22:00),Sat,Aston Villa,,1–1,,Leeds United,"43,048",Villa Park,Michael Oliver,https://fbref.com/en/matches/be7eca24/Aston-Villa-Leeds-United-February-21-2026-Premier-League,8602292d,5bfb9659,be7eca24
+27,2026-02-21,15:00 (22:00),Sat,Chelsea,,1–1,,Burnley,"39,603",Stamford Bridge,Lewis Smith,https://fbref.com/en/matches/27fb98e5/Chelsea-Burnley-February-21-2026-Premier-League,cff3d9bb,943e8050,27fb98e5
+27,2026-02-21,15:00 (22:00),Sat,Brentford,,0–2,,Brighton,"17,163",Gtech Community Stadium,Jarred Gillett,https://fbref.com/en/matches/fefcfa2d/Brentford-Brighton-and-Hove-Albion-February-21-2026-Premier-League,cd051869,d07537b9,fefcfa2d
+27,2026-02-21,17:30 (00:30),Sat,West Ham United,,0–0,,Bournemouth,"62,437",London Stadium,Samuel Barrott,https://fbref.com/en/matches/cd5c0387/West-Ham-United-Bournemouth-February-21-2026-Premier-League,7c21e445,4ba7cbea,cd5c0387
+27,2026-02-21,20:00 (03:00),Sat,Manchester City,,2–1,,Newcastle United,"52,187",Etihad Stadium,Thomas Bramall,https://fbref.com/en/matches/dfba2599/Manchester-City-Newcastle-United-February-21-2026-Premier-League,b8fd03ef,b2b47a98,dfba2599
+27,2026-02-22,14:00 (21:00),Sun,Crystal Palace,,1–0,,Wolves,"24,547",Selhurst Park,Thomas Kirk,https://fbref.com/en/matches/224feca9/Crystal-Palace-Wolverhampton-Wanderers-February-22-2026-Premier-League,47c64c55,8cec06e1,224feca9
+27,2026-02-22,14:00 (21:00),Sun,Sunderland,,1–3,,Fulham,"47,222",Stadium of Light,Craig Pawson,https://fbref.com/en/matches/22326a55/Sunderland-Fulham-February-22-2026-Premier-League,8ef52968,fd962109,22326a55
+27,2026-02-22,14:00 (21:00),Sun,Nottingham Forest,,0–1,,Liverpool,"30,737",The City Ground,Anthony Taylor,https://fbref.com/en/matches/6f6574df/Nottingham-Forest-Liverpool-February-22-2026-Premier-League,e4a775cb,822bd0ba,6f6574df
+27,2026-02-22,16:30 (23:30),Sun,Tottenham Hotspur,,1–4,,Arsenal,"61,439",Tottenham Hotspur Stadium,Peter Bankes,https://fbref.com/en/matches/d8c5bce1/North-London-Derby-Tottenham-Hotspur-Arsenal-February-22-2026-Premier-League,361ca564,18bb7c10,d8c5bce1
+27,2026-02-23,20:00 (03:00),Mon,Everton,,0–1,,Manchester Utd,"52,326",Hill Dickinson Stadium,Darren England,https://fbref.com/en/matches/11883630/Everton-Manchester-United-February-23-2026-Premier-League,d3fd31cc,19538871,11883630
+28,2026-02-27,20:00 (03:00),Fri,Wolves,,,,Aston Villa,,Molineux Stadium,,,8cec06e1,8602292d,
+28,2026-02-28,12:30 (19:30),Sat,Bournemouth,,,,Sunderland,,Vitality Stadium,,,4ba7cbea,8ef52968,
+28,2026-02-28,15:00 (22:00),Sat,Newcastle United,,,,Everton,,St James' Park,,,b2b47a98,d3fd31cc,
+28,2026-02-28,15:00 (22:00),Sat,Burnley,,,,Brentford,,Turf Moor,,,943e8050,cd051869,
+28,2026-02-28,15:00 (22:00),Sat,Liverpool,,,,West Ham United,,Anfield,,,822bd0ba,7c21e445,
+28,2026-02-28,17:30 (00:30),Sat,Leeds United,,,,Manchester City,,Elland Road,,,5bfb9659,b8fd03ef,
+28,2026-03-01,14:00 (21:00),Sun,Manchester Utd,,,,Crystal Palace,,Old Trafford,,,19538871,47c64c55,
+28,2026-03-01,14:00 (21:00),Sun,Fulham,,,,Tottenham Hotspur,,Craven Cottage,,,fd962109,361ca564,
+28,2026-03-01,14:00 (21:00),Sun,Brighton,,,,Nottingham Forest,,The American Express Stadium,,,d07537b9,e4a775cb,
+28,2026-03-01,16:30 (23:30),Sun,Arsenal,,,,Chelsea,,Emirates Stadium,,,18bb7c10,cff3d9bb,
+29,2026-03-03,19:30 (02:30),Tue,Everton,,,,Burnley,,Hill Dickinson Stadium,,,d3fd31cc,943e8050,
+29,2026-03-03,19:30 (02:30),Tue,Bournemouth,,,,Brentford,,Vitality Stadium,,,4ba7cbea,cd051869,
+29,2026-03-03,19:30 (02:30),Tue,Leeds United,,,,Sunderland,,Elland Road,,,5bfb9659,8ef52968,
+29,2026-03-03,20:15 (03:15),Tue,Wolves,,,,Liverpool,,Molineux Stadium,,,8cec06e1,822bd0ba,
+29,2026-03-04,19:30 (02:30),Wed,Manchester City,,,,Nottingham Forest,,Etihad Stadium,,,b8fd03ef,e4a775cb,
+29,2026-03-04,19:30 (02:30),Wed,Brighton,,,,Arsenal,,The American Express Stadium,,,d07537b9,18bb7c10,
+29,2026-03-04,19:30 (02:30),Wed,Fulham,,,,West Ham United,,Craven Cottage,,,fd962109,7c21e445,
+29,2026-03-04,19:30 (02:30),Wed,Aston Villa,,,,Chelsea,,Villa Park,,,8602292d,cff3d9bb,
+29,2026-03-04,20:15 (03:15),Wed,Newcastle United,,,,Manchester Utd,,St James' Park,,,b2b47a98,19538871,
+29,2026-03-05,20:00 (03:00),Thu,Tottenham Hotspur,,,,Crystal Palace,,Tottenham Hotspur Stadium,,,361ca564,47c64c55,
+30,2026-03-14,12:30 (19:30),Sat,West Ham United,,,,Manchester City,,London Stadium,,,7c21e445,b8fd03ef,
+30,2026-03-14,15:00 (22:00),Sat,Crystal Palace,,,,Leeds United,,Selhurst Park,,,47c64c55,5bfb9659,
+30,2026-03-14,15:00 (22:00),Sat,Sunderland,,,,Brighton,,Stadium of Light,,,8ef52968,d07537b9,
+30,2026-03-14,15:00 (22:00),Sat,Burnley,,,,Bournemouth,,Turf Moor,,,943e8050,4ba7cbea,
+30,2026-03-14,17:30 (00:30),Sat,Chelsea,,,,Newcastle United,,Stamford Bridge,,,cff3d9bb,b2b47a98,
+30,2026-03-15,14:00 (21:00),Sun,Arsenal,,,,Everton,,Emirates Stadium,,,18bb7c10,d3fd31cc,
+30,2026-03-15,14:00 (21:00),Sun,Nottingham Forest,,,,Fulham,,The City Ground,,,e4a775cb,fd962109,
+30,2026-03-15,14:00 (21:00),Sun,Manchester Utd,,,,Aston Villa,,Old Trafford,,,19538871,8602292d,
+30,2026-03-15,16:30 (23:30),Sun,Liverpool,,,,Tottenham Hotspur,,Anfield,,,822bd0ba,361ca564,
+30,2026-03-16,20:00 (03:00),Mon,Brentford,,,,Wolves,,Gtech Community Stadium,,,cd051869,8cec06e1,
+31,2026-03-20,20:00 (03:00),Fri,Bournemouth,,,,Manchester Utd,,Vitality Stadium,,,4ba7cbea,19538871,
+31,2026-03-21,12:30 (19:30),Sat,Brighton,,,,Liverpool,,The American Express Stadium,,,d07537b9,822bd0ba,
+31,2026-03-21,15:00 (22:00),Sat,Fulham,,,,Burnley,,Craven Cottage,,,fd962109,943e8050,
+31,2026-03-21,15:00 (22:00),Sat,Manchester City,,,,Crystal Palace,,Etihad Stadium,,,b8fd03ef,47c64c55,
+31,2026-03-21,17:30 (00:30),Sat,Everton,,,,Chelsea,,Hill Dickinson Stadium,,,d3fd31cc,cff3d9bb,
+31,2026-03-21,20:00 (03:00),Sat,Leeds United,,,,Brentford,,Elland Road,,,5bfb9659,cd051869,
+31,2026-03-22,12:00 (19:00),Sun,Newcastle United,,,,Sunderland,,St James' Park,,,b2b47a98,8ef52968,
+31,2026-03-22,14:15 (21:15),Sun,Aston Villa,,,,West Ham United,,Villa Park,,,8602292d,7c21e445,
+31,2026-03-22,14:15 (21:15),Sun,Tottenham Hotspur,,,,Nottingham Forest,,Tottenham Hotspur Stadium,,,361ca564,e4a775cb,
+32,2026-04-11,15:00 (21:00),Sat,Chelsea,,,,Manchester City,,Stamford Bridge,,,cff3d9bb,b8fd03ef,
+32,2026-04-11,15:00 (21:00),Sat,Manchester Utd,,,,Leeds United,,Old Trafford,,,19538871,5bfb9659,
+32,2026-04-11,15:00 (21:00),Sat,Brentford,,,,Everton,,Gtech Community Stadium,,,cd051869,d3fd31cc,
+32,2026-04-11,15:00 (21:00),Sat,Liverpool,,,,Fulham,,Anfield,,,822bd0ba,fd962109,
+32,2026-04-11,15:00 (21:00),Sat,Crystal Palace,,,,Newcastle United,,Selhurst Park,,,47c64c55,b2b47a98,
+32,2026-04-11,15:00 (21:00),Sat,Burnley,,,,Brighton,,Turf Moor,,,943e8050,d07537b9,
+32,2026-04-11,15:00 (21:00),Sat,Arsenal,,,,Bournemouth,,Emirates Stadium,,,18bb7c10,4ba7cbea,
+32,2026-04-11,15:00 (21:00),Sat,West Ham United,,,,Wolves,,London Stadium,,,7c21e445,8cec06e1,
+32,2026-04-11,15:00 (21:00),Sat,Nottingham Forest,,,,Aston Villa,,The City Ground,,,e4a775cb,8602292d,
+32,2026-04-11,15:00 (21:00),Sat,Sunderland,,,,Tottenham Hotspur,,Stadium of Light,,,8ef52968,361ca564,
+33,2026-04-18,15:00 (21:00),Sat,Crystal Palace,,,,West Ham United,,Selhurst Park,,,47c64c55,7c21e445,
+33,2026-04-18,15:00 (21:00),Sat,Everton,,,,Liverpool,,Hill Dickinson Stadium,,,d3fd31cc,822bd0ba,
+33,2026-04-18,15:00 (21:00),Sat,Leeds United,,,,Wolves,,Elland Road,,,5bfb9659,8cec06e1,
+33,2026-04-18,15:00 (21:00),Sat,Brentford,,,,Fulham,,Gtech Community Stadium,,,cd051869,fd962109,
+33,2026-04-18,15:00 (21:00),Sat,Newcastle United,,,,Bournemouth,,St James' Park,,,b2b47a98,4ba7cbea,
+33,2026-04-18,15:00 (21:00),Sat,Chelsea,,,,Manchester Utd,,Stamford Bridge,,,cff3d9bb,19538871,
+33,2026-04-18,15:00 (21:00),Sat,Tottenham Hotspur,,,,Brighton,,Tottenham Hotspur Stadium,,,361ca564,d07537b9,
+33,2026-04-18,15:00 (21:00),Sat,Nottingham Forest,,,,Burnley,,The City Ground,,,e4a775cb,943e8050,
+33,2026-04-18,15:00 (21:00),Sat,Manchester City,,,,Arsenal,,Etihad Stadium,,,b8fd03ef,18bb7c10,
+33,2026-04-18,15:00 (21:00),Sat,Aston Villa,,,,Sunderland,,Villa Park,,,8602292d,8ef52968,
+34,2026-04-25,15:00 (21:00),Sat,Arsenal,,,,Newcastle United,,Emirates Stadium,,,18bb7c10,b2b47a98,
+34,2026-04-25,15:00 (21:00),Sat,Fulham,,,,Aston Villa,,Craven Cottage,,,fd962109,8602292d,
+34,2026-04-25,15:00 (21:00),Sat,Liverpool,,,,Crystal Palace,,Anfield,,,822bd0ba,47c64c55,
+34,2026-04-25,15:00 (21:00),Sat,West Ham United,,,,Everton,,London Stadium,,,7c21e445,d3fd31cc,
+34,2026-04-25,15:00 (21:00),Sat,Brighton,,,,Chelsea,,The American Express Stadium,,,d07537b9,cff3d9bb,
+34,2026-04-25,15:00 (21:00),Sat,Wolves,,,,Tottenham Hotspur,,Molineux Stadium,,,8cec06e1,361ca564,
+34,2026-04-25,15:00 (21:00),Sat,Sunderland,,,,Nottingham Forest,,Stadium of Light,,,8ef52968,e4a775cb,
+34,2026-04-25,15:00 (21:00),Sat,Manchester Utd,,,,Brentford,,Old Trafford,,,19538871,cd051869,
+34,2026-04-25,15:00 (21:00),Sat,Burnley,,,,Manchester City,,Turf Moor,,,943e8050,b8fd03ef,
+34,2026-04-25,15:00 (21:00),Sat,Bournemouth,,,,Leeds United,,Vitality Stadium,,,4ba7cbea,5bfb9659,
+35,2026-05-02,15:00 (21:00),Sat,Brentford,,,,West Ham United,,Gtech Community Stadium,,,cd051869,7c21e445,
+35,2026-05-02,15:00 (21:00),Sat,Bournemouth,,,,Crystal Palace,,Vitality Stadium,,,4ba7cbea,47c64c55,
+35,2026-05-02,15:00 (21:00),Sat,Manchester Utd,,,,Liverpool,,Old Trafford,,,19538871,822bd0ba,
+35,2026-05-02,15:00 (21:00),Sat,Leeds United,,,,Burnley,,Elland Road,,,5bfb9659,943e8050,
+35,2026-05-02,15:00 (21:00),Sat,Chelsea,,,,Nottingham Forest,,Stamford Bridge,,,cff3d9bb,e4a775cb,
+35,2026-05-02,15:00 (21:00),Sat,Wolves,,,,Sunderland,,Molineux Stadium,,,8cec06e1,8ef52968,
+35,2026-05-02,15:00 (21:00),Sat,Everton,,,,Manchester City,,Hill Dickinson Stadium,,,d3fd31cc,b8fd03ef,
+35,2026-05-02,15:00 (21:00),Sat,Arsenal,,,,Fulham,,Emirates Stadium,,,18bb7c10,fd962109,
+35,2026-05-02,15:00 (21:00),Sat,Aston Villa,,,,Tottenham Hotspur,,Villa Park,,,8602292d,361ca564,
+35,2026-05-02,15:00 (21:00),Sat,Newcastle United,,,,Brighton,,St James' Park,,,b2b47a98,d07537b9,
+36,2026-05-09,15:00 (21:00),Sat,Manchester City,,,,Brentford,,Etihad Stadium,,,b8fd03ef,cd051869,
+36,2026-05-09,15:00 (21:00),Sat,Nottingham Forest,,,,Newcastle United,,The City Ground,,,e4a775cb,b2b47a98,
+36,2026-05-09,15:00 (21:00),Sat,Crystal Palace,,,,Everton,,Selhurst Park,,,47c64c55,d3fd31cc,
+36,2026-05-09,15:00 (21:00),Sat,Brighton,,,,Wolves,,The American Express Stadium,,,d07537b9,8cec06e1,
+36,2026-05-09,15:00 (21:00),Sat,Fulham,,,,Bournemouth,,Craven Cottage,,,fd962109,4ba7cbea,
+36,2026-05-09,15:00 (21:00),Sat,Tottenham Hotspur,,,,Leeds United,,Tottenham Hotspur Stadium,,,361ca564,5bfb9659,
+36,2026-05-09,15:00 (21:00),Sat,Sunderland,,,,Manchester Utd,,Stadium of Light,,,8ef52968,19538871,
+36,2026-05-09,15:00 (21:00),Sat,Burnley,,,,Aston Villa,,Turf Moor,,,943e8050,8602292d,
+36,2026-05-09,15:00 (21:00),Sat,West Ham United,,,,Arsenal,,London Stadium,,,7c21e445,18bb7c10,
+36,2026-05-09,15:00 (21:00),Sat,Liverpool,,,,Chelsea,,Anfield,,,822bd0ba,cff3d9bb,
+37,2026-05-17,15:00 (21:00),Sun,Manchester Utd,,,,Nottingham Forest,,Old Trafford,,,19538871,e4a775cb,
+37,2026-05-17,15:00 (21:00),Sun,Chelsea,,,,Tottenham Hotspur,,Stamford Bridge,,,cff3d9bb,361ca564,
+37,2026-05-17,15:00 (21:00),Sun,Arsenal,,,,Burnley,,Emirates Stadium,,,18bb7c10,943e8050,
+37,2026-05-17,15:00 (21:00),Sun,Newcastle United,,,,West Ham United,,St James' Park,,,b2b47a98,7c21e445,
+37,2026-05-17,15:00 (21:00),Sun,Everton,,,,Sunderland,,Hill Dickinson Stadium,,,d3fd31cc,8ef52968,
+37,2026-05-17,15:00 (21:00),Sun,Wolves,,,,Fulham,,Molineux Stadium,,,8cec06e1,fd962109,
+37,2026-05-17,15:00 (21:00),Sun,Bournemouth,,,,Manchester City,,Vitality Stadium,,,4ba7cbea,b8fd03ef,
+37,2026-05-17,15:00 (21:00),Sun,Aston Villa,,,,Liverpool,,Villa Park,,,8602292d,822bd0ba,
+37,2026-05-17,15:00 (21:00),Sun,Brentford,,,,Crystal Palace,,Gtech Community Stadium,,,cd051869,47c64c55,
+37,2026-05-17,15:00 (21:00),Sun,Leeds United,,,,Brighton,,Elland Road,,,5bfb9659,d07537b9,
+38,2026-05-24,16:00 (22:00),Sun,West Ham United,,,,Leeds United,,London Stadium,,,7c21e445,5bfb9659,
+38,2026-05-24,16:00 (22:00),Sun,Burnley,,,,Wolves,,Turf Moor,,,943e8050,8cec06e1,
+38,2026-05-24,16:00 (22:00),Sun,Sunderland,,,,Chelsea,,Stadium of Light,,,8ef52968,cff3d9bb,
+38,2026-05-24,16:00 (22:00),Sun,Nottingham Forest,,,,Bournemouth,,The City Ground,,,e4a775cb,4ba7cbea,
+38,2026-05-24,16:00 (22:00),Sun,Crystal Palace,,,,Arsenal,,Selhurst Park,,,47c64c55,18bb7c10,
+38,2026-05-24,16:00 (22:00),Sun,Fulham,,,,Newcastle United,,Craven Cottage,,,fd962109,b2b47a98,
+38,2026-05-24,16:00 (22:00),Sun,Brighton,,,,Manchester Utd,,The American Express Stadium,,,d07537b9,19538871,
+38,2026-05-24,16:00 (22:00),Sun,Liverpool,,,,Brentford,,Anfield,,,822bd0ba,cd051869,
+38,2026-05-24,16:00 (22:00),Sun,Tottenham Hotspur,,,,Everton,,Tottenham Hotspur Stadium,,,361ca564,d3fd31cc,
+38,2026-05-24,16:00 (22:00),Sun,Manchester City,,,,Aston Villa,,Etihad Stadium,,,b8fd03ef,8602292d,

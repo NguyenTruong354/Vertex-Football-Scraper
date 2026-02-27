@@ -1,0 +1,2 @@
+﻿event_id,tournament_id,season_id,round_num,home_team,home_team_id,away_team,away_team_id,home_score,away_score,status,start_timestamp,match_date,slug,league_id
+12436870,17,61627,1,Manchester United,35,Fulham,43,1,0,finished,1723834800,2024-08-16,fulham-manchester-united,EPL

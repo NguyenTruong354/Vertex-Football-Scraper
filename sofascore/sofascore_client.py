@@ -5,7 +5,8 @@
 """
 Thu thập heatmap / touch map từ SofaScore JSON API.
 
-Không cần browser — SofaScore cung cấp API công khai trả JSON.
+Dùng nodriver (undetected Chrome) để bypass Cloudflare protection.
+SofaScore API đã chặn raw HTTP requests → phải dùng browser.
 
 Dữ liệu thu thập:
   1. Heatmap Points   — tọa độ (x, y) mỗi chạm bóng / di chuyển
@@ -30,6 +31,7 @@ Rate limiting: 2s giữa mỗi API request
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import sys
 import time
@@ -37,7 +39,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import aiohttp
+import nodriver as uc
 import pandas as pd
 
 import config_sofascore as cfg
@@ -90,7 +92,8 @@ logger = _setup_logging()
 
 class SofaScoreClient:
     """
-    Async HTTP client cho SofaScore API.
+    Async client cho SofaScore API, dùng nodriver (undetected Chrome)
+    để bypass Cloudflare protection.
 
     Lifecycle:
         async with SofaScoreClient() as client:
@@ -98,21 +101,25 @@ class SofaScoreClient:
     """
 
     def __init__(self) -> None:
-        self._session: aiohttp.ClientSession | None = None
+        self._browser: uc.Browser | None = None
+        self._tab = None
         self._last_request_time: float = 0.0
 
     async def __aenter__(self) -> "SofaScoreClient":
-        self._session = aiohttp.ClientSession(
-            headers=cfg.SS_HEADERS,
-            timeout=aiohttp.ClientTimeout(total=cfg.SS_TIMEOUT),
-        )
-        logger.info("▶ SofaScore API client khởi tạo")
+        self._browser = await uc.start()
+        # Warm up: navigate to SofaScore homepage first to get cookies/CF clearance
+        self._tab = await self._browser.get("https://www.sofascore.com/")
+        await asyncio.sleep(3)
+        logger.info("▶ SofaScore browser client khởi tạo (nodriver)")
         return self
 
     async def __aexit__(self, *args: Any) -> None:
-        if self._session:
-            await self._session.close()
-            logger.info("✓ SofaScore API client đóng")
+        if self._browser:
+            try:
+                self._browser.stop()
+            except Exception:
+                pass
+            logger.info("✓ SofaScore browser client đóng")
 
     async def _rate_limit(self) -> None:
         elapsed = time.monotonic() - self._last_request_time
@@ -127,7 +134,7 @@ class SofaScoreClient:
         retries: int = cfg.SS_MAX_RETRIES,
     ) -> dict | list | None:
         """
-        GET request tới SofaScore API → JSON.
+        GET request tới SofaScore API → JSON (via nodriver browser).
 
         Args:
             endpoint: Path sau API base (VD: "/event/12345/...")
@@ -142,26 +149,69 @@ class SofaScoreClient:
         for attempt in range(1, retries + 1):
             try:
                 logger.debug("  📡 GET %s (attempt %d)", url, attempt)
-                async with self._session.get(url) as resp:
-                    self._last_request_time = time.monotonic()
+                self._tab = await self._browser.get(url)
+                self._last_request_time = time.monotonic()
+                await asyncio.sleep(1.5)  # Wait for page to load
 
-                    if resp.status == 200:
-                        data = await resp.json()
-                        return data
-                    elif resp.status == 404:
-                        logger.debug("  404: %s", url)
-                        return None
-                    elif resp.status == 429:
-                        # Rate limited — exponential backoff
-                        wait = cfg.SS_DELAY_BETWEEN_REQUESTS * (2 ** attempt)
-                        logger.warning("  429 Rate limited — chờ %.1fs", wait)
-                        await asyncio.sleep(wait)
-                    else:
-                        logger.warning("  HTTP %d: %s", resp.status, url)
-                        if attempt < retries:
-                            await asyncio.sleep(cfg.SS_DELAY_BETWEEN_REQUESTS)
+                # Extract JSON from <pre> tag (API returns JSON wrapped in HTML)
+                content = await self._tab.get_content()
 
-            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                # Try to extract JSON from <pre> tag
+                json_str = None
+                if "<pre" in content:
+                    import re
+                    m = re.search(r"<pre[^>]*>(.*?)</pre>", content, re.DOTALL)
+                    if m:
+                        json_str = m.group(1).strip()
+                elif content.strip().startswith("{") or content.strip().startswith("["):
+                    json_str = content.strip()
+
+                if not json_str:
+                    # Try JS extraction
+                    try:
+                        json_str = await self._tab.evaluate("document.body.innerText")
+                    except Exception:
+                        pass
+
+                if json_str:
+                    # Unescape HTML entities
+                    json_str = (
+                        json_str
+                        .replace("&amp;", "&")
+                        .replace("&lt;", "<")
+                        .replace("&gt;", ">")
+                        .replace("&quot;", '"')
+                    )
+                    data = json.loads(json_str)
+
+                    # Check for API error
+                    if isinstance(data, dict) and data.get("error"):
+                        status = data["error"].get("code", 0)
+                        if status == 404:
+                            logger.debug("  404: %s", url)
+                            return None
+                        elif status == 429:
+                            wait = cfg.SS_DELAY_BETWEEN_REQUESTS * (2 ** attempt)
+                            logger.warning("  429 Rate limited — chờ %.1fs", wait)
+                            await asyncio.sleep(wait)
+                            continue
+                        else:
+                            logger.warning("  API error %d: %s", status, url)
+                            if attempt < retries:
+                                await asyncio.sleep(cfg.SS_DELAY_BETWEEN_REQUESTS)
+                            continue
+
+                    return data
+                else:
+                    logger.warning("  No JSON found in response: %s", url)
+                    if attempt < retries:
+                        await asyncio.sleep(cfg.SS_DELAY_BETWEEN_REQUESTS * 2)
+
+            except json.JSONDecodeError as exc:
+                logger.warning("  JSON parse error: %s – %s", url, exc)
+                if attempt < retries:
+                    await asyncio.sleep(cfg.SS_DELAY_BETWEEN_REQUESTS)
+            except Exception as exc:
                 logger.warning("  Request error: %s – %s", url, exc)
                 if attempt < retries:
                     await asyncio.sleep(cfg.SS_DELAY_BETWEEN_REQUESTS)
@@ -319,11 +369,12 @@ async def fetch_player_heatmap(
     API: /event/{event_id}/heatmap/{player_id}
     Returns: list of {x, y, value} dicts
     """
-    data = await client.get_json(f"/event/{event_id}/heatmap/{player_id}")
+    # Endpoint mới: /event/{id}/player/{pid}/heatmap (cũ: /event/{id}/heatmap/{pid} → 404)
+    data = await client.get_json(f"/event/{event_id}/player/{player_id}/heatmap")
     if not data:
         return []
 
-    # SofaScore returns {"heatmap": [{"x": ..., "y": ..., "value": ...}, ...]}
+    # SofaScore returns {"heatmap": [{"x": ..., "y": ...}, ...]}
     # or directly a list
     if isinstance(data, dict):
         points = data.get("heatmap", [])
@@ -335,7 +386,7 @@ async def fetch_player_heatmap(
     return [
         {"x": p.get("x", 0), "y": p.get("y", 0), "value": p.get("value", 1)}
         for p in points
-        if isinstance(p, dict)
+        if isinstance(p, dict) and ("x" in p and "y" in p)
     ]
 
 
@@ -468,28 +519,9 @@ async def main(
                     if not player_id:
                         continue
 
-                    # ── Average position ──
-                    if player.get("avg_x") is not None and player.get("avg_y") is not None:
-                        pos_dict = {
-                            "event_id": event_id,
-                            "match_date": date,
-                            "home_team": home,
-                            "away_team": away,
-                            "player_id": player_id,
-                            "player_name": player_name,
-                            "team_name": team_name,
-                            "position": player.get("position"),
-                            "jersey_number": player.get("jersey_number"),
-                            "avg_x": player["avg_x"],
-                            "avg_y": player["avg_y"],
-                            "minutes_played": player.get("minutes_played"),
-                            "rating": player.get("rating"),
-                            "league_id": league_id,
-                            "season": league_cfg.season,
-                        }
-                        all_avg_positions.append(pos_dict)
-
                     # ── Heatmap points (if not skipped) ──
+                    # Lấy heatmap trước để tính avg position từ heatmap data
+                    heatmap_points: list[dict] = []
                     if not skip_heatmaps and not player.get("substitute", False):
                         heatmap_points = await fetch_player_heatmap(
                             client, event_id, player_id
@@ -525,6 +557,26 @@ async def main(
                                 "season": league_cfg.season,
                             }
                             all_heatmaps.append(hm_dict)
+
+                            # ── Avg position (tính từ heatmap data) ──
+                            pos_dict = {
+                                "event_id": event_id,
+                                "match_date": date,
+                                "home_team": home,
+                                "away_team": away,
+                                "player_id": player_id,
+                                "player_name": player_name,
+                                "team_name": team_name,
+                                "position": player.get("position"),
+                                "jersey_number": player.get("jersey_number"),
+                                "avg_x": avg_x,
+                                "avg_y": avg_y,
+                                "minutes_played": player.get("minutes_played"),
+                                "rating": player.get("rating"),
+                                "league_id": league_id,
+                                "season": league_cfg.season,
+                            }
+                            all_avg_positions.append(pos_dict)
 
             logger.info("  ✓ %d players processed", len(home_players) + len(away_players))
 

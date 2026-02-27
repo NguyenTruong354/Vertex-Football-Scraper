@@ -32,6 +32,13 @@
 --   6. squad_stats          — team summary stats (FBref)
 --   7. player_season_stats  — player season totals (FBref)
 --   8. player_crossref      — ánh xạ Understat ↔ FBref player IDs
+--   9. fixtures             — match schedule (FBref)
+--  10. gk_stats             — goalkeeper stats (FBref)
+--  11. ss_events            — match events (SofaScore)
+--  12. player_avg_positions — average positions (SofaScore)
+--  13. heatmaps             — heatmap summaries (SofaScore)
+--  14. team_metadata        — team info (Transfermarkt)
+--  15. market_values        — player market values (Transfermarkt)
 -- ============================================================
 
 -- ============================================================
@@ -285,6 +292,230 @@ CREATE TABLE IF NOT EXISTS player_crossref (
 
 CREATE INDEX IF NOT EXISTS idx_crossref_us    ON player_crossref (understat_player_id, league_id);
 CREATE INDEX IF NOT EXISTS idx_crossref_fb    ON player_crossref (fbref_player_id, league_id);
+
+-- ============================================================
+-- NHÓM E: FBREF EXTRA TABLES
+-- ============================================================
+
+-- ──────────────────────────────────────────────────────────
+-- 9. FIXTURES (lịch thi đấu, FBref)
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS fixtures (
+    match_id         TEXT    NOT NULL,
+    gameweek         INTEGER,
+    date             TEXT,
+    start_time       TEXT,
+    dayofweek        TEXT,
+    home_team        TEXT,
+    home_xg          REAL,
+    score            TEXT,
+    away_xg          REAL,
+    away_team        TEXT,
+    attendance       TEXT,
+    venue            TEXT,
+    referee          TEXT,
+    match_report_url TEXT,
+    home_team_id     TEXT,
+    away_team_id     TEXT,
+    league_id        TEXT    NOT NULL DEFAULT 'EPL',
+    loaded_at        TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (match_id, league_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_fix_date     ON fixtures (date);
+CREATE INDEX IF NOT EXISTS idx_fix_home     ON fixtures (home_team_id, league_id);
+CREATE INDEX IF NOT EXISTS idx_fix_away     ON fixtures (away_team_id, league_id);
+
+-- ──────────────────────────────────────────────────────────
+-- 10. GK STATS (thống kê thủ môn, FBref)
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS gk_stats (
+    player_name                   TEXT,
+    player_id                     TEXT    NOT NULL,
+    team_name                     TEXT,
+    team_id                       TEXT,
+    season                        TEXT,
+    nationality                   TEXT,
+    position                      TEXT,
+    age                           TEXT,
+    gk_games                      INTEGER,
+    gk_games_starts               INTEGER,
+    minutes_gk                    INTEGER,
+    gk_goals_against              INTEGER,
+    gk_goals_against_per90        REAL,
+    gk_shots_on_target_against    INTEGER,
+    gk_saves                      INTEGER,
+    gk_save_pct                   REAL,
+    gk_wins                       INTEGER,
+    gk_ties                       INTEGER,
+    gk_losses                     INTEGER,
+    gk_clean_sheets               INTEGER,
+    gk_clean_sheets_pct           REAL,
+    gk_pens_att                   INTEGER,
+    gk_pens_allowed               INTEGER,
+    gk_pens_saved                 INTEGER,
+    gk_pens_missed                INTEGER,
+    gk_psxg                       REAL,
+    gk_psxg_per_shot_on_target    REAL,
+    gk_passes_completed_launched  INTEGER,
+    gk_passes_launched            INTEGER,
+    gk_passes_pct_launched        REAL,
+    gk_passes                     INTEGER,
+    gk_passes_throws              INTEGER,
+    gk_pct_passes_launched        REAL,
+    gk_passes_length_avg          REAL,
+    gk_goal_kicks                 INTEGER,
+    gk_pct_goal_kicks_launched    REAL,
+    gk_goal_kick_length_avg       REAL,
+    gk_crosses_faced              INTEGER,
+    gk_crosses_stopped            INTEGER,
+    gk_crosses_stopped_pct        REAL,
+    gk_def_actions_outside_pen_area INTEGER,
+    gk_avg_distance_def_actions   REAL,
+    league_id                     TEXT NOT NULL DEFAULT 'EPL',
+    loaded_at                     TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (player_id, team_id, league_id)
+);
+
+-- ============================================================
+-- NHÓM F: SOFASCORE TABLES
+-- ============================================================
+
+-- ──────────────────────────────────────────────────────────
+-- 11. SS_EVENTS (danh sách trận đấu SofaScore)
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS ss_events (
+    event_id        BIGINT  NOT NULL,
+    tournament_id   INTEGER,
+    season_id       INTEGER,
+    round_num       INTEGER,
+    home_team       TEXT,
+    home_team_id    INTEGER,
+    away_team       TEXT,
+    away_team_id    INTEGER,
+    home_score      INTEGER,
+    away_score      INTEGER,
+    status          TEXT,
+    start_timestamp BIGINT,
+    match_date      TEXT,
+    slug            TEXT,
+    league_id       TEXT    NOT NULL DEFAULT 'EPL',
+    loaded_at       TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (event_id, league_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sse_date ON ss_events (match_date);
+
+-- ──────────────────────────────────────────────────────────
+-- 12. PLAYER AVG POSITIONS (SofaScore)
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS player_avg_positions (
+    event_id        BIGINT  NOT NULL,
+    match_date      TEXT,
+    home_team       TEXT,
+    away_team       TEXT,
+    player_id       BIGINT  NOT NULL,
+    player_name     TEXT,
+    team_name       TEXT,
+    position        TEXT,
+    jersey_number   INTEGER,
+    avg_x           REAL,
+    avg_y           REAL,
+    minutes_played  INTEGER,
+    rating          REAL,
+    league_id       TEXT    NOT NULL DEFAULT 'EPL',
+    season          TEXT,
+    loaded_at       TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (event_id, player_id, league_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pap_event ON player_avg_positions (event_id, league_id);
+
+-- ──────────────────────────────────────────────────────────
+-- 13. HEATMAPS (SofaScore — summary per player per match)
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS heatmaps (
+    event_id            BIGINT  NOT NULL,
+    match_date          TEXT,
+    home_team           TEXT,
+    away_team           TEXT,
+    score               TEXT,
+    player_id           BIGINT  NOT NULL,
+    player_name         TEXT,
+    team_name           TEXT,
+    position            TEXT,
+    jersey_number       INTEGER,
+    num_points          INTEGER,
+    avg_x               REAL,
+    avg_y               REAL,
+    league_id           TEXT    NOT NULL DEFAULT 'EPL',
+    season              TEXT,
+    heatmap_points_json TEXT,   -- JSON array of {x, y, v}
+    loaded_at           TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (event_id, player_id, league_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_hm_event ON heatmaps (event_id, league_id);
+
+-- ============================================================
+-- NHÓM G: TRANSFERMARKT TABLES
+-- ============================================================
+
+-- ──────────────────────────────────────────────────────────
+-- 14. TEAM METADATA (Transfermarkt)
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS team_metadata (
+    team_name               TEXT,
+    team_id                 TEXT    NOT NULL,
+    team_url                TEXT,
+    league_id               TEXT    NOT NULL DEFAULT 'EPL',
+    season                  TEXT,
+    logo_url                TEXT,
+    stadium_name            TEXT,
+    stadium_capacity        TEXT,
+    stadium_url             TEXT,
+    manager_name            TEXT,
+    manager_url             TEXT,
+    manager_since           TEXT,
+    manager_contract_until  TEXT,
+    squad_size              INTEGER,
+    avg_age                 REAL,
+    num_foreigners          INTEGER,
+    total_market_value      TEXT,
+    formation               TEXT,
+    loaded_at               TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (team_id, league_id)
+);
+
+-- ──────────────────────────────────────────────────────────
+-- 15. MARKET VALUES (Transfermarkt)
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS market_values (
+    player_name             TEXT,
+    player_id               TEXT    NOT NULL,
+    player_url              TEXT,
+    player_image_url        TEXT,
+    team_name               TEXT,
+    team_id                 TEXT    NOT NULL,
+    league_id               TEXT    NOT NULL DEFAULT 'EPL',
+    season                  TEXT,
+    position                TEXT,
+    shirt_number            TEXT,
+    date_of_birth           TEXT,
+    age                     TEXT,
+    nationality             TEXT,
+    second_nationality      TEXT,
+    height_cm               TEXT,
+    foot                    TEXT,
+    joined                  TEXT,
+    contract_until          TEXT,
+    market_value            TEXT,
+    market_value_numeric    REAL,
+    loaded_at               TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (player_id, team_id, league_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mv_team ON market_values (team_id, league_id);
 
 -- ============================================================
 -- FOREIGN KEY CONSTRAINTS
