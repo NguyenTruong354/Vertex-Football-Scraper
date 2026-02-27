@@ -19,3 +19,8 @@ pandas>=2.1.0,<3.0.0
 
 # Logging helpers (stdlib is enough but colorlog is nice)
 colorlog>=6.8.0,<7.0.0
+
+# PostgreSQL integration
+psycopg2-binary>=2.9.0,<3.0.0
+sqlalchemy>=2.0.0,<3.0.0
+python-dotenv>=1.0.0,<2.0.0
