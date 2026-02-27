@@ -1,0 +1,24 @@
+## Đánh giá Gap Analysis
+
+### ✅ Đã có (từ Understat)
+| Loại dữ liệu | Chi tiết |
+|---|---|
+| Shot-level xG | Tọa độ X/Y, xG, result, situation |
+| Player match xA | xA, xGChain, xGBuildup per match |
+| Match aggregates | Tổng xG home/away, tỉ số |
+
+### ❌ Chưa có — Cần bổ sung
+| Loại dữ liệu | Nguồn | Mức quan trọng |
+|---|---|---|
+| **Player Profile** (tuổi, quốc tịch, chiều cao, chân thuận, ảnh) | FBref, Transfermarkt | 🔴 Critical |
+| **Squad/Team Roster** (đội hình, số áo, vị trí) | FBref | 🔴 Critical |
+| **Season-level Player Stats** (goals, assists, minutes, cards, ratings tổng mùa) | FBref | 🔴 Critical |
+| **Pass Network Data** (pass origin→destination, pass type, progressive passes) | FBref | 🔴 Critical |
+| **Defensive Stats** (tackles, interceptions, blocks, pressures) | FBref | 🟡 Important |
+| **Possession & Carry** (progressive carries, take-ons, touches by zone) | FBref | 🟡 Important |
+| **GK Stats** (PSxG, saves, distribution) | FBref | 🟡 Important |
+| **League Table / Standings** (W/D/L, points, GD, form) | FBref | 🔴 Critical |
+| **Fixture Schedule** (lịch thi đấu, kick-off time, TV, venue) | FBref | 🟡 Important |
+| **Team Metadata** (logo, stadium, manager, formation) | Transfermarkt | 🟡 Important |
+| **Market Value** (giá trị chuyển nhượng cầu thủ) | Transfermarkt | 🟢 Nice-to-have |
+| **Heatmaps / Touch Maps** | WhoScored/SofaScore | 🟢 Nice-to-have |

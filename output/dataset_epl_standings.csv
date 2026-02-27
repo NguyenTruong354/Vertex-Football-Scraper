@@ -1,0 +1,21 @@
+﻿position,team_name,team_id,team_url,matches_played,wins,draws,losses,goals_for,goals_against,goal_difference,points,points_avg,form_last5,attendance_per_g,top_scorer,top_keeper
+1,Arsenal,18bb7c10,/en/squads/18bb7c10/Arsenal-Stats,28,18,7,3,56,21,+35,61,2.18,W W D D W,"60,213",Viktor Gyökeres - 10,David Raya
+2,Manchester City,b8fd03ef,/en/squads/b8fd03ef/Manchester-City-Stats,27,17,5,5,56,25,+31,56,2.07,W D W W W,"52,215",Erling Haaland - 22,Gianluigi Donnarumma
+3,Aston Villa,8602292d,/en/squads/8602292d/Aston-Villa-Stats,27,15,6,6,38,28,+10,51,1.89,W L D W D,"41,803","Ollie Watkins, Morgan Rogers - 8",Emiliano Martínez
+4,Manchester Utd,19538871,/en/squads/19538871/Manchester-United-Stats,27,13,9,5,48,37,+11,48,1.78,W W W D W,"73,962",Bryan Mbeumo - 9,Senne Lammens
+5,Chelsea,cff3d9bb,/en/squads/cff3d9bb/Chelsea-Stats,27,12,9,6,48,31,+17,45,1.67,W W W D D,"39,596",João Pedro - 11,Robert Sánchez
+6,Liverpool,822bd0ba,/en/squads/822bd0ba/Liverpool-Stats,27,13,6,8,42,35,+7,45,1.67,L W L W W,"60,372",Hugo Ekitike - 10,Alisson
+7,Brentford,cd051869,/en/squads/cd051869/Brentford-Stats,27,12,4,11,40,37,+3,40,1.48,L W W D L,"17,103",Thiago - 17,Caoimhín Kelleher
+8,Bournemouth,4ba7cbea,/en/squads/4ba7cbea/Bournemouth-Stats,27,9,11,7,43,45,-2,38,1.41,W W D W D,"11,166",Antoine Semenyo - 10,Đorđe Petrović
+9,Everton,d3fd31cc,/en/squads/d3fd31cc/Everton-Stats,27,10,7,10,29,31,-2,37,1.37,D D W L L,"52,121","Kiernan Dewsbury-Hall, Iliman Ndiaye... - 5",Jordan Pickford
+10,Fulham,fd962109,/en/squads/fd962109/Fulham-Stats,27,11,4,12,38,41,-3,37,1.37,W L L L W,"27,094","Raúl Jiménez, Harry Wilson - 8",Bernd Leno
+11,Newcastle United,b2b47a98,/en/squads/b2b47a98/Newcastle-United-Stats,27,10,6,11,38,39,-1,36,1.33,L L L W L,"52,053",Bruno Guimarães - 9,Nick Pope
+12,Sunderland,8ef52968,/en/squads/8ef52968/Sunderland-Stats,27,9,9,9,28,33,-5,36,1.33,L W L L L,"46,382",Brian Brobbey - 5,Robin Roefs
+13,Crystal Palace,47c64c55,/en/squads/47c64c55/Crystal-Palace-Stats,27,9,8,10,29,32,-3,35,1.3,L D W L W,"24,966",Jean-Philippe Mateta - 8,Dean Henderson
+14,Brighton,d07537b9,/en/squads/d07537b9/Brighton-and-Hove-Albion-Stats,27,8,10,9,36,34,+2,34,1.26,L D L L W,"31,319",Danny Welbeck - 9,Bart Verbruggen
+15,Leeds United,5bfb9659,/en/squads/5bfb9659/Leeds-United-Stats,27,7,10,10,37,46,-9,31,1.15,D L W D D,"36,714",Dominic Calvert-Lewin - 10,Lucas Perri
+16,Tottenham Hotspur,361ca564,/en/squads/361ca564/Tottenham-Hotspur-Stats,27,7,8,12,37,41,-4,29,1.07,D D L L L,"60,950",Richarlison - 7,Guglielmo Vicario
+17,Nottingham Forest,e4a775cb,/en/squads/e4a775cb/Nottingham-Forest-Stats,27,7,6,14,25,39,-14,27,1.0,W D L D L,"30,471",Morgan Gibbs-White - 6,Matz Sels
+18,West Ham United,7c21e445,/en/squads/7c21e445/West-Ham-United-Stats,27,6,7,14,32,49,-17,25,0.93,W L W D D,"62,454",Jarrod Bowen - 8,Alphonse Areola
+19,Burnley,943e8050,/en/squads/943e8050/Burnley-Stats,27,4,7,16,29,52,-23,19,0.7,D L L W D,"21,140","Zian Flemming, Jaidon Anthony - 6",Martin Dúbravka
+20,Wolves,8cec06e1,/en/squads/8cec06e1/Wolverhampton-Wanderers-Stats,28,1,7,20,18,51,-33,10,0.36,L L D D L,"29,798","Hwang Hee-chan, Santiago Bueno... - 2",José Sá
