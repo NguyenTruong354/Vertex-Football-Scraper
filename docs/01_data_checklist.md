@@ -1,5 +1,5 @@
 # Data Checklist — Vertex Football Scraper
-> Cập nhật: 28/02/2026 | Giải: Multi-League (EPL, La Liga, Bundesliga, Serie A, Ligue 1, …)
+> Cập nhật: 01/03/2026 | Giải: Multi-League (EPL, La Liga, Bundesliga, Serie A, Ligue 1, …)
 > File CSV output tự động theo league: `dataset_{league}_*.csv`
 
 ---
@@ -304,19 +304,118 @@
 
 ---
 
-## ❌ DỮ LIỆU CHƯA CÓ
+### 📦 Nguồn: Transfermarkt
+*Pipeline: `transfermarkt/tm_scraper.py` → 2 CSVs*
 
-### 🟡 Important (ưu tiên vừa)
-| Loại dữ liệu | Nguồn | Ghi chú |
+---
+
+#### 13. Team Metadata (`dataset_{league}_team_metadata.csv`) ✅ **MỚI**
+| Field | Kiểu | Mô tả |
 |---|---|---|
-| Team Metadata | Transfermarkt | Logo, stadium, manager, formation — cần scraper riêng |
+| `team_name` | str | Tên CLB |
+| `team_id` | str | Transfermarkt team ID |
+| `team_url` | str | URL trang CLB trên TM |
+| `league_id` | str | League ID từ registry |
+| `season` | str | Mùa giải |
+| `logo_url` | str | URL logo CLB |
+| `stadium_name` | str | Tên sân vận động |
+| `stadium_capacity` | int | Sức chứa sân |
+| `stadium_url` | str | URL trang sân trên TM |
+| `manager_name` | str | Tên HLV trưởng |
+| `manager_url` | str | URL trang HLV trên TM |
+| `squad_size` | int | Số cầu thủ trong đội |
+| `avg_age` | float | Tuổi trung bình |
+| `num_foreigners` | int | Số cầu thủ ngoại |
+| `total_market_value` | str | Tổng giá trị đội hình (VD: €1.23bn) |
+| `formation` | str | Đội hình (VD: 4-3-3, 3-4-2-1) |
+
+**Phạm vi đầy đủ:** 20 đội / giải
+
+---
+
+#### 14. Player Market Values (`dataset_{league}_market_values.csv`) ✅ **MỚI**
+| Field | Kiểu | Mô tả |
+|---|---|---|
+| `player_name` | str | Tên cầu thủ |
+| `player_id` | str | Transfermarkt player ID |
+| `player_url` | str | URL trang cầu thủ trên TM |
+| `player_image_url` | str | URL ảnh cầu thủ |
+| `team_name` / `team_id` | str | Đội & ID đội |
+| `league_id` | str | League ID từ registry |
+| `season` | str | Mùa giải |
+| `position` | str | Vị trí (VD: Centre-Forward, Goalkeeper) |
+| `shirt_number` | int | Số áo |
+| `date_of_birth` | str | Ngày sinh |
+| `age` | int | Tuổi |
+| `nationality` | str | Quốc tịch chính |
+| `second_nationality` | str | Quốc tịch thứ hai |
+| `height_cm` | int | Chiều cao (cm) |
+| `foot` | str | Chân thuận (left/right/both) |
+| `joined` | str | Ngày gia nhập CLB |
+| `contract_until` | str | Hết hạn hợp đồng |
+| `market_value` | str | Giá trị chuyển nhượng (VD: €65.00m) |
+| `market_value_numeric` | float | Giá trị quy ra EUR (VD: 65000000.0) |
+
+**Phạm vi đầy đủ:** ~550–600 cầu thủ / 20 đội
+
+---
+
+### 📦 Nguồn: SofaScore
+*Pipeline: `sofascore/sofascore_client.py` → 3 CSVs*
+
+---
+
+#### 15. Heatmaps (`dataset_{league}_heatmaps.csv`) ✅ **MỚI**
+| Field | Kiểu | Mô tả |
+|---|---|---|
+| `event_id` | int | SofaScore event ID |
+| `match_date` | str | Ngày thi đấu (YYYY-MM-DD) |
+| `home_team` / `away_team` | str | Đội nhà / Đội khách |
+| `score` | str | Tỉ số (VD: 2-1) |
+| `player_id` | int | SofaScore player ID |
+| `player_name` | str | Tên cầu thủ |
+| `team_name` | str | Đội của cầu thủ |
+| `position` | str | Vị trí (M, F, D, G) |
+| `jersey_number` | int | Số áo |
+| `num_points` | int | Số điểm heatmap |
+| `avg_x` | float | Vị trí X trung bình (0–100) |
+| `avg_y` | float | Vị trí Y trung bình (0–100) |
+| `heatmap_points_json` | str | JSON array tọa độ [{x, y, v}, ...] |
+| `league_id` | str | League ID |
+| `season` | str | Mùa giải |
+
+**Phạm vi:** ~22 cầu thủ × N trận (default 5 trận = ~110 rows)
+
+---
+
+#### 16. Player Average Positions (`dataset_{league}_player_avg_positions.csv`) ✅ **MỚI**
+| Field | Kiểu | Mô tả |
+|---|---|---|
+| `event_id` | int | SofaScore event ID |
+| `match_date` | str | Ngày thi đấu |
+| `home_team` / `away_team` | str | Đội nhà / Đội khách |
+| `player_id` | int | SofaScore player ID |
+| `player_name` | str | Tên cầu thủ |
+| `team_name` | str | Đội của cầu thủ |
+| `position` | str | Vị trí |
+| `jersey_number` | int | Số áo |
+| `avg_x` | float | Vị trí trung bình X (0–100) |
+| `avg_y` | float | Vị trí trung bình Y (0–100) |
+| `minutes_played` | int | Số phút thi đấu |
+| `rating` | float | SofaScore rating (0–10) |
+| `league_id` | str | League ID |
+| `season` | str | Mùa giải |
+
+**Phạm vi:** ~30 cầu thủ × N trận (default 5 trận = ~150 rows)
+
+---
+
+## ❌ DỮ LIỆU CHƯA CÓ
 
 ### 🟢 Nice-to-have
 | Loại dữ liệu | Nguồn | Ghi chú |
 |---|---|---|
-| Market Value | Transfermarkt | Giá trị chuyển nhượng |
-| Heatmaps / Touch Maps | WhoScored / SofaScore | Cần scraper riêng |
-| Player Photo | FBref / Wikipedia | URL ảnh đại diện |
+| Player Photo | FBref / Wikipedia | URL ảnh đại diện (hiện đã có `player_image_url` từ TM) |
 
 ---
 
@@ -331,8 +430,12 @@
 | 5 | `dataset_{league}_squad_stats.csv` | FBref | 20 rows | ✅ Sẵn sàng |
 | 6 | `dataset_{league}_squad_rosters.csv` | FBref | ~580 players | ✅ Sẵn sàng |
 | 7 | `dataset_{league}_player_season_stats.csv` | FBref | ~580 records | ✅ Sẵn sàng |
-| 8 | `dataset_{league}_defensive_stats.csv` | FBref | ~580 records | ✅ **MỚI** |
-| 9 | `dataset_{league}_possession_stats.csv` | FBref | ~580 records | ✅ **MỚI** |
-| 10 | `dataset_{league}_gk_stats.csv` | FBref | ~50 thủ môn | ✅ **MỚI** |
-| 11 | `dataset_{league}_fixtures.csv` | FBref | 380 matches | ✅ **MỚI** |
-| 12 | `dataset_{league}_match_passing.csv` | FBref | ~10,000 records | ✅ **MỚI** |
+| 8 | `dataset_{league}_defensive_stats.csv` | FBref | ~580 records | ✅ Sẵn sàng |
+| 9 | `dataset_{league}_possession_stats.csv` | FBref | ~580 records | ✅ Sẵn sàng |
+| 10 | `dataset_{league}_gk_stats.csv` | FBref | ~50 thủ môn | ✅ Sẵn sàng |
+| 11 | `dataset_{league}_fixtures.csv` | FBref | 380 matches | ✅ Sẵn sàng |
+| 12 | `dataset_{league}_match_passing.csv` | FBref | ~10,000 records | ✅ Sẵn sàng |
+| 13 | `dataset_{league}_team_metadata.csv` | Transfermarkt | 20 đội | ✅ **MỚI** |
+| 14 | `dataset_{league}_market_values.csv` | Transfermarkt | ~580 cầu thủ | ✅ **MỚI** |
+| 15 | `dataset_{league}_heatmaps.csv` | SofaScore | ~110–8,000 records | ✅ **MỚI** |
+| 16 | `dataset_{league}_player_avg_positions.csv` | SofaScore | ~150–10,000 records | ✅ **MỚI** |
