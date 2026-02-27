@@ -78,6 +78,13 @@ class FBrefLeagueConfig:
     squad_keeper_table_id: str
     squad_playing_time_table_id: str
     squad_misc_table_id: str
+    squad_defense_table_id: str
+    squad_possession_table_id: str
+    squad_gk_table_id: str        # alias cho keeper (player-level)
+
+    # Fixture schedule
+    fixture_url: str
+    fixture_table_id: str
 
     # Output
     output_dir: Path
@@ -85,6 +92,11 @@ class FBrefLeagueConfig:
     squad_roster_csv: str
     player_season_stats_csv: str
     squad_stats_csv: str
+    defensive_stats_csv: str
+    possession_stats_csv: str
+    gk_stats_csv: str
+    fixture_csv: str
+    match_passing_csv: str
 
 
 def get_fbref_config(league_id: str = "EPL") -> FBrefLeagueConfig:
@@ -121,12 +133,23 @@ def get_fbref_config(league_id: str = "EPL") -> FBrefLeagueConfig:
         squad_keeper_table_id=f"stats_keeper_{comp_id}",
         squad_playing_time_table_id=f"stats_playing_time_{comp_id}",
         squad_misc_table_id=f"stats_misc_{comp_id}",
+        squad_defense_table_id=f"stats_defense_{comp_id}",
+        squad_possession_table_id=f"stats_possession_{comp_id}",
+        squad_gk_table_id=f"stats_keeper_{comp_id}",
+        # Fixture
+        fixture_url=f"https://fbref.com/en/comps/{comp_id}/schedule/{lg.fbref_slug}-Scores-and-Fixtures",
+        fixture_table_id=f"sched_{lg.fbref_season}_{comp_id}_1",
         # Output
         output_dir=output_dir,
         standings_csv=f"dataset_{prefix}_standings.csv",
         squad_roster_csv=f"dataset_{prefix}_squad_rosters.csv",
         player_season_stats_csv=f"dataset_{prefix}_player_season_stats.csv",
         squad_stats_csv=f"dataset_{prefix}_squad_stats.csv",
+        defensive_stats_csv=f"dataset_{prefix}_defensive_stats.csv",
+        possession_stats_csv=f"dataset_{prefix}_possession_stats.csv",
+        gk_stats_csv=f"dataset_{prefix}_gk_stats.csv",
+        fixture_csv=f"dataset_{prefix}_fixtures.csv",
+        match_passing_csv=f"dataset_{prefix}_match_passing.csv",
     )
 
 
@@ -147,9 +170,16 @@ SQUAD_SHOOTING_TABLE_ID: str = _DEFAULT.squad_shooting_table_id
 SQUAD_KEEPER_TABLE_ID: str = _DEFAULT.squad_keeper_table_id
 SQUAD_PLAYING_TIME_TABLE_ID: str = _DEFAULT.squad_playing_time_table_id
 SQUAD_MISC_TABLE_ID: str = _DEFAULT.squad_misc_table_id
+SQUAD_DEFENSE_TABLE_ID: str = _DEFAULT.squad_defense_table_id
+SQUAD_POSSESSION_TABLE_ID: str = _DEFAULT.squad_possession_table_id
 
 OUTPUT_DIR: Path = _DEFAULT.output_dir
 STANDINGS_CSV: str = _DEFAULT.standings_csv
 SQUAD_ROSTER_CSV: str = _DEFAULT.squad_roster_csv
 PLAYER_SEASON_STATS_CSV: str = _DEFAULT.player_season_stats_csv
 SQUAD_STATS_CSV: str = _DEFAULT.squad_stats_csv
+DEFENSIVE_STATS_CSV: str = _DEFAULT.defensive_stats_csv
+POSSESSION_STATS_CSV: str = _DEFAULT.possession_stats_csv
+GK_STATS_CSV: str = _DEFAULT.gk_stats_csv
+FIXTURE_CSV: str = _DEFAULT.fixture_csv
+MATCH_PASSING_CSV: str = _DEFAULT.match_passing_csv

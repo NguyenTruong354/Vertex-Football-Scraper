@@ -296,6 +296,472 @@ class SquadStats(BaseModel):
 
 
 # ────────────────────────────────────────────────────────────
+# 5. PLAYER DEFENSIVE STATS
+# ────────────────────────────────────────────────────────────
+class PlayerDefensiveStats(BaseModel):
+    """
+    Thống kê phòng ngự cầu thủ trong 1 mùa giải.
+
+    Từ stats_defense_{comp_id} trên squad page.
+
+    data-stat attrs:
+        player, nationality, position, age, minutes_90s,
+        tackles, tackles_won, tackles_def_3rd, tackles_mid_3rd, tackles_att_3rd,
+        challenge_tackles, challenges, challenge_tackles_pct,
+        blocks, blocked_shots, blocked_passes,
+        interceptions, tackles_interceptions,
+        clearances, errors
+    """
+    model_config = _BASE_CONFIG
+
+    # Identifiers
+    player_name: str = Field(..., alias="player")
+    player_id: Optional[str] = Field(None)
+    team_name: Optional[str] = Field(None)
+    team_id: Optional[str] = Field(None)
+    season: Optional[str] = Field(None)
+    nationality: Optional[str] = Field(None)
+    position: Optional[str] = Field(None)
+    age: Optional[str] = Field(None)
+
+    # Playing time
+    minutes_90s: Optional[float] = Field(None)
+
+    # Tackles
+    tackles: int = Field(0)
+    tackles_won: int = Field(0)
+    tackles_def_3rd: int = Field(0)
+    tackles_mid_3rd: int = Field(0)
+    tackles_att_3rd: int = Field(0)
+
+    # Challenges (dribblers tackled)
+    challenge_tackles: int = Field(0)
+    challenges: int = Field(0)
+    challenge_tackles_pct: Optional[float] = Field(None)
+
+    # Blocks
+    blocks: int = Field(0)
+    blocked_shots: int = Field(0, alias="blocked_shots")
+    blocked_passes: int = Field(0, alias="blocked_passes")
+
+    # Interceptions & Clearances
+    interceptions: int = Field(0)
+    tackles_interceptions: int = Field(0, description="Tkl+Int")
+    clearances: int = Field(0)
+    errors: int = Field(0)
+
+    # Pressures
+    pressures: int = Field(0, alias="pressures")
+    pressure_regains: int = Field(0, alias="pressure_regains")
+    pressure_regain_pct: Optional[float] = Field(None, alias="pressure_regain_pct")
+    pressures_def_3rd: int = Field(0)
+    pressures_mid_3rd: int = Field(0)
+    pressures_att_3rd: int = Field(0)
+
+    @field_validator(
+        "tackles", "tackles_won", "tackles_def_3rd", "tackles_mid_3rd",
+        "tackles_att_3rd", "challenge_tackles", "challenges",
+        "blocks", "blocked_shots", "blocked_passes",
+        "interceptions", "tackles_interceptions", "clearances", "errors",
+        "pressures", "pressure_regains",
+        "pressures_def_3rd", "pressures_mid_3rd", "pressures_att_3rd",
+        mode="before",
+    )
+    @classmethod
+    def coerce_int(cls, v: object) -> int:
+        return _safe_int(v)
+
+    @field_validator(
+        "minutes_90s", "challenge_tackles_pct", "pressure_regain_pct",
+        mode="before",
+    )
+    @classmethod
+    def coerce_float(cls, v: object) -> float | None:
+        return _safe_float(v)
+
+    @field_validator("nationality", mode="before")
+    @classmethod
+    def clean_nationality(cls, v: object) -> str | None:
+        if not v or str(v).strip() == "":
+            return None
+        parts = str(v).strip().split()
+        return parts[-1] if parts else str(v).strip()
+
+
+# ────────────────────────────────────────────────────────────
+# 6. PLAYER POSSESSION & CARRY STATS
+# ────────────────────────────────────────────────────────────
+class PlayerPossessionStats(BaseModel):
+    """
+    Thống kê cầm bóng, mang bóng, rê bóng của cầu thủ.
+
+    Từ stats_possession_{comp_id} trên squad page.
+
+    data-stat attrs:
+        player, nationality, position, age, minutes_90s,
+        touches, touches_def_pen_area, touches_def_3rd,
+        touches_mid_3rd, touches_att_3rd, touches_att_pen_area,
+        touches_live_ball,
+        take_ons, take_ons_won, take_ons_won_pct, take_ons_tackled,
+        carries, carries_distance, carries_progressive_distance,
+        progressive_carries, carries_into_final_third, carries_into_penalty_area,
+        miscontrols, dispossessed,
+        passes_received, progressive_passes_received
+    """
+    model_config = _BASE_CONFIG
+
+    # Identifiers
+    player_name: str = Field(..., alias="player")
+    player_id: Optional[str] = Field(None)
+    team_name: Optional[str] = Field(None)
+    team_id: Optional[str] = Field(None)
+    season: Optional[str] = Field(None)
+    nationality: Optional[str] = Field(None)
+    position: Optional[str] = Field(None)
+    age: Optional[str] = Field(None)
+
+    # Playing time
+    minutes_90s: Optional[float] = Field(None)
+
+    # Touches
+    touches: int = Field(0)
+    touches_def_pen_area: int = Field(0)
+    touches_def_3rd: int = Field(0)
+    touches_mid_3rd: int = Field(0)
+    touches_att_3rd: int = Field(0)
+    touches_att_pen_area: int = Field(0)
+    touches_live_ball: int = Field(0)
+
+    # Take-ons (Dribbles)
+    take_ons: int = Field(0)
+    take_ons_won: int = Field(0)
+    take_ons_won_pct: Optional[float] = Field(None)
+    take_ons_tackled: int = Field(0)
+    take_ons_tackled_pct: Optional[float] = Field(None)
+
+    # Carries
+    carries: int = Field(0)
+    carries_distance: Optional[float] = Field(None, description="Total carrying distance (yards)")
+    carries_progressive_distance: Optional[float] = Field(None, description="Progressive carrying distance")
+    progressive_carries: int = Field(0)
+    carries_into_final_third: int = Field(0)
+    carries_into_penalty_area: int = Field(0)
+    miscontrols: int = Field(0)
+    dispossessed: int = Field(0)
+
+    # Receiving
+    passes_received: int = Field(0)
+    progressive_passes_received: int = Field(0)
+
+    @field_validator(
+        "touches", "touches_def_pen_area", "touches_def_3rd",
+        "touches_mid_3rd", "touches_att_3rd", "touches_att_pen_area",
+        "touches_live_ball",
+        "take_ons", "take_ons_won", "take_ons_tackled",
+        "carries", "progressive_carries",
+        "carries_into_final_third", "carries_into_penalty_area",
+        "miscontrols", "dispossessed",
+        "passes_received", "progressive_passes_received",
+        mode="before",
+    )
+    @classmethod
+    def coerce_int(cls, v: object) -> int:
+        return _safe_int(v)
+
+    @field_validator(
+        "minutes_90s", "take_ons_won_pct", "take_ons_tackled_pct",
+        "carries_distance", "carries_progressive_distance",
+        mode="before",
+    )
+    @classmethod
+    def coerce_float(cls, v: object) -> float | None:
+        return _safe_float(v)
+
+    @field_validator("nationality", mode="before")
+    @classmethod
+    def clean_nationality(cls, v: object) -> str | None:
+        if not v or str(v).strip() == "":
+            return None
+        parts = str(v).strip().split()
+        return parts[-1] if parts else str(v).strip()
+
+
+# ────────────────────────────────────────────────────────────
+# 7. PLAYER GK STATS
+# ────────────────────────────────────────────────────────────
+class PlayerGKStats(BaseModel):
+    """
+    Thống kê thủ môn trong mùa giải.
+
+    Từ stats_keeper_{comp_id} trên squad page.
+
+    data-stat attrs:
+        player, nationality, position, age,
+        gk_games, gk_games_starts, minutes_gk,
+        gk_goals_against, gk_goals_against_per90,
+        gk_shots_on_target_against, gk_saves, gk_save_pct,
+        gk_wins, gk_ties, gk_losses,
+        gk_clean_sheets, gk_clean_sheets_pct,
+        gk_pens_att, gk_pens_allowed, gk_pens_saved, gk_pens_missed,
+        gk_psxg, gk_psxg_per_shot_on_target,
+        gk_passes_completed_launched, gk_passes_launched,
+        gk_passes_pct_launched,
+        gk_passes, gk_passes_throws, gk_pct_passes_launched,
+        gk_passes_length_avg,
+        gk_goal_kicks, gk_pct_goal_kicks_launched, gk_goal_kick_length_avg,
+        gk_crosses_faced, gk_crosses_stopped, gk_crosses_stopped_pct,
+        gk_def_actions_outside_pen_area, gk_avg_distance_def_actions
+    """
+    model_config = _BASE_CONFIG
+
+    # Identifiers
+    player_name: str = Field(..., alias="player")
+    player_id: Optional[str] = Field(None)
+    team_name: Optional[str] = Field(None)
+    team_id: Optional[str] = Field(None)
+    season: Optional[str] = Field(None)
+    nationality: Optional[str] = Field(None)
+    position: Optional[str] = Field(None)
+    age: Optional[str] = Field(None)
+
+    # Playing time
+    gk_games: int = Field(0)
+    gk_games_starts: int = Field(0)
+    minutes_gk: int = Field(0)
+
+    # Goals against & saves
+    gk_goals_against: int = Field(0)
+    gk_goals_against_per90: Optional[float] = Field(None)
+    gk_shots_on_target_against: int = Field(0)
+    gk_saves: int = Field(0)
+    gk_save_pct: Optional[float] = Field(None)
+
+    # Results
+    gk_wins: int = Field(0)
+    gk_ties: int = Field(0)
+    gk_losses: int = Field(0)
+
+    # Clean sheets
+    gk_clean_sheets: int = Field(0)
+    gk_clean_sheets_pct: Optional[float] = Field(None)
+
+    # Penalty kicks
+    gk_pens_att: int = Field(0)
+    gk_pens_allowed: int = Field(0)
+    gk_pens_saved: int = Field(0)
+    gk_pens_missed: int = Field(0)
+
+    # PSxG (Post-Shot Expected Goals)
+    gk_psxg: Optional[float] = Field(None, description="Post-shot xG")
+    gk_psxg_per_shot_on_target: Optional[float] = Field(None)
+
+    # Distribution — launches
+    gk_passes_completed_launched: int = Field(0)
+    gk_passes_launched: int = Field(0)
+    gk_passes_pct_launched: Optional[float] = Field(None)
+
+    # Distribution — all passes
+    gk_passes: int = Field(0)
+    gk_passes_throws: int = Field(0)
+    gk_pct_passes_launched: Optional[float] = Field(None)
+    gk_passes_length_avg: Optional[float] = Field(None)
+
+    # Goal kicks
+    gk_goal_kicks: int = Field(0)
+    gk_pct_goal_kicks_launched: Optional[float] = Field(None)
+    gk_goal_kick_length_avg: Optional[float] = Field(None)
+
+    # Crosses & sweeper
+    gk_crosses_faced: int = Field(0)
+    gk_crosses_stopped: int = Field(0)
+    gk_crosses_stopped_pct: Optional[float] = Field(None)
+    gk_def_actions_outside_pen_area: int = Field(0)
+    gk_avg_distance_def_actions: Optional[float] = Field(None)
+
+    @field_validator(
+        "gk_games", "gk_games_starts", "minutes_gk",
+        "gk_goals_against", "gk_shots_on_target_against", "gk_saves",
+        "gk_wins", "gk_ties", "gk_losses", "gk_clean_sheets",
+        "gk_pens_att", "gk_pens_allowed", "gk_pens_saved", "gk_pens_missed",
+        "gk_passes_completed_launched", "gk_passes_launched",
+        "gk_passes", "gk_passes_throws",
+        "gk_goal_kicks", "gk_crosses_faced", "gk_crosses_stopped",
+        "gk_def_actions_outside_pen_area",
+        mode="before",
+    )
+    @classmethod
+    def coerce_int(cls, v: object) -> int:
+        return _safe_int(v)
+
+    @field_validator(
+        "gk_goals_against_per90", "gk_save_pct", "gk_clean_sheets_pct",
+        "gk_psxg", "gk_psxg_per_shot_on_target",
+        "gk_passes_pct_launched", "gk_pct_passes_launched",
+        "gk_passes_length_avg",
+        "gk_pct_goal_kicks_launched", "gk_goal_kick_length_avg",
+        "gk_crosses_stopped_pct", "gk_avg_distance_def_actions",
+        mode="before",
+    )
+    @classmethod
+    def coerce_float(cls, v: object) -> float | None:
+        return _safe_float(v)
+
+    @field_validator("nationality", mode="before")
+    @classmethod
+    def clean_nationality(cls, v: object) -> str | None:
+        if not v or str(v).strip() == "":
+            return None
+        parts = str(v).strip().split()
+        return parts[-1] if parts else str(v).strip()
+
+
+# ────────────────────────────────────────────────────────────
+# 8. FIXTURE ROW — Lịch thi đấu
+# ────────────────────────────────────────────────────────────
+class FixtureRow(BaseModel):
+    """
+    Một trận trong lịch thi đấu giải đấu.
+
+    Từ trang Scores and Fixtures:
+      /en/comps/{comp_id}/schedule/{slug}-Scores-and-Fixtures
+
+    data-stat attrs:
+        gameweek, date, time, home_team, home_xg, score,
+        away_xg, away_team, attendance, venue, referee,
+        match_report
+    """
+    model_config = _BASE_CONFIG
+
+    gameweek: Optional[str] = Field(None)
+    date: Optional[str] = Field(None)
+    start_time: Optional[str] = Field(None, alias="time")
+    dayofweek: Optional[str] = Field(None)
+    home_team: Optional[str] = Field(None)
+    home_xg: Optional[float] = Field(None)
+    score: Optional[str] = Field(None)
+    away_xg: Optional[float] = Field(None)
+    away_team: Optional[str] = Field(None)
+    attendance: Optional[str] = Field(None)
+    venue: Optional[str] = Field(None)
+    referee: Optional[str] = Field(None)
+    match_report_url: Optional[str] = Field(None, description="URL match report")
+
+    # Derived
+    home_team_id: Optional[str] = Field(None)
+    away_team_id: Optional[str] = Field(None)
+    match_id: Optional[str] = Field(None, description="FBref match ID from URL")
+
+    @field_validator("home_xg", "away_xg", mode="before")
+    @classmethod
+    def coerce_float(cls, v: object) -> float | None:
+        return _safe_float(v)
+
+
+# ────────────────────────────────────────────────────────────
+# 9. MATCH PASSING STATS — Dữ liệu chuyền bóng từ match report
+# ────────────────────────────────────────────────────────────
+class MatchPassingStats(BaseModel):
+    """
+    Thống kê chuyền bóng cầu thủ trong 1 trận đấu.
+
+    Từ match report page passing table.
+
+    data-stat attrs:
+        player, nationality, age, minutes,
+        passes_completed, passes, passes_pct,
+        passes_total_distance, passes_progressive_distance,
+        passes_short_completed, passes_short, passes_pct_short,
+        passes_medium_completed, passes_medium, passes_pct_medium,
+        passes_long_completed, passes_long, passes_pct_long,
+        assists, xa, key_passes,
+        passes_into_final_third, passes_into_penalty_area,
+        crosses_into_penalty_area, progressive_passes
+    """
+    model_config = _BASE_CONFIG
+
+    # Match context
+    match_id: Optional[str] = Field(None)
+    match_date: Optional[str] = Field(None)
+    home_team: Optional[str] = Field(None)
+    away_team: Optional[str] = Field(None)
+
+    # Player identifiers
+    player_name: str = Field(..., alias="player")
+    player_id: Optional[str] = Field(None)
+    team_name: Optional[str] = Field(None)
+    team_id: Optional[str] = Field(None)
+    nationality: Optional[str] = Field(None)
+    age: Optional[str] = Field(None)
+    minutes: int = Field(0)
+
+    # Total passes
+    passes_completed: int = Field(0)
+    passes: int = Field(0, description="Total passes attempted")
+    passes_pct: Optional[float] = Field(None)
+    passes_total_distance: Optional[float] = Field(None)
+    passes_progressive_distance: Optional[float] = Field(None)
+
+    # Short passes
+    passes_short_completed: int = Field(0)
+    passes_short: int = Field(0)
+    passes_pct_short: Optional[float] = Field(None)
+
+    # Medium passes
+    passes_medium_completed: int = Field(0)
+    passes_medium: int = Field(0)
+    passes_pct_medium: Optional[float] = Field(None)
+
+    # Long passes
+    passes_long_completed: int = Field(0)
+    passes_long: int = Field(0)
+    passes_pct_long: Optional[float] = Field(None)
+
+    # Creativity
+    assists: int = Field(0)
+    xa: Optional[float] = Field(None, alias="xa", description="Expected Assists")
+    key_passes: int = Field(0)
+
+    # Progressive / dangerous passes
+    passes_into_final_third: int = Field(0)
+    passes_into_penalty_area: int = Field(0)
+    crosses_into_penalty_area: int = Field(0)
+    progressive_passes: int = Field(0)
+
+    @field_validator(
+        "minutes",
+        "passes_completed", "passes",
+        "passes_short_completed", "passes_short",
+        "passes_medium_completed", "passes_medium",
+        "passes_long_completed", "passes_long",
+        "assists", "key_passes",
+        "passes_into_final_third", "passes_into_penalty_area",
+        "crosses_into_penalty_area", "progressive_passes",
+        mode="before",
+    )
+    @classmethod
+    def coerce_int(cls, v: object) -> int:
+        return _safe_int(v)
+
+    @field_validator(
+        "passes_pct", "passes_total_distance", "passes_progressive_distance",
+        "passes_pct_short", "passes_pct_medium", "passes_pct_long",
+        "xa",
+        mode="before",
+    )
+    @classmethod
+    def coerce_float(cls, v: object) -> float | None:
+        return _safe_float(v)
+
+    @field_validator("nationality", mode="before")
+    @classmethod
+    def clean_nationality(cls, v: object) -> str | None:
+        if not v or str(v).strip() == "":
+            return None
+        parts = str(v).strip().split()
+        return parts[-1] if parts else str(v).strip()
+
+
+# ────────────────────────────────────────────────────────────
 # HELPER: Safe parse list (tái sử dụng pattern từ schemas.py)
 # ────────────────────────────────────────────────────────────
 def safe_parse_list(
