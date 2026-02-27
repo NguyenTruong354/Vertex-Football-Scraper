@@ -1,7 +1,7 @@
 # Autorun — Hướng dẫn chạy tự động pipeline
 
 > Tài liệu này mô tả cách chạy toàn bộ pipeline **Scrape → CSV → PostgreSQL**
-> theo lịch tự động (hàng ngày / hàng tuần).
+> theo lịch tự động (hàng ngày / hàng tuần) hoặc **chạy liên tục 24/7** (daemon mode).
 
 ---
 
@@ -14,11 +14,12 @@
 5. [Lên lịch chạy](#5-lên-lịch-chạy)
    - [Windows Task Scheduler](#51-windows-task-scheduler)
    - [Linux cron](#52-linux-cron)
-6. [Command reference — chạy thủ công](#6-command-reference--chạy-thủ-công)
-7. [Bảng league được hỗ trợ](#7-bảng-league-được-hỗ-trợ)
-8. [Thời gian chạy ước tính](#8-thời-gian-chạy-ước-tính)
-9. [Xử lý lỗi & logs](#9-xử-lý-lỗi--logs)
-10. [FAQ](#10-faq)
+6. [**Daemon mode — chạy liên tục 24/7**](#6-daemon-mode--chạy-liên-tục-247)
+7. [Command reference — chạy thủ công](#7-command-reference--chạy-thủ-công)
+8. [Bảng league được hỗ trợ](#8-bảng-league-được-hỗ-trợ)
+9. [Thời gian chạy ước tính](#9-thời-gian-chạy-ước-tính)
+10. [Xử lý lỗi & logs](#10-xử-lý-lỗi--logs)
+11. [FAQ](#11-faq)
 
 ---
 
@@ -230,7 +231,198 @@ crontab -e
 
 ---
 
-## 6. Command reference — chạy thủ công
+## 6. Daemon mode — chạy liên tục 24/7
+
+Khi muốn treo máy 24/7 để cập nhật liên tục, dùng **`run_daemon.py`** thay vì
+Task Scheduler / cron.
+
+### 6.1 Kiến trúc 3 tầng
+
+Daemon chia các nguồn dữ liệu theo **tần suất cập nhật**:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    DAEMON LOOP (24/7)                          │
+│                                                                 │
+│  ┌─────────── TIER 1 ───────────┐    Interval:                  │
+│  │ Understat  (xG, shots)       │    30 phút (match hours)      │
+│  │ SofaScore  (heatmaps, pos)   │     2 giờ  (off hours)        │
+│  └──────────────────────────────┘                               │
+│                                                                 │
+│  ┌─────────── TIER 2 ───────────┐                               │
+│  │ FBref      (standings, stats)│    4 giờ                      │
+│  └──────────────────────────────┘                               │
+│                                                                 │
+│  ┌─────────── TIER 3 ───────────┐                               │
+│  │ Transfermarkt (market values)│    24 giờ                     │
+│  └──────────────────────────────┘                               │
+│                                                                 │
+│  ┌─────────── DB LOAD ──────────┐                               │
+│  │ CSV → PostgreSQL             │    Sau mỗi lần scrape         │
+│  └──────────────────────────────┘                               │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Tại sao 3 tầng?**
+
+| Tầng | Nguồn | Lý do | Interval mặc định |
+|------|-------|-------|-------------------|
+| T1 | Understat + SofaScore | Dữ liệu trận đấu thay đổi liên tục | 30m / 2h |
+| T2 | FBref | Thống kê mùa giải, cập nhật chậm hơn + rate limit nặng | 4h |
+| T3 | Transfermarkt | Giá trị chuyển nhượng, ít thay đổi | 24h |
+
+**Match hours:** Daemon tự nhận biết giờ thi đấu (mặc định 11:00–23:00 UTC).
+Trong match hours, Tier 1 chạy thường xuyên hơn (30 phút thay vì 2 giờ).
+
+### 6.2 Khởi chạy daemon
+
+```bash
+# Cách 1: Chạy trực tiếp
+python run_daemon.py
+
+# Cách 2: Dùng batch file (Windows)
+daemon.bat
+
+# Cách 3: Chạy background (Linux)
+nohup python run_daemon.py --league EPL > /dev/null 2>&1 &
+```
+
+### 6.3 Tham số đầy đủ
+
+| Flag | Default | Mô tả |
+|------|---------|--------|
+| `--league` | `EPL` | 1 hoặc nhiều league IDs |
+| `--match-hours` | `11-23` | Giờ thi đấu UTC, format `START-END` |
+| `--tier1-interval` | `1800` | T1 interval (giây) trong match hours |
+| `--tier1-off-interval` | `7200` | T1 interval (giây) ngoài match hours |
+| `--tier2-interval` | `14400` | T2 interval (giây) |
+| `--tier3-interval` | `86400` | T3 interval (giây) |
+| `--ss-match-limit` | `5` | SofaScore: giới hạn trận mỗi cycle |
+| `--dry-run` | `false` | Chỉ log schedule, không chạy thực |
+
+### 6.4 Ví dụ cấu hình
+
+```bash
+# Mặc định — EPL, 30m/2h/4h/24h
+python run_daemon.py
+
+# 2 league, match hours tùy chỉnh (18h-3h UTC = 1h-10h VN)
+python run_daemon.py --league EPL LALIGA --match-hours 18-03
+
+# Theo dõi sát hơn — T1 mỗi 15 phút, T2 mỗi 2 giờ
+python run_daemon.py --tier1-interval 900 --tier2-interval 7200
+
+# Test cấu hình (không chạy thật)
+python run_daemon.py --league EPL BUNDESLIGA --dry-run
+
+# 5 giải lớn, SS limit thấp để tiết kiệm
+python run_daemon.py --league EPL LALIGA BUNDESLIGA SERIEA LIGUE1 --ss-match-limit 3
+```
+
+### 6.5 State persistence
+
+Daemon lưu trạng thái `last_run` vào `logs/daemon_state.json`. Khi restart,
+daemon đọc lại file này và **không chạy lại** task nếu chưa đến lúc.
+
+```json
+{
+  "tier1_EPL": 1709125800.0,
+  "tier1_EPL_count": 48,
+  "tier2_EPL": 1709118600.0,
+  "tier2_EPL_count": 6,
+  "tier3_EPL": 1709078400.0,
+  "tier3_EPL_count": 1
+}
+```
+
+→ An toàn khi restart, không bị spam request.
+
+### 6.6 Logs
+
+Daemon log ra cả **console** và **file** (tự rotation):
+
+```
+logs/
+├── daemon.log          ← log chính (rotation 10MB × 5 files)
+├── daemon.log.1        ← backup
+├── daemon.log.2
+└── daemon_state.json   ← trạng thái last_run
+```
+
+Xem log realtime:
+
+```bash
+# Windows
+type logs\daemon.log | more
+
+# Linux
+tail -f logs/daemon.log
+```
+
+### 6.7 Dừng daemon
+
+- **Foreground:** Nhấn `Ctrl+C` — daemon sẽ graceful shutdown
+- **Background (Linux):** `kill <PID>` hoặc `kill -SIGTERM <PID>`
+- **Windows service:** Xem mục 6.8
+
+Daemon xử lý signal đúng cách — đợi task hiện tại hoàn thành rồi mới dừng.
+
+### 6.8 Chạy như Windows Service (nâng cao)
+
+Dùng [NSSM](https://nssm.cc/) để chạy daemon như Windows Service:
+
+```bat
+:: Cài NSSM (download từ nssm.cc)
+nssm install VertexFootball "D:\Vertex_Football_Scraper2\.venv\Scripts\python.exe" "run_daemon.py --league EPL"
+nssm set VertexFootball AppDirectory "D:\Vertex_Football_Scraper2"
+nssm set VertexFootball Description "Vertex Football Scraper Daemon"
+nssm set VertexFootball Start SERVICE_AUTO_START
+
+:: Quản lý service
+nssm start VertexFootball
+nssm stop VertexFootball
+nssm restart VertexFootball
+nssm status VertexFootball
+nssm remove VertexFootball confirm
+```
+
+Ưu điểm so với Task Scheduler:
+- Tự restart nếu crash
+- Chạy ngay khi Windows boot, không cần đăng nhập
+- Quản lý bằng `services.msc`
+
+### 6.9 Chạy như systemd service (Linux)
+
+```ini
+# /etc/systemd/system/vertex-football.service
+[Unit]
+Description=Vertex Football Scraper Daemon
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=vertex
+WorkingDirectory=/opt/Vertex_Football_Scraper2
+ExecStart=/opt/Vertex_Football_Scraper2/.venv/bin/python run_daemon.py --league EPL LALIGA
+Restart=always
+RestartSec=30
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable vertex-football
+sudo systemctl start vertex-football
+sudo systemctl status vertex-football
+journalctl -u vertex-football -f   # Xem log
+```
+
+---
+
+## 7. Command reference — chạy thủ công
 
 Nếu muốn chạy từng bước riêng:
 
@@ -322,7 +514,7 @@ python db/queries.py --league EPL --query top_xg standings
 
 ---
 
-## 7. Bảng league được hỗ trợ
+## 8. Bảng league được hỗ trợ
 
 | League ID | Tên giải | Understat | FBref | SofaScore | Transfermarkt |
 |-----------|----------|:---------:|:-----:|:---------:|:------------:|
@@ -340,7 +532,7 @@ python db/queries.py --league EPL --query top_xg standings
 
 ---
 
-## 8. Thời gian chạy ước tính
+## 9. Thời gian chạy ước tính
 
 Thời gian phụ thuộc vào tốc độ mạng và rate-limit của từng nguồn.
 
@@ -375,7 +567,7 @@ Thời gian phụ thuộc vào tốc độ mạng và rate-limit của từng ng
 
 ---
 
-## 9. Xử lý lỗi & logs
+## 10. Xử lý lỗi & logs
 
 ### 9.1 Cấu trúc log
 
@@ -415,7 +607,7 @@ logs/
 
 ---
 
-## 10. FAQ
+## 11. FAQ
 
 ### Q: Chạy lại có bị duplicate data không?
 
@@ -467,3 +659,17 @@ CMD ["python", "run_pipeline.py", "--league", "EPL"]
 
 > **Lưu ý:** nodriver cần Chrome thật (không phải Chromium trong mọi trường hợp).
 > Cần test kỹ trên Docker environment.
+
+### Q: Daemon mode khác gì Task Scheduler / cron?
+
+| | Task Scheduler / cron | Daemon mode |
+|---|---|---|
+| Cách chạy | Chạy 1 lần rồi tắt | Chạy liên tục 24/7 |
+| Tần suất | Cố định (VD: mỗi 6h) | Tự điều chỉnh theo match hours |
+| Crash recovery | Cần cấu hình retry | Tự retry trong loop |
+| State | Không nhớ | Nhớ last_run qua restart |
+| Resource | Nhẹ (chỉ chạy khi cần) | Dùng RAM liên tục (~50 MB) |
+| Phù hợp | Cập nhật định kỳ | Theo dõi liên tục |
+
+→ **Dùng daemon** khi cần cập nhật liên tục (VD: data platform, dashboard realtime).
+→ **Dùng cron** khi chỉ cần cập nhật 1-2 lần / ngày.
