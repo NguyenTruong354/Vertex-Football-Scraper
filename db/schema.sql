@@ -567,6 +567,47 @@ DO $$ BEGIN
     END IF;
 END $$;
 
+-- ============================================================
+-- NHÓM G: LIVE MATCH TRACKING
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS live_snapshots (
+    event_id          BIGINT   NOT NULL PRIMARY KEY,
+    home_team         TEXT,
+    away_team         TEXT,
+    home_score        INTEGER  DEFAULT 0,
+    away_score        INTEGER  DEFAULT 0,
+    status            TEXT,            -- notstarted, inprogress, finished
+    minute            INTEGER  DEFAULT 0,
+    statistics_json   JSONB,
+    incidents_json    JSONB,
+    poll_count        INTEGER  DEFAULT 0,
+    loaded_at         TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS live_incidents (
+    id                BIGSERIAL  PRIMARY KEY,
+    event_id          BIGINT     NOT NULL,
+    incident_type     TEXT,              -- goal, card, substitution, varDecision
+    minute            INTEGER,
+    added_time        INTEGER,
+    player_name       TEXT,
+    player_in_name    TEXT,
+    player_out_name   TEXT,
+    is_home           BOOLEAN,
+    detail            TEXT,              -- penalty, ownGoal, yellow, red, ...
+    loaded_at         TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_live_snap_status ON live_snapshots (status);
+CREATE INDEX IF NOT EXISTS idx_live_inc_event   ON live_incidents (event_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_live_inc
+    ON live_incidents (event_id, incident_type, minute, COALESCE(player_name, ''));
+
+-- ============================================================
+-- FK CONSTRAINTS (cuối cùng, sau khi tất cả bảng tồn tại)
+-- ============================================================
+
 -- ── FBref: squad_stats → standings ──────────────────────────
 DO $$ BEGIN
     IF NOT EXISTS (

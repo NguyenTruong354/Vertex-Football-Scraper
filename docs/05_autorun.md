@@ -15,11 +15,12 @@
    - [Windows Task Scheduler](#51-windows-task-scheduler)
    - [Linux cron](#52-linux-cron)
 6. [**Daemon mode — chạy liên tục 24/7**](#6-daemon-mode--chạy-liên-tục-247)
-7. [Command reference — chạy thủ công](#7-command-reference--chạy-thủ-công)
-8. [Bảng league được hỗ trợ](#8-bảng-league-được-hỗ-trợ)
-9. [Thời gian chạy ước tính](#9-thời-gian-chạy-ước-tính)
-10. [Xử lý lỗi & logs](#10-xử-lý-lỗi--logs)
-11. [FAQ](#11-faq)
+7. [**Live Match Tracker — theo dõi trận trực tiếp**](#7-live-match-tracker--theo-dõi-trận-trực-tiếp)
+8. [Command reference — chạy thủ công](#8-command-reference--chạy-thủ-công)
+9. [Bảng league được hỗ trợ](#9-bảng-league-được-hỗ-trợ)
+10. [Thời gian chạy ước tính](#10-thời-gian-chạy-ước-tính)
+11. [Xử lý lỗi & logs](#11-xử-lý-lỗi--logs)
+12. [FAQ](#12-faq)
 
 ---
 
@@ -673,3 +674,111 @@ CMD ["python", "run_pipeline.py", "--league", "EPL"]
 
 → **Dùng daemon** khi cần cập nhật liên tục (VD: data platform, dashboard realtime).
 → **Dùng cron** khi chỉ cần cập nhật 1-2 lần / ngày.
+
+---
+
+## 7. Live Match Tracker — theo dõi trận trực tiếp
+
+> **File:** `live_match.py`
+>
+> Theo dõi trận đấu **real-time** qua SofaScore API (poll mỗi 1-2 phút).
+> Hiển thị dashboard tỉ số, sự kiện, thống kê ngay trên terminal.
+
+### 7.1 Cách dùng nhanh
+
+```bash
+# 1. Xem trận hôm nay — tự tìm & chọn
+python live_match.py --today
+
+# 2. Tìm trận theo tên đội
+python live_match.py --team Arsenal
+
+# 3. Theo dõi event_id cụ thể (từ SofaScore URL)
+python live_match.py 12436870
+
+# 4. Cập nhật mỗi 2 phút
+python live_match.py 12436870 --interval 120
+
+# 5. Lưu CSV snapshot mỗi poll
+python live_match.py 12436870 --save-csv
+
+# 6. Lưu vào PostgreSQL
+python live_match.py 12436870 --save-db
+```
+
+### 7.2 Tìm event_id
+
+Cách 1 — dùng `--today` hoặc `--team` để tự tìm.
+
+Cách 2 — lấy từ URL SofaScore:
+```
+https://www.sofascore.com/arsenal-manchester-city/RjbsKUb#12436870
+                                                         ^^^^^^^^
+                                                         event_id
+```
+
+### 7.3 Dashboard terminal
+
+Khi chạy, terminal hiển thị live:
+
+```
+  VERTEX LIVE MATCH TRACKER
+──────────────────────────────────────────────────
+  Premier League  •  Round 18
+
+            Arsenal   2 - 1   Manchester City
+
+                      LIVE 67'
+──────────────────────────────────────────────────
+
+  ⚽ SỰ KIỆN
+
+   23'  ⚽  Saka
+   45'                               ⚽  Haaland
+   61'  ⚽  Rice
+
+  📊 THỐNG KÊ
+
+       55%  ████████████████████  45%   Ball possession
+        12  █████████████████████  8    Total shots
+         5  ████████████████████   3    Shots on target
+         7  ████████████████████   4    Corner kicks
+
+  Updated: 14:32:15  |  Poll #12  |  Ctrl+C to stop
+──────────────────────────────────────────────────
+```
+
+### 7.4 Dữ liệu thu thập mỗi poll
+
+| Endpoint | Dữ liệu |
+|---|---|
+| `/event/{id}` | Tỉ số, phút, trạng thái, hiệp |
+| `/event/{id}/incidents` | Bàn thắng, thẻ, thay người, VAR |
+| `/event/{id}/statistics` | Kiểm soát bóng, sút, phạt góc, lỗi... |
+| `/event/{id}/lineups` | Đội hình, rating, phút thi đấu (mỗi 3 poll) |
+
+### 7.5 Lưu vào database
+
+Cần tạo bảng trước:
+```bash
+# Chạy lại schema (sẽ tạo thêm bảng live_snapshots, live_incidents)
+python db/setup_db.py
+```
+
+Bảng mới:
+- **`live_snapshots`** — trạng thái trận đấu (upsert theo event_id), lưu statistics + incidents dạng JSONB
+- **`live_incidents`** — chi tiết sự kiện (goals, cards, subs) với primary key riêng
+
+### 7.6 Kết hợp với daemon mode
+
+Có thể chạy song song:
+- **Terminal 1:** `python run_daemon.py` — cập nhật batch data
+- **Terminal 2:** `python live_match.py --team Arsenal` — live tracker cho trận cụ thể
+
+### 7.7 Lưu ý
+
+- **Rate limit:** SofaScore giới hạn request. Minimum interval nên là 60s.
+- **Cloudflare:** Script dùng nodriver (Chrome thật) để bypass CF.
+- **RAM:** Mỗi instance dùng ~100-150 MB (Chrome headless).
+- **Tự dừng:** Khi trận kết thúc, tracker tự thoát.
+- **Ctrl+C:** Dừng bất cứ lúc nào.
