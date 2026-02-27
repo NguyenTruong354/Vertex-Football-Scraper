@@ -18,26 +18,22 @@ Giải pháp: dùng ``nodriver`` (undetected Chrome) ở chế độ
 headed (có cửa sổ trình duyệt).  Cửa sổ sẽ mở khoảng 1-2 phút
 rồi tự đóng khi pipeline hoàn thành.
 
+Hỗ trợ multi-league:
+──────────────────────────────────────────────────────────────
+  python fbref_scraper.py                          # EPL (mặc định)
+  python fbref_scraper.py --league LALIGA          # La Liga
+  python fbref_scraper.py --league BUNDESLIGA      # Bundesliga
+  python fbref_scraper.py --list-leagues           # Xem tất cả giải
+
 Luồng thực thi:
   1. Mở Chrome (headed) → navigate to FBref league page
   2. Chờ Cloudflare JS challenge pass (~10-15s lần đầu)
   3. Parse HTML → standings + squad stats + team links
-  4. Lần lượt navigate tới 20 squad pages (reuse session)
+  4. Lần lượt navigate tới squad pages (reuse session)
   5. Parse HTML → player profiles + player season stats
   6. Export tất cả ra CSV
 
 Rate limiting: 5 giây giữa mỗi page load
-─────────────────────────────────────────────────────────────
-
-Usage:
-    # Scrape tất cả (standings + 20 squad pages)
-    python fbref_scraper.py
-
-    # Chỉ scrape standings (nhanh)
-    python fbref_scraper.py --standings-only
-
-    # Giới hạn số đội (test)
-    python fbref_scraper.py --limit 3
 """
 
 from __future__ import annotations
@@ -47,12 +43,14 @@ import logging
 import re
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
 from bs4 import BeautifulSoup, Comment
 
 import config_fbref as cfg
+from config_fbref import FBrefLeagueConfig, get_fbref_config
 from schemas_fbref import (
     PlayerProfile,
     PlayerSeasonStats,
@@ -60,6 +58,10 @@ from schemas_fbref import (
     StandingsRow,
     safe_parse_list,
 )
+
+# League registry (project root)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from league_registry import get_fbref_leagues, get_league, list_leagues  # noqa: E402
 
 
 # ────────────────────────────────────────────────────────────
@@ -374,9 +376,17 @@ def parse_squad_page(
     html: str,
     team_name: str,
     team_id: str,
+    *,
+    league_cfg: FBrefLeagueConfig | None = None,
 ) -> dict[str, Any]:
     """
     Parse FBref squad page.
+
+    Args:
+        html: Raw HTML string
+        team_name: Tên đội
+        team_id: FBref team ID
+        league_cfg: Dynamic league config (nếu None, dùng legacy defaults)
 
     Returns:
         {
@@ -387,11 +397,16 @@ def parse_squad_page(
     soup = BeautifulSoup(html, "html.parser")
     result: dict[str, Any] = {"profiles": [], "player_stats": []}
 
+    # Resolve table IDs (dynamic hoặc legacy)
+    std_table_id = league_cfg.squad_standard_table_id if league_cfg else cfg.SQUAD_STANDARD_TABLE_ID
+    shoot_table_id = league_cfg.squad_shooting_table_id if league_cfg else cfg.SQUAD_SHOOTING_TABLE_ID
+    season = league_cfg.season if league_cfg else cfg.FBREF_SEASON
+
     # ── Standard stats table (player-level) ──
-    std_rows, _ = _parse_table_rows(soup, table_id=cfg.SQUAD_STANDARD_TABLE_ID)
+    std_rows, _ = _parse_table_rows(soup, table_id=std_table_id)
 
     # ── Shooting stats table ──
-    shoot_rows, _ = _parse_table_rows(soup, table_id=cfg.SQUAD_SHOOTING_TABLE_ID)
+    shoot_rows, _ = _parse_table_rows(soup, table_id=shoot_table_id)
     # Build lookup by player name for merging
     shoot_lookup: dict[str, dict] = {}
     for row in shoot_rows:
@@ -420,6 +435,7 @@ def parse_squad_page(
             "age": row.get("age"),
             "team_name": team_name,
             "team_id": team_id,
+            "season": season,
         }
         result["profiles"].append(profile)
 
@@ -459,14 +475,23 @@ def export_fbref_data(
     squad_stats: list,
     profiles: list,
     player_stats: list,
+    *,
+    league_cfg: FBrefLeagueConfig | None = None,
 ) -> list[str]:
     """Export tất cả dữ liệu FBref ra CSV files."""
     exported: list[str] = []
 
+    # Resolve output paths (dynamic hoặc legacy)
+    output_dir = league_cfg.output_dir if league_cfg else cfg.OUTPUT_DIR
+    standings_csv = league_cfg.standings_csv if league_cfg else cfg.STANDINGS_CSV
+    squad_stats_csv = league_cfg.squad_stats_csv if league_cfg else cfg.SQUAD_STATS_CSV
+    roster_csv = league_cfg.squad_roster_csv if league_cfg else cfg.SQUAD_ROSTER_CSV
+    player_csv = league_cfg.player_season_stats_csv if league_cfg else cfg.PLAYER_SEASON_STATS_CSV
+
     # Standings
     if standings:
         df = pd.DataFrame([s.model_dump(by_alias=False) for s in standings])
-        path = cfg.OUTPUT_DIR / cfg.STANDINGS_CSV
+        path = output_dir / standings_csv
         df.to_csv(path, index=False, encoding="utf-8-sig")
         logger.info("Exported standings → %s (%d rows)", path, len(df))
         exported.append(str(path))
@@ -474,7 +499,7 @@ def export_fbref_data(
     # Squad stats
     if squad_stats:
         df = pd.DataFrame([s.model_dump(by_alias=False) for s in squad_stats])
-        path = cfg.OUTPUT_DIR / cfg.SQUAD_STATS_CSV
+        path = output_dir / squad_stats_csv
         df.to_csv(path, index=False, encoding="utf-8-sig")
         logger.info("Exported squad stats → %s (%d rows)", path, len(df))
         exported.append(str(path))
@@ -482,7 +507,7 @@ def export_fbref_data(
     # Player profiles
     if profiles:
         df = pd.DataFrame([p.model_dump(by_alias=False) for p in profiles])
-        path = cfg.OUTPUT_DIR / cfg.SQUAD_ROSTER_CSV
+        path = output_dir / roster_csv
         df.to_csv(path, index=False, encoding="utf-8-sig")
         logger.info("Exported player profiles → %s (%d rows)", path, len(df))
         exported.append(str(path))
@@ -490,7 +515,7 @@ def export_fbref_data(
     # Player season stats
     if player_stats:
         df = pd.DataFrame([p.model_dump(by_alias=False) for p in player_stats])
-        path = cfg.OUTPUT_DIR / cfg.PLAYER_SEASON_STATS_CSV
+        path = output_dir / player_csv
         df.to_csv(path, index=False, encoding="utf-8-sig")
         logger.info("Exported player stats → %s (%d rows)", path, len(df))
         exported.append(str(path))
@@ -505,20 +530,28 @@ def export_fbref_data(
 async def main(
     standings_only: bool = False,
     team_limit: int = 0,
+    league_id: str = "EPL",
 ) -> dict[str, list]:
     """
     FBref Data Pipeline – entry point chính.
 
     Args:
         standings_only: Chỉ scrape standings (không scrape squad pages).
-        team_limit:     Giới hạn số đội scrape (0 = tất cả 20 đội).
+        team_limit:     Giới hạn số đội scrape (0 = tất cả).
+        league_id:      League ID từ registry (VD: "EPL", "LALIGA").
 
     Returns:
         dict với keys: "standings", "squad_stats", "profiles", "player_stats"
     """
+    # ── Resolve league config ──
+    league_cfg = get_fbref_config(league_id)
+
     t_start = time.perf_counter()
     logger.info("=" * 60)
     logger.info("FBREF DATA PIPELINE – BẮT ĐẦU")
+    logger.info("  League: %s (comp_id=%d)", league_id, league_cfg.comp_id)
+    logger.info("  Season: %s", league_cfg.season)
+    logger.info("  URL:    %s", league_cfg.league_url)
     logger.info("=" * 60)
 
     all_standings: list = []
@@ -529,7 +562,7 @@ async def main(
     async with FBrefBrowser() as browser:
         # ── STEP 1: League page ──
         logger.info("━━ STEP 1: Scrape League Page ━━")
-        html = await browser.fetch(cfg.FBREF_LEAGUE_URL)
+        html = await browser.fetch(league_cfg.league_url)
         if not html:
             logger.error("Không thể tải league page. Dừng pipeline.")
             return {}
@@ -545,7 +578,9 @@ async def main(
         logger.info("✓ Standings: %d/%d teams validated",
                      len(all_standings), len(league_data["standings"]))
 
-        # Validate squad stats
+        # Validate squad stats — inject season
+        for row in league_data["squad_stats"]:
+            row["season"] = league_cfg.season
         all_squad_stats = safe_parse_list(
             SquadStats,
             league_data["squad_stats"],
@@ -578,6 +613,7 @@ async def main(
                     squad_html,
                     team_name=team["name"],
                     team_id=team["team_id"],
+                    league_cfg=league_cfg,
                 )
 
                 # Validate profiles
@@ -588,7 +624,9 @@ async def main(
                 )
                 all_profiles.extend(valid_profiles)
 
-                # Validate player stats
+                # Validate player stats — inject season
+                for ps in squad_data["player_stats"]:
+                    ps["season"] = league_cfg.season
                 valid_stats = safe_parse_list(
                     PlayerSeasonStats,
                     squad_data["player_stats"],
@@ -605,6 +643,7 @@ async def main(
     logger.info("━━ STEP 3: Export CSV ━━")
     exported = export_fbref_data(
         all_standings, all_squad_stats, all_profiles, all_player_stats,
+        league_cfg=league_cfg,
     )
 
     # ── Summary ──
@@ -636,15 +675,26 @@ def cli() -> None:
     """Command-line interface cho FBref scraper."""
     import argparse
 
+    supported = [lg.league_id for lg in get_fbref_leagues()]
+
     parser = argparse.ArgumentParser(
-        description="FBref EPL Data Pipeline – Standings, Rosters, Player Stats",
+        description="FBref Data Pipeline – Multi-League Standings, Rosters, Player Stats",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
+        epilog=f"""
+Giải đấu hỗ trợ (FBref): {', '.join(supported)}
+
 Ví dụ:
-  python fbref_scraper.py                    # Scrape tất cả (standings + 20 đội)
-  python fbref_scraper.py --standings-only   # Chỉ BXH
-  python fbref_scraper.py --limit 3          # Test với 3 đội đầu tiên
+  python fbref_scraper.py                              # EPL (mặc định)
+  python fbref_scraper.py --league LALIGA              # La Liga
+  python fbref_scraper.py --league BUNDESLIGA --limit 3  # Bundesliga, 3 đội
+  python fbref_scraper.py --standings-only             # Chỉ BXH
+  python fbref_scraper.py --list-leagues               # Xem tất cả giải
         """,
+    )
+    parser.add_argument(
+        "--league",
+        default="EPL",
+        help=f"League ID (default: EPL). Choices: {', '.join(supported)}",
     )
     parser.add_argument(
         "--standings-only",
@@ -657,9 +707,34 @@ Ví dụ:
         default=0,
         help="Giới hạn số đội scrape (0 = tất cả)",
     )
+    parser.add_argument(
+        "--list-leagues",
+        action="store_true",
+        help="Liệt kê tất cả giải đấu hỗ trợ",
+    )
     args = parser.parse_args()
 
-    asyncio.run(main(standings_only=args.standings_only, team_limit=args.limit))
+    # ── --list-leagues ──
+    if args.list_leagues:
+        print(list_leagues())
+        return
+
+    # ── Validate league ──
+    league_id = args.league.upper()
+    try:
+        league_cfg_check = get_league(league_id)
+        if not league_cfg_check.has_fbref:
+            logger.error("League '%s' không có trên FBref. Dùng --list-leagues để xem.", league_id)
+            return
+    except KeyError as e:
+        logger.error(str(e))
+        return
+
+    asyncio.run(main(
+        standings_only=args.standings_only,
+        team_limit=args.limit,
+        league_id=league_id,
+    ))
 
 
 if __name__ == "__main__":

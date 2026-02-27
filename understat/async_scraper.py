@@ -78,6 +78,12 @@ from schemas import (
     safe_parse_list,
 )
 
+# League registry (project root)
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+from league_registry import get_league, resolve_understat_name, list_leagues, get_understat_leagues  # noqa: E402
+
 # ────────────────────────────────────────────────────────────
 # LOGGING SETUP
 # ────────────────────────────────────────────────────────────
@@ -234,9 +240,19 @@ async def discover_match_ids(
     """
     Gọi ``/getLeagueData/{league}/{season}`` và trả về
     danh sách match_id đã diễn ra (``isResult == True``).
+
+    league có thể là league_id (VD: "EPL", "LALIGA") hoặc
+    tên Understat gốc (VD: "La_liga").  Registry sẽ resolve tự động.
     """
-    api_url = config.LEAGUE_API_URL.format(league_name=league, season=season)
-    referer = config.LEAGUE_PAGE_URL.format(league_name=league, season=season)
+    # Resolve league_id → Understat API name
+    try:
+        understat_name = resolve_understat_name(league)
+    except (KeyError, ValueError):
+        # Fallback: dùng trực tiếp (backward-compatible)
+        understat_name = league
+
+    api_url = config.LEAGUE_API_URL.format(league_name=understat_name, season=season)
+    referer = config.LEAGUE_PAGE_URL.format(league_name=understat_name, season=season)
     logger.info("▶ Đang gọi League API: %s", api_url)
 
     try:
@@ -525,29 +541,39 @@ def export_to_csv(
     df_shots: pd.DataFrame,
     df_rosters: pd.DataFrame,
     df_match_infos: pd.DataFrame | None = None,
+    *,
+    league_id: str = "EPL",
 ) -> list[Path]:
     """
-    Xuất DataFrames ra file CSV trong thư mục output/.
+    Xuất DataFrames ra file CSV.
+
+    Output directory:  output/understat/{league_id}/
+    Filenames:         dataset_{league_id}_xg.csv, …
+
+    Args:
+        league_id: League identifier (VD: "EPL", "LALIGA")
 
     Returns:
         Danh sách đường dẫn file đã tạo.
     """
+    output_dir = config.get_output_dir(league_id)
+    csv_names = config.get_csv_filenames(league_id)
     created_files: list[Path] = []
 
     if not df_shots.empty:
-        path = config.OUTPUT_DIR / config.SHOTS_CSV_FILENAME
+        path = output_dir / csv_names["shots"]
         df_shots.to_csv(path, index=False, encoding="utf-8-sig")
         logger.info("Exported shots → %s (%d rows)", path, len(df_shots))
         created_files.append(path)
 
     if not df_rosters.empty:
-        path = config.OUTPUT_DIR / config.PLAYER_STATS_CSV_FILENAME
+        path = output_dir / csv_names["player_stats"]
         df_rosters.to_csv(path, index=False, encoding="utf-8-sig")
         logger.info("Exported player stats → %s (%d rows)", path, len(df_rosters))
         created_files.append(path)
 
     if df_match_infos is not None and not df_match_infos.empty:
-        path = config.OUTPUT_DIR / config.MATCH_STATS_CSV_FILENAME
+        path = output_dir / csv_names["match_stats"]
         df_match_infos.to_csv(path, index=False, encoding="utf-8-sig")
         logger.info("Exported match stats → %s (%d rows)", path, len(df_match_infos))
         created_files.append(path)
@@ -581,7 +607,8 @@ async def main(
     Args:
         match_ids: Danh sách Understat match IDs.  Nếu None, tự discover
                    từ League API.
-        league:    Tên giải đấu (mặc định "EPL").
+        league:    League ID (VD: "EPL", "LALIGA", "BUNDESLIGA").
+                   Sẽ tự resolve sang tên Understat qua league_registry.
         season:    Mùa giải (mặc định "2025").
         export_csv: Có xuất CSV không (mặc định True).
 
@@ -589,8 +616,16 @@ async def main(
         (df_shots, df_rosters)
     """
     t_start = time.perf_counter()
+
+    # Resolve league info
+    try:
+        league_cfg = get_league(league)
+        display_name = league_cfg.display_name
+    except KeyError:
+        display_name = league
+
     logger.info("Vertex Football Scraper – Pipeline bắt đầu")
-    logger.info("   League: %s | Season: %s", league, season)
+    logger.info("   League: %s (%s) | Season: %s", league, display_name, season)
 
     # ── Auto-discover match IDs nếu chưa cung cấp ──
     if not match_ids:
@@ -613,7 +648,7 @@ async def main(
 
     # ── Export ──
     if export_csv:
-        export_to_csv(df_shots, df_rosters, df_match_infos)
+        export_to_csv(df_shots, df_rosters, df_match_infos, league_id=league)
 
     elapsed = time.perf_counter() - t_start
     logger.info("Pipeline hoàn thành trong %.1f giây.", elapsed)
@@ -637,21 +672,30 @@ def cli() -> None:
         python async_scraper.py 28778 28779 28780
 
         # Đổi giải / mùa
-        python async_scraper.py --league EPL --season 2024
+        python async_scraper.py --league LALIGA --season 2024
 
         # Giới hạn số trận (lấy 20 trận gần nhất)
         python async_scraper.py --limit 20
+
+        # Liệt kê giải đấu hỗ trợ
+        python async_scraper.py --list-leagues
     """
     import argparse
 
+    # Build danh sách giải đấu hỗ trợ cho help text
+    supported = [lg.league_id for lg in get_understat_leagues()]
+
     parser = argparse.ArgumentParser(
-        description="Vertex Football Scraper – EPL xG Data Pipeline",
+        description="Vertex Football Scraper – Understat xG Data Pipeline",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
+        epilog=f"""
+Giải đấu hỗ trợ (Understat): {', '.join(supported)}
+
 Ví dụ:
-  python async_scraper.py                         # Scrape toàn bộ mùa giải
-  python async_scraper.py 28778 28779             # Scrape 2 trận cụ thể
-  python async_scraper.py --league EPL --season 2024 --limit 10
+  python async_scraper.py                                    # EPL mùa hiện tại
+  python async_scraper.py --league LALIGA --season 2024      # La Liga 2024
+  python async_scraper.py --league BUNDESLIGA --limit 10     # Bundesliga 10 trận
+  python async_scraper.py --list-leagues                     # Xem tất cả giải
         """,
     )
     parser.add_argument(
@@ -660,11 +704,33 @@ Ví dụ:
         type=int,
         help="Understat match IDs (nếu bỏ trống → auto-discover).",
     )
-    parser.add_argument("--league", default=config.DEFAULT_LEAGUE, help="Tên giải (default: EPL)")
+    parser.add_argument(
+        "--league", default=config.DEFAULT_LEAGUE,
+        help=f"League ID (default: {config.DEFAULT_LEAGUE}). Choices: {', '.join(supported)}",
+    )
     parser.add_argument("--season", default=config.DEFAULT_SEASON, help="Mùa giải (default: 2025)")
     parser.add_argument("--limit", type=int, default=0, help="Giới hạn số trận (0 = không giới hạn)")
     parser.add_argument("--no-csv", action="store_true", help="Không xuất CSV")
+    parser.add_argument("--list-leagues", action="store_true", help="Liệt kê tất cả giải đấu hỗ trợ")
     args = parser.parse_args()
+
+    # ── --list-leagues ──
+    if args.list_leagues:
+        print(list_leagues())
+        return
+
+    # ── Validate league ──
+    league = args.league.upper()
+    try:
+        league_cfg = get_league(league)
+        if not league_cfg.has_understat:
+            logger.error("League '%s' không có trên Understat. Dùng --list-leagues để xem.", league)
+            return
+        # Use season from registry if user didn't override
+        season = args.season if args.season != config.DEFAULT_SEASON else league_cfg.understat_season
+    except KeyError:
+        logger.warning("League '%s' không có trong registry, thử trực tiếp…", league)
+        season = args.season
 
     ids = args.match_ids or None
 
@@ -674,14 +740,14 @@ Ví dụ:
             # Discover trước, rồi cắt
             sem = asyncio.Semaphore(config.MAX_CONCURRENT_REQUESTS)
             async with aiohttp.ClientSession(headers=config.HEADERS) as session:
-                ids = await discover_match_ids(session, sem, args.league, args.season)
+                ids = await discover_match_ids(session, sem, league, season)
             ids = ids[-args.limit:]  # lấy N trận gần nhất
             logger.info("Giới hạn scrape: %d trận gần nhất.", args.limit)
 
         await main(
             match_ids=ids,
-            league=args.league,
-            season=args.season,
+            league=league,
+            season=season,
             export_csv=not args.no_csv,
         )
 

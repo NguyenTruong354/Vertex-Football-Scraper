@@ -1,5 +1,5 @@
 # Usage Guide — Vertex Football Scraper
-> Hướng dẫn sử dụng pipeline Understat và FBref
+> Hướng dẫn sử dụng pipeline Understat và FBref (Multi-League)
 
 ---
 
@@ -8,25 +8,37 @@
 ```
 Vertex_Football_Scraper2/
 │
+├── league_registry.py          ← ⭐ Single source of truth cho giải đấu
+│
 ├── understat/                  ← Understat pipeline
-│   ├── config.py               — Cấu hình API, headers, rate limit
+│   ├── config.py               — Cấu hình API, headers, rate limit, output helpers
 │   ├── schemas.py              — Pydantic models (ShotData, PlayerMatchStats…)
 │   ├── extractor.py            — Parse JSON từ API response
 │   └── async_scraper.py        — Script chạy chính ⭐
 │
 ├── fbref/                      ← FBref pipeline
-│   ├── config_fbref.py         — Cấu hình URLs, table IDs, rate limit
+│   ├── config_fbref.py         — Cấu hình URLs, table IDs (dynamic theo comp_id)
 │   ├── schemas_fbref.py        — Pydantic models (StandingsRow, PlayerProfile…)
 │   └── fbref_scraper.py        — Script chạy chính ⭐
 │
-├── output/                     ← Tất cả CSV output
-│   ├── dataset_epl_xg.csv
-│   ├── dataset_epl_player_stats.csv
-│   ├── dataset_epl_match_stats.csv
-│   ├── dataset_epl_standings.csv
-│   ├── dataset_epl_squad_stats.csv
-│   ├── dataset_epl_squad_rosters.csv
-│   └── dataset_epl_player_season_stats.csv
+├── output/                     ← Tất cả CSV output (phân theo pipeline / giải)
+│   ├── understat/
+│   │   ├── epl/
+│   │   │   ├── dataset_epl_xg.csv
+│   │   │   ├── dataset_epl_player_stats.csv
+│   │   │   └── dataset_epl_match_stats.csv
+│   │   ├── laliga/
+│   │   │   ├── dataset_laliga_xg.csv
+│   │   │   └── …
+│   │   └── bundesliga/ …
+│   └── fbref/
+│       ├── epl/
+│       │   ├── dataset_epl_standings.csv
+│       │   ├── dataset_epl_squad_stats.csv
+│       │   ├── dataset_epl_squad_rosters.csv
+│       │   └── dataset_epl_player_season_stats.csv
+│       ├── laliga/ …
+│       └── bundesliga/ …
 │
 ├── docs/                       ← Tài liệu
 ├── requirements.txt
@@ -66,6 +78,50 @@ pip install -r requirements.txt
 
 ---
 
+## League Registry — Trung tâm quản lý giải đấu
+
+`league_registry.py` là file duy nhất cần sửa khi thêm giải mới.
+
+### Giải đấu hỗ trợ
+
+| League ID | Tên | Understat | FBref |
+|---|---|---|---|
+| `EPL` | Premier League | ✓ | ✓ (comp 9) |
+| `LALIGA` | La Liga | ✓ | ✓ (comp 12) |
+| `BUNDESLIGA` | Bundesliga | ✓ | ✓ (comp 20) |
+| `SERIEA` | Serie A | ✓ | ✓ (comp 11) |
+| `LIGUE1` | Ligue 1 | ✓ | ✓ (comp 13) |
+| `RFPL` | Russian Premier Liga | ✓ | ✗ |
+| `UCL` | Champions League | ✗ | ✓ (comp 8) |
+| `EREDIVISIE` | Eredivisie | ✗ | ✓ (comp 23) |
+| `LIGA_PORTUGAL` | Primeira Liga | ✗ | ✓ (comp 32) |
+
+```bash
+# Xem toàn bộ danh sách từ CLI
+python understat/async_scraper.py --list-leagues
+python fbref/fbref_scraper.py --list-leagues
+```
+
+### Thêm giải đấu mới
+
+Chỉ cần thêm 1 entry vào `LEAGUES` dict trong `league_registry.py`:
+
+```python
+"SCOTTISH_PREM": LeagueConfig(
+    league_id="SCOTTISH_PREM",
+    display_name="Scottish Premiership",
+    country="Scotland",
+    understat_name=None,       # None = Understat không hỗ trợ
+    fbref_comp_id=40,
+    fbref_slug="Scottish-Premiership",
+    priority=11,
+),
+```
+
+**Không cần sửa file nào khác.** Pipelines tự nhận diện qua registry.
+
+---
+
 ## ═══════════════════════════════
 ## PIPELINE 1: UNDERSTAT
 ## ═══════════════════════════════
@@ -82,75 +138,84 @@ Understat cung cấp dữ liệu **xG (Expected Goals)** chi tiết nhất miễ
 **Kỹ thuật:** Gọi JSON API nội bộ của Understat (không cần browser).
 API trả về `text/javascript`, parse bằng `json.loads()`.
 
+**Giải đấu hỗ trợ:** EPL, LALIGA, BUNDESLIGA, SERIEA, LIGUE1, RFPL
+
 ---
 
 ### Cách chạy
 
 ```bash
-# Từ thư mục gốc của project
 cd understat/
 
-# Chạy tất cả 380 trận EPL 2025-2026
+# EPL (mặc định) — toàn bộ mùa 2025-2026
 python async_scraper.py
 
-# Chạy thử 5 trận đầu tiên
+# Giới hạn số trận (test nhanh)
 python async_scraper.py --limit 5
 
-# Chạy 20 trận
-python async_scraper.py --limit 20
+# La Liga toàn mùa
+python async_scraper.py --league LALIGA
+
+# Bundesliga, 10 trận gần nhất
+python async_scraper.py --league BUNDESLIGA --limit 10
+
+# Serie A mùa trước
+python async_scraper.py --league SERIEA --season 2024
+
+# Không xuất CSV (chỉ log kết quả)
+python async_scraper.py --limit 5 --no-csv
+
+# Scrape trực tiếp một số trận theo match ID
+python async_scraper.py 28778 28779 28780
+
+# Xem danh sách giải đấu hỗ trợ
+python async_scraper.py --list-leagues
 ```
+
+---
+
+### Tham số CLI
+
+| Tham số | Mặc định | Mô tả |
+|---|---|---|
+| `--league` | `EPL` | League ID (xem `--list-leagues`) |
+| `--season` | `2025` | Mùa giải (năm bắt đầu, VD: 2024) |
+| `--limit` | `0` (tất cả) | Giới hạn số trận gần nhất |
+| `--no-csv` | False | Không xuất CSV (chỉ log kết quả) |
+| `--list-leagues` | — | In danh sách giải đấu và thoát |
+| `[match_ids...]` | — | Scrape trực tiếp theo match ID |
 
 ---
 
 ### Luồng xử lý
 
 ```
-1. async_scraper.py load config
+1. CLI parse args → validate league qua registry
          │
          ▼
 2. Fetch league data từ Understat API
-   GET /getLeagueData/EPL/2025
-   → Nhận list 380 matches (match_id, teams, scores, dates)
+   GET /getLeagueData/{understat_name}/{season}
+   → Nhận list matches (match_id, teams, scores, dates)
          │
          ▼
-3. Async fetch từng match (concurrency = 5)
+3. Async fetch từng match (concurrency = 6)
    GET /getMatchData/{match_id}
-   → Trả về JSON: { "shotsData": {...}, "rostersData": {...} }
+   → JSON: { "shotsData": {...}, "rostersData": {...} }
          │
          ▼
 4. extractor.py parse JSON
-   → flatten_shots()           → list[ShotData]
-   → flatten_player_stats()    → list[PlayerMatchStats]
-   → flatten_match_stats()     → list[MatchInfo]
+   → flatten_shots()        → list[ShotData]
+   → flatten_rosters()      → list[PlayerMatchStats]
+   → build_match_info()     → list[MatchInfo]
          │
          ▼
 5. schemas.py validate với Pydantic
-   → Báo lỗi nếu data invalid, bỏ qua row lỗi
          │
          ▼
-6. Export to CSV
-   → output/dataset_epl_xg.csv
-   → output/dataset_epl_player_stats.csv
-   → output/dataset_epl_match_stats.csv
-```
-
----
-
-### Cấu hình (`understat/config.py`)
-
-```python
-# Các setting quan trọng có thể chỉnh:
-
-LEAGUE = "EPL"              # Giải đấu
-SEASON = 2025               # Mùa giải (dùng năm bắt đầu)
-
-CONCURRENCY_LIMIT = 5       # Số request đồng thời (khuyến nghị ≤ 5)
-REQUEST_DELAY = 1.0         # Delay giữa các batch (giây)
-
-# Retry settings
-MAX_RETRIES = 3
-RETRY_WAIT_MIN = 2.0
-RETRY_WAIT_MAX = 10.0
+6. Export to output/understat/{league_id}/
+   → dataset_{league}_xg.csv
+   → dataset_{league}_player_stats.csv
+   → dataset_{league}_match_stats.csv
 ```
 
 ---
@@ -158,20 +223,17 @@ RETRY_WAIT_MAX = 10.0
 ### Output mẫu
 
 ```
-23:10:01 | INFO | UNDERSTAT DATA PIPELINE – BẮT ĐẦU
-23:10:01 | INFO | Season: EPL/2025 | Limit: 5
-23:10:03 | INFO | [1/5] match_id=21234 — Arsenal vs Chelsea
-23:10:04 | INFO | [2/5] match_id=21235 — Liverpool vs Man City
+23:10:01 | INFO | Vertex Football Scraper – Pipeline bắt đầu
+23:10:01 | INFO |    League: LALIGA (La Liga) | Season: 2025
+23:10:03 | INFO | ✓ Tìm thấy 311 trận đã diễn ra (tổng 380) trong mùa 2025/La_liga
 ...
-23:10:08 | INFO | ═══ DATA QUALITY REPORT ═══
-23:10:08 | INFO |   Shots validated   : 127 / 127
-23:10:08 | INFO |   Player stats      : 147 / 147
-23:10:08 | INFO |   Match aggregates  : 5 / 5
-23:10:08 | INFO | ═══ XUẤT FILE ═══
-23:10:08 | INFO |   → output/dataset_epl_xg.csv
-23:10:08 | INFO |   → output/dataset_epl_player_stats.csv
-23:10:08 | INFO |   → output/dataset_epl_match_stats.csv
-23:10:08 | INFO | Thời gian: 7.3 giây
+23:10:08 | INFO | ═══ PIPELINE SUMMARY ═══
+23:10:08 | INFO |   Trận đã xử lý   : 5 / 5
+23:10:08 | INFO |   Tổng shots       : 134
+23:10:08 | INFO |   Tổng player stats: 152
+23:10:08 | INFO | Exported shots → output\understat\laliga\dataset_laliga_xg.csv (134 rows)
+23:10:08 | INFO | Exported player stats → output\understat\laliga\dataset_laliga_player_stats.csv (152 rows)
+23:10:08 | INFO | Pipeline hoàn thành trong 7.8 giây.
 ```
 
 ---
@@ -182,15 +244,15 @@ RETRY_WAIT_MAX = 10.0
 |---|---|---|
 | `--limit 5` | 5 | ~7–10 giây |
 | `--limit 50` | 50 | ~1–2 phút |
-| (không limit) | 380 | ~8–15 phút |
+| (không limit) | ~310–380 | ~8–15 phút |
 
 ---
 
 ### Lưu ý
 
-- Understat có rate limiting nhẹ. Nếu bị block, tăng `REQUEST_DELAY` lên `2.0`.
-- Các trận chưa diễn ra (future matches) sẽ có `h_xg` / `a_xg` = `null` — đây là bình thường.
-- `CONCURRENCY_LIMIT = 5` là ngưỡng an toàn. Không nên tăng quá 10.
+- Nếu bị rate limit, tăng `POLITENESS_DELAY_SECONDS` lên `2.0` trong `understat/config.py`.
+- Các trận chưa diễn ra (future matches) có `h_xg`/`a_xg` = `null` — bình thường.
+- `MAX_CONCURRENT_REQUESTS = 6` là ngưỡng an toàn. Không tăng quá 10.
 
 ---
 
@@ -212,6 +274,8 @@ FBref (powered by StatsBomb) cung cấp dữ liệu **thống kê đầy đủ n
 thông thường đều bị chặn (HTTP 403). Giải pháp duy nhất: dùng
 **`nodriver`** (Undetected Chromium) ở chế độ **headed** (có cửa sổ trình duyệt).
 
+**Giải đấu hỗ trợ:** EPL, LALIGA, BUNDESLIGA, SERIEA, LIGUE1, UCL, EREDIVISIE, LIGA_PORTUGAL
+
 > ⚠️ **Cửa sổ Chrome sẽ tự mở** khi chạy FBref pipeline — đây là bình thường,
 > KHÔNG đóng tay cửa sổ đó trong lúc pipeline đang chạy.
 
@@ -220,10 +284,9 @@ thông thường đều bị chặn (HTTP 403). Giải pháp duy nhất: dùng
 ### Cách chạy
 
 ```bash
-# Từ thư mục gốc của project
 cd fbref/
 
-# Chạy đầy đủ: standings + 20 squad pages (~3–4 phút)
+# EPL (mặc định) — standings + 20 squad pages
 python fbref_scraper.py
 
 # Chỉ lấy standings (~15 giây)
@@ -232,75 +295,61 @@ python fbref_scraper.py --standings-only
 # Test với 2 đội đầu tiên (~30 giây)
 python fbref_scraper.py --limit 2
 
-# Test với 5 đội đầu tiên (~1 phút)
-python fbref_scraper.py --limit 5
+# La Liga — đầy đủ
+python fbref_scraper.py --league LALIGA
+
+# Bundesliga — chỉ standings
+python fbref_scraper.py --league BUNDESLIGA --standings-only
+
+# Champions League — 5 đội
+python fbref_scraper.py --league UCL --limit 5
+
+# Xem danh sách giải đấu hỗ trợ
+python fbref_scraper.py --list-leagues
 ```
+
+---
+
+### Tham số CLI
+
+| Tham số | Mặc định | Mô tả |
+|---|---|---|
+| `--league` | `EPL` | League ID (xem `--list-leagues`) |
+| `--standings-only` | False | Chỉ scrape standings, bỏ squad pages |
+| `--limit` | `0` (tất cả) | Giới hạn số đội scrape |
+| `--list-leagues` | — | In danh sách giải đấu và thoát |
 
 ---
 
 ### Luồng xử lý
 
 ```
-1. fbref_scraper.py khởi động
+1. CLI parse args → validate league qua registry
+   → get_fbref_config(league_id) build URL + table IDs tự động
          │
          ▼
 2. FBrefBrowser mở Chrome (headed)
-   → nodriver.start(headless=False)
          │
          ▼
 3. STEP 1: Fetch League Overview Page
-   GET https://fbref.com/en/comps/9/Premier-League-Stats
+   GET https://fbref.com/en/comps/{comp_id}/{slug}-Stats
    → Chờ Cloudflare JS challenge pass (~6–15 giây)
-   → Chờ <table> elements xuất hiện
-   → Lấy full HTML (outerHTML)
-         │
-         ▼
-4. parse_league_page(html)
    → Parse standings table    → list[StandingsRow]
    → Parse squad stats table  → list[SquadStats]
-   → Extract 20 team links    → [{"name", "team_id", "url"}]
+   → Extract team links       → [{"name", "team_id", "url"}]
          │
          ▼
-5. STEP 2: Lần lượt fetch 20 Squad Pages
-   (mỗi trang cách nhau 5 giây)
+4. STEP 2: Lần lượt fetch squad pages (delay 5s/page)
    GET /en/squads/{team_id}/{team_slug}-Stats
-   → HTML ~600KB / trang
+   → Parse stats_standard_{comp_id}  → profiles + season stats
+   → Parse stats_shooting_{comp_id}  → shooting data (merged)
          │
          ▼
-6. parse_squad_page(html, team_name, team_id)
-   → Parse stats_standard_9 table  → profiles + season stats
-   → Parse stats_shooting_9 table  → shooting data
-   → Merge shooting vào player stats
-         │
-         ▼
-7. schemas_fbref.py validate với Pydantic
-   → PlayerProfile, PlayerSeasonStats
-         │
-         ▼
-8. Export to CSV
-   → output/dataset_epl_standings.csv
-   → output/dataset_epl_squad_stats.csv
-   → output/dataset_epl_squad_rosters.csv
-   → output/dataset_epl_player_season_stats.csv
-```
-
----
-
-### Cấu hình (`fbref/config_fbref.py`)
-
-```python
-# Các setting quan trọng có thể chỉnh:
-
-FBREF_LEAGUE_URL = "https://fbref.com/en/comps/9/Premier-League-Stats"
-# Đổi /9/ thành số comp khác để scrape giải khác:
-# La Liga = /12/, Bundesliga = /20/, Serie A = /11/, Ligue 1 = /13/
-
-FBREF_DELAY_BETWEEN_PAGES = 5.0   # Giây delay giữa các page (KHÔNG giảm xuống dưới 3.0)
-FBREF_CF_WAIT_MAX = 45            # Giây tối đa chờ Cloudflare pass
-
-# Table IDs (nếu FBref đổi cấu trúc)
-SQUAD_STANDARD_TABLE_ID = "stats_standard_9"    # 9 = EPL comp ID
-SQUAD_SHOOTING_TABLE_ID = "stats_shooting_9"
+5. Export to output/fbref/{league_id}/
+   → dataset_{league}_standings.csv
+   → dataset_{league}_squad_stats.csv
+   → dataset_{league}_squad_rosters.csv
+   → dataset_{league}_player_season_stats.csv
 ```
 
 ---
@@ -309,32 +358,20 @@ SQUAD_SHOOTING_TABLE_ID = "stats_shooting_9"
 
 ```
 23:47:28 | INFO | FBREF DATA PIPELINE – BẮT ĐẦU
+23:47:28 | INFO |   League: LALIGA (comp_id=12)
+23:47:28 | INFO |   Season: 2025-2026
+23:47:28 | INFO |   URL:    https://fbref.com/en/comps/12/La-Liga-Stats
 23:47:28 | INFO | ▶ Khởi động Chrome browser (headed mode)…
-23:47:29 | INFO | ━━ STEP 1: Scrape League Page ━━
-23:47:29 | INFO | 📥 Fetching: https://fbref.com/en/comps/9/Premier-League-Stats
-23:47:35 | INFO |   ✓ Cloudflare passed sau 6s – Premier League Stats | FBref.com
-23:47:38 | INFO |   ✓ HTML: 968199 bytes, tables=True
+23:47:35 | INFO |   ✓ Cloudflare passed sau 7s – La Liga Stats | FBref.com
 23:47:38 | INFO |   Standings: 20 teams parsed
 23:47:38 | INFO |   Squad stats: 20 teams parsed
 23:47:38 | INFO |   Team links: 20 teams found
 23:47:38 | INFO | ━━ STEP 2: Scrape 20 Squad Pages ━━
-23:47:38 | INFO | ── [1/20] Arsenal ──
-23:47:38 | INFO | 📥 Fetching: https://fbref.com/en/squads/18bb7c10/Arsenal-Stats
-23:47:43 | INFO |   ✓ HTML: 610844 bytes, tables=True
-23:47:43 | INFO |   Arsenal: 28 players, 24 with shooting data
+23:47:38 | INFO | ── [1/20] Real Madrid ──
 ...
-23:49:45 | INFO | ━━ STEP 3: Export CSV ━━
-23:49:45 | INFO | Exported standings → output/dataset_epl_standings.csv (20 rows)
-23:49:45 | INFO | Exported squad stats → output/dataset_epl_squad_stats.csv (20 rows)
-23:49:45 | INFO | Exported player profiles → output/dataset_epl_squad_rosters.csv (583 rows)
-23:49:45 | INFO | Exported player stats → output/dataset_epl_player_season_stats.csv (583 rows)
-23:49:45 | INFO | ═══ FBREF PIPELINE SUMMARY ═══
-23:49:45 | INFO |   Standings rows  : 20
-23:49:45 | INFO |   Squad stats     : 20
-23:49:45 | INFO |   Player profiles : 583
-23:49:45 | INFO |   Player stats    : 583
-23:49:45 | INFO |   CSV files       : 4
-23:49:45 | INFO |   Thời gian       : 137.2 giây
+23:49:45 | INFO | Exported standings → output\fbref\laliga\dataset_laliga_standings.csv (20 rows)
+23:49:45 | INFO | Exported player stats → output\fbref\laliga\dataset_laliga_player_season_stats.csv (571 rows)
+23:49:45 | INFO |   Thời gian: 141.3 giây
 ```
 
 ---
@@ -358,6 +395,7 @@ SQUAD_SHOOTING_TABLE_ID = "stats_shooting_9"
 
 **2. KHÔNG giảm delay xuống dưới 3 giây**
 > FBref rate limit nghiêm ngặt. Nếu scrape quá nhanh, IP có thể bị block 24h.
+> Chỉnh `FBREF_DELAY_BETWEEN_PAGES` trong `fbref/config_fbref.py`.
 
 **3. Nếu Cloudflare không pass**
 > Đôi khi CF thách thức lâu hơn bình thường (CAPTCHA). Nếu thấy log:
@@ -371,31 +409,40 @@ SQUAD_SHOOTING_TABLE_ID = "stats_shooting_9"
 ## Chạy cả 2 pipelines
 
 ```bash
-# Chạy Understat trước (nhanh, không cần browser)
+# Understat trước (nhanh, không cần browser)
 cd understat/
-python async_scraper.py
+python async_scraper.py --league EPL
 cd ..
 
-# Rồi mới chạy FBref (cần browser, lâu hơn)
+# FBref sau (cần browser, lâu hơn)
 cd fbref/
-python fbref_scraper.py
-cd ..
+python fbref_scraper.py --league EPL
 ```
 
-Hoặc tạo một script tổng hợp:
+Hoặc dùng script tổng hợp `run_all.py`:
 
 ```python
 # run_all.py
 import subprocess, sys
 
+LEAGUE = "EPL"    # Đổi tại đây để chạy giải khác
+SEASON = "2025"   # Understat season
+
 python = sys.executable
-print("=== STEP 1: Understat ===")
-subprocess.run([python, "understat/async_scraper.py"], check=True)
 
-print("\n=== STEP 2: FBref ===")
-subprocess.run([python, "fbref/fbref_scraper.py"], check=True)
+print(f"=== STEP 1: Understat ({LEAGUE}) ===")
+subprocess.run(
+    [python, "understat/async_scraper.py", "--league", LEAGUE, "--season", SEASON],
+    check=True,
+)
 
-print("\n✅ DONE — Tất cả CSV đã xuất vào output/")
+print(f"\n=== STEP 2: FBref ({LEAGUE}) ===")
+subprocess.run(
+    [python, "fbref/fbref_scraper.py", "--league", LEAGUE],
+    check=True,
+)
+
+print(f"\n✅ DONE — CSV đã xuất vào output/understat/{LEAGUE.lower()}/ và output/fbref/{LEAGUE.lower()}/")
 ```
 
 ```bash
@@ -404,25 +451,65 @@ python run_all.py
 
 ---
 
+## Cấu hình nâng cao
+
+### Thay đổi mùa giải mặc định
+
+Sửa trong `league_registry.py`:
+
+```python
+"EPL": LeagueConfig(
+    ...
+    understat_season="2025",    # ← Understat season (năm bắt đầu)
+    fbref_season="2025-2026",   # ← FBref season (2 năm)
+    fbref_season_short="2025",
+),
+```
+
+### Tắt giải đấu tạm thời
+
+```python
+"RFPL": LeagueConfig(
+    ...
+    active=False,   # ← Không xuất hiện trong --list-leagues
+),
+```
+
+### Chỉnh rate limit
+
+```python
+# understat/config.py
+MAX_CONCURRENT_REQUESTS: int = 6         # Số request đồng thời (≤ 10)
+POLITENESS_DELAY_SECONDS: float = 0.5    # Delay giữa các request
+
+# fbref/config_fbref.py
+FBREF_DELAY_BETWEEN_PAGES: float = 5.0   # Delay giữa squad pages (≥ 3.0)
+FBREF_CF_WAIT_MAX: int = 45              # Timeout Cloudflare (giây)
+```
+
+---
+
 ## Troubleshooting
 
 | Lỗi | Nguyên nhân | Cách fix |
 |---|---|---|
-| `HTTP 403` | Cloudflare block (Understat API) | Tăng delay, đổi User-Agent trong `config.py` |
+| `KeyError: League 'XYZ'` | League ID không tồn tại | Chạy `--list-leagues` để xem ID đúng |
+| `ValueError: không có FBref` | Giải chưa có FBref comp_id | Thêm `fbref_comp_id` vào registry |
+| `HTTP 403` (Understat) | Rate limit hoặc IP block | Tăng `POLITENESS_DELAY_SECONDS` |
 | `⚠ Cloudflare timeout` | FBref CF challenge quá lâu | Chờ vài phút và chạy lại |
-| `No tables found` | FBref thay đổi cấu trúc trang | Kiểm tra table ID trong `config_fbref.py` |
-| `0 matches found` | Understat đổi API endpoint | Kiểm tra `LEAGUE_API_URL` trong `config.py` |
-| `ValidationError` | Schema không match data mới | Chỉnh model trong `schemas.py` hoặc `schemas_fbref.py` |
-| Chrome crash | RAM thiếu | Đóng bớt ứng dụng, chạy lại |
-| `nodriver` error | Chrome chưa cài hoặc sai version | Cài Chrome từ google.com/chrome |
+| `No tables found` | FBref đổi table ID | Kiểm tra comp_id trong registry |
+| `0 matches found` | Understat đổi tên giải | Kiểm tra `understat_name` trong registry |
+| `ValidationError` | Schema không match data mới | Chỉnh model trong `schemas.py` / `schemas_fbref.py` |
+| Chrome crash | RAM thiếu hoặc Chrome version cũ | Đóng bớt app, cập nhật Chrome |
 
 ---
 
 ## Lịch chạy khuyến nghị (Production)
 
-| Tần suất | Pipeline | Ghi chú |
+| Tần suất | Lệnh | Ghi chú |
 |---|---|---|
-| Sau mỗi vòng đấu | Understat `--limit 10` | Cập nhật xG 10 trận mới nhất |
-| Sau mỗi vòng đấu | FBref `--standings-only` | Cập nhật BXH |
-| Mỗi tuần 1 lần | FBref (full) | Cập nhật stats cầu thủ toàn mùa |
-| Đầu mùa giải | Cả 2 pipelines (full) | Khởi tạo dataset mới |
+| Sau mỗi vòng đấu | `understat/async_scraper.py --league EPL --limit 10` | Cập nhật xG 10 trận mới nhất |
+| Sau mỗi vòng đấu | `fbref/fbref_scraper.py --league EPL --standings-only` | Cập nhật BXH |
+| Mỗi tuần | `fbref/fbref_scraper.py --league EPL` | Cập nhật player stats toàn mùa |
+| Đầu mùa | Cả 2 pipelines (không `--limit`) | Khởi tạo dataset mới |
+| Mở rộng giải | Thêm vào `league_registry.py` + chạy lại | Không cần sửa pipeline code |

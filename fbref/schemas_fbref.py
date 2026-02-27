@@ -4,11 +4,16 @@
 """
 Models cho dữ liệu thu thập từ FBref.
 
-Covers 4/5 Critical items:
-  1. StandingsRow   — Bảng xếp hạng giải đấu
-  2. PlayerProfile  — Thông tin cầu thủ (tên, tuổi, quốc tịch, vị trí)
-  3. PlayerSeasonStats — Thống kê cầu thủ toàn mùa (goals, assists, mins…)
-  4. SquadStats     — Thống kê tổng hợp đội bóng
+Covers Critical + Important items:
+  1. StandingsRow          — Bảng xếp hạng giải đấu
+  2. PlayerProfile         — Thông tin cầu thủ (tên, tuổi, quốc tịch, vị trí)
+  3. PlayerSeasonStats     — Thống kê cầu thủ toàn mùa (goals, assists, mins…)
+  4. SquadStats            — Thống kê tổng hợp đội bóng
+  5. PlayerDefensiveStats  — Tackles, interceptions, blocks, pressures
+  6. PlayerPossessionStats — Carries, take-ons, touches by zone
+  7. PlayerGKStats         — PSxG, saves%, distribution
+  8. FixtureRow            — Lịch thi đấu, kick-off, venue
+  9. MatchPassingStats     — Pass data từ match reports
 
 FBref data-stat attributes map trực tiếp vào field aliases.
 """
@@ -122,7 +127,7 @@ class PlayerProfile(BaseModel):
     # Team context (thêm từ scraper)
     team_name: Optional[str] = Field(None)
     team_id: Optional[str] = Field(None)
-    season: str = "2025-2026"
+    season: Optional[str] = Field(None, description="Mùa giải (VD: 2025-2026)")
 
     @field_validator("nationality", mode="before")
     @classmethod
@@ -170,7 +175,7 @@ class PlayerSeasonStats(BaseModel):
     player_id: Optional[str] = Field(None)
     team_name: Optional[str] = Field(None)
     team_id: Optional[str] = Field(None)
-    season: str = "2025-2026"
+    season: Optional[str] = Field(None, description="Mùa giải (VD: 2025-2026)")
     nationality: Optional[str] = Field(None)
     position: Optional[str] = Field(None)
     age: Optional[str] = Field(None)
@@ -254,7 +259,7 @@ class SquadStats(BaseModel):
 
     team_name: str = Field(..., alias="team")
     team_id: Optional[str] = Field(None)
-    season: str = "2025-2026"
+    season: Optional[str] = Field(None, description="Mùa giải (VD: 2025-2026)")
     players_used: int = Field(0)
     avg_age: Optional[float] = Field(None)
     possession: Optional[float] = Field(None)

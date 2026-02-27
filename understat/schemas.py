@@ -139,7 +139,7 @@ class MatchInfo(BaseModel):
     h_xg: float = Field(0.0, description="Tổng xG đội nhà")
     a_xg: float = Field(0.0, description="Tổng xG đội khách")
     datetime_str: Optional[str] = Field(None, description="Thời gian thi đấu (ISO)")
-    league: str = "EPL"
+    league: Optional[str] = Field(None, description="League ID (VD: EPL, LALIGA)")
     season: Optional[str] = None
 
     model_config = _BASE_CONFIG

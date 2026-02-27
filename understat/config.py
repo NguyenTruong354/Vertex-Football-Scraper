@@ -8,9 +8,19 @@ Chứa:
   • Tham số điều khiển concurrency (Semaphore)
   • Cấu hình retry / rate-limit
   • Đường dẫn xuất dữ liệu
+
+League/season defaults giờ được quản lý bởi league_registry.py.
+Config này chỉ chứa các hằng số kỹ thuật (HTTP, retry, paths).
 """
 
+from __future__ import annotations
+
+import sys
 from pathlib import Path
+
+# Import league registry (nằm ở thư mục cha)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from league_registry import LeagueConfig, get_league  # noqa: E402
 
 # ────────────────────────────────────────────────────────────
 # 1. HTTP HEADERS
@@ -98,10 +108,37 @@ RETRYABLE_HTTP_STATUSES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
 # ────────────────────────────────────────────────────────────
 # 5. OUTPUT / EXPORT
 # ────────────────────────────────────────────────────────────
-OUTPUT_DIR: Path = Path(__file__).resolve().parent / "output"
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+# Thư mục output tập trung (project root / output / understat / {league})
+OUTPUT_BASE: Path = Path(__file__).resolve().parent.parent / "output"
 
-# File CSV chính chứa dữ liệu đã clean
+
+def get_output_dir(league_id: str) -> Path:
+    """Trả về thư mục output cho giải đấu cụ thể, tự tạo nếu chưa có."""
+    out = OUTPUT_BASE / "understat" / league_id.lower()
+    out.mkdir(parents=True, exist_ok=True)
+    return out
+
+
+def get_csv_filenames(league_id: str) -> dict[str, str]:
+    """
+    Trả về dict tên file CSV động theo league_id.
+
+    VD: league_id="EPL" → {
+        "shots":        "dataset_epl_xg.csv",
+        "player_stats": "dataset_epl_player_stats.csv",
+        "match_stats":  "dataset_epl_match_stats.csv",
+    }
+    """
+    prefix = league_id.lower()
+    return {
+        "shots": f"dataset_{prefix}_xg.csv",
+        "player_stats": f"dataset_{prefix}_player_stats.csv",
+        "match_stats": f"dataset_{prefix}_match_stats.csv",
+    }
+
+
+# ── Legacy aliases (backward compatibility) ──
+OUTPUT_DIR: Path = get_output_dir("EPL")
 SHOTS_CSV_FILENAME: str = "dataset_epl_xg.csv"
 PLAYER_STATS_CSV_FILENAME: str = "dataset_epl_player_stats.csv"
 MATCH_STATS_CSV_FILENAME: str = "dataset_epl_match_stats.csv"
@@ -118,5 +155,7 @@ LOG_DATE_FORMAT: str = "%Y-%m-%d %H:%M:%S"
 # ────────────────────────────────────────────────────────────
 # 7. LEAGUE / SEASON DEFAULTS
 # ────────────────────────────────────────────────────────────
+# Defaults giờ lấy từ league_registry.py
+# Giữ lại biến cũ để backward-compatible với CLI / scripts cũ
 DEFAULT_LEAGUE: str = "EPL"          # English Premier League
 DEFAULT_SEASON: str = "2025"         # Mùa 2025-2026
