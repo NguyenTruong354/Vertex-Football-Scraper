@@ -611,14 +611,15 @@ def save_snapshot_csv(state: LiveMatchState, output_dir: Path) -> None:
             df.to_csv(path, index=False)
 
 
-def save_to_db(state: LiveMatchState) -> None:
-    """Lưu snapshot vào PostgreSQL (bảng live_snapshots)."""
+def save_to_db(state: LiveMatchState) -> int:
+    """Lưu snapshot + incidents vào PostgreSQL. Returns rows saved."""
+    rows_saved = 0
     try:
         from db.config_db import get_connection
         conn = get_connection()
         cur = conn.cursor()
 
-        # Upsert vào live_snapshots
+        # 1. Upsert live_snapshots
         cur.execute("""
             INSERT INTO live_snapshots
                 (event_id, home_team, away_team, home_score, away_score,
@@ -641,11 +642,155 @@ def save_to_db(state: LiveMatchState) -> None:
             json.dumps(state.incidents, ensure_ascii=False),
             state.poll_count,
         ))
+        rows_saved += 1
+
+        # 2. Upsert live_incidents (goals, cards, subs, VAR)
+        for inc in state.incidents:
+            inc_type = inc.get("incidentType", "")
+            if inc_type not in ("goal", "card", "substitution", "varDecision"):
+                continue
+            player_name = inc.get("player", {}).get("name")
+            player_in = inc.get("playerIn", {}).get("name")
+            player_out = inc.get("playerOut", {}).get("name")
+            cur.execute("""
+                INSERT INTO live_incidents
+                    (event_id, incident_type, minute, added_time,
+                     player_name, player_in_name, player_out_name,
+                     is_home, detail)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (event_id, incident_type, minute, COALESCE(player_name, ''))
+                DO UPDATE SET
+                    added_time     = EXCLUDED.added_time,
+                    player_in_name = EXCLUDED.player_in_name,
+                    player_out_name= EXCLUDED.player_out_name,
+                    is_home        = EXCLUDED.is_home,
+                    detail         = EXCLUDED.detail,
+                    loaded_at      = NOW()
+            """, (
+                state.event_id, inc_type,
+                inc.get("time"), inc.get("addedTime"),
+                player_name, player_in, player_out,
+                inc.get("isHome"), inc.get("incidentClass", ""),
+            ))
+            rows_saved += 1
+
         conn.commit()
         cur.close()
         conn.close()
     except Exception as exc:
         logger.warning("  DB save failed: %s", exc)
+    return rows_saved
+
+
+# ────────────────────────────────────────────────────────────
+# DB Query — xem dữ liệu live từ PostgreSQL
+# ────────────────────────────────────────────────────────────
+
+def query_live_from_db(event_id: int | None = None) -> None:
+    """Truy vấn và hiển thị dữ liệu live từ DB."""
+    from db.config_db import get_connection
+    conn = get_connection()
+    cur = conn.cursor()
+
+    # If no event_id, show all tracked matches
+    if event_id is None:
+        cur.execute("""
+            SELECT event_id, home_team, away_team, home_score, away_score,
+                   status, minute, poll_count, loaded_at
+            FROM live_snapshots
+            ORDER BY loaded_at DESC
+        """)
+        rows = cur.fetchall()
+        if not rows:
+            print(f"\n{C.YELLOW}  No live data in DB yet.{C.RESET}\n")
+            cur.close(); conn.close()
+            return
+
+        print(f"\n{C.BOLD}{C.CYAN}  LIVE MATCHES IN DATABASE{C.RESET}")
+        print(f"{C.DIM}{'─' * 70}{C.RESET}\n")
+        print(f"  {'ID':>10s}  {'Home':>18s}  {'Score':^5s}  {'Away':<18s}  {'Status':<12s}  {'Min':>3s}  {'Polls':>5s}  {'Updated'}")
+        print(f"{C.DIM}  {'─'*10}  {'─'*18}  {'─'*5}  {'─'*18}  {'─'*12}  {'─'*3}  {'─'*5}  {'─'*19}{C.RESET}")
+        for r in rows:
+            eid, ht, at, hs, aws, st, mn, pc, upd = r
+            st_color = C.GREEN if st == "inprogress" else (C.RED if st == "finished" else C.YELLOW)
+            print(f"  {eid:>10d}  {ht:>18s}  {C.BOLD}{hs}-{aws}{C.RESET:^5s}  {at:<18s}  {st_color}{st:<12s}{C.RESET}  {mn:>3d}  {pc:>5d}  {upd}")
+        print()
+        cur.close(); conn.close()
+        return
+
+    # ── Detail view for specific event ──
+    cur.execute("""
+        SELECT event_id, home_team, away_team, home_score, away_score,
+               status, minute, statistics_json, incidents_json, poll_count, loaded_at
+        FROM live_snapshots WHERE event_id = %s
+    """, (event_id,))
+    row = cur.fetchone()
+    if not row:
+        print(f"\n{C.YELLOW}  Event {event_id} not found in DB.{C.RESET}\n")
+        cur.close(); conn.close()
+        return
+
+    eid, ht, at, hs, aws_sc, st, mn, stats_json, inc_json, pc, upd = row
+
+    # Reconstruct state for rendering
+    state = LiveMatchState(
+        event_id=eid, home_team=ht, away_team=at,
+        home_score=hs or 0, away_score=aws_sc or 0,
+        status=st or "", minute=mn or 0,
+        poll_count=pc or 0,
+        last_updated=str(upd),
+    )
+    if stats_json:
+        state.statistics = stats_json if isinstance(stats_json, dict) else json.loads(stats_json)
+    if inc_json:
+        state.incidents = inc_json if isinstance(inc_json, list) else json.loads(inc_json)
+
+    # Render full dashboard from DB data
+    print(render_full(state))
+
+    # ── Also show incidents from live_incidents table ──
+    cur.execute("""
+        SELECT incident_type, minute, added_time, player_name,
+               player_in_name, player_out_name, is_home, detail, loaded_at
+        FROM live_incidents
+        WHERE event_id = %s
+        ORDER BY minute, loaded_at
+    """, (event_id,))
+    inc_rows = cur.fetchall()
+
+    if inc_rows:
+        print(f"\n{C.BOLD}  DB: live_incidents table ({len(inc_rows)} rows){C.RESET}")
+        print(f"  {'Type':<15s}  {'Min':>4s}  {'Player':<25s}  {'Detail':<15s}  {'Home?':>5s}  {'Saved at'}")
+        print(f"{C.DIM}  {'─'*15}  {'─'*4}  {'─'*25}  {'─'*15}  {'─'*5}  {'─'*19}{C.RESET}")
+        for ir in inc_rows:
+            it, imin, iadd, pname, pin, pout, ihome, idet, iat = ir
+            time_str = f"{imin}'" if imin else ""
+            if iadd:
+                time_str = f"{imin}+{iadd}'"
+            pdisp = pname or ""
+            if it == "substitution":
+                pdisp = f"{pin or '?'} <- {pout or '?'}"
+            side = "HOME" if ihome else "AWAY"
+            print(f"  {it:<15s}  {time_str:>4s}  {pdisp:<25s}  {idet or '':<15s}  {side:>5s}  {iat}")
+    else:
+        print(f"\n{C.DIM}  DB: No incidents recorded yet.{C.RESET}")
+
+    # ── Summary statistics from JSONB ──
+    if state.statistics:
+        print(f"\n{C.BOLD}  DB: statistics_json ({len(state.statistics)} stats){C.RESET}")
+        priority = ["Ball possession", "Expected goals", "Total shots",
+                     "Shots on target", "Corner kicks", "Fouls", "Passes"]
+        for key in priority:
+            if key in state.statistics:
+                v = state.statistics[key]
+                print(f"    {ht:>20s} {str(v.get('home','')):>8s}  |  {str(v.get('away','')):>8s} {at}")
+        remaining = len(state.statistics) - len([k for k in priority if k in state.statistics])
+        if remaining > 0:
+            print(f"    {C.DIM}... and {remaining} more stats{C.RESET}")
+
+    print(f"\n{C.DIM}  Data loaded_at: {upd}  |  poll_count: {pc}{C.RESET}\n")
+    cur.close()
+    conn.close()
 
 
 # ────────────────────────────────────────────────────────────
@@ -760,19 +905,22 @@ async def live_track(
                 clear_screen()
                 print(render_full(state))
 
-                # Save if requested
+                # Save
+                db_rows = 0
                 if save_csv:
                     save_snapshot_csv(state, output_dir)
                 if save_db:
-                    save_to_db(state)
+                    db_rows = save_to_db(state)
+                    print(f"  {C.GREEN}DB saved: {db_rows} rows upserted{C.RESET}")
 
                 if not still_playing:
-                    print(f"\n  {C.YELLOW}Trận đã kết thúc!{C.RESET}")
+                    print(f"\n  {C.YELLOW}Match finished!{C.RESET}")
                     # Final save
                     if save_csv:
                         save_snapshot_csv(state, output_dir)
                     if save_db:
-                        save_to_db(state)
+                        final_rows = save_to_db(state)
+                        print(f"  {C.GREEN}Final DB save: {final_rows} rows{C.RESET}")
                     break
 
                 # Wait interval (interruptible)
@@ -828,8 +976,19 @@ Examples:
                         help="Save CSV snapshot each poll")
     parser.add_argument("--save-db", action="store_true",
                         help="Save to live_snapshots table in PostgreSQL")
+    parser.add_argument("--query", nargs="?", const="all", default=None,
+                        metavar="EVENT_ID",
+                        help="Query live data from DB (no EVENT_ID = list all)")
 
     args = parser.parse_args()
+
+    # ── Query mode: read from DB, no scraping ──
+    if args.query is not None:
+        if args.query == "all":
+            query_live_from_db()
+        else:
+            query_live_from_db(int(args.query))
+        return
 
     event_id = args.event_id
 
