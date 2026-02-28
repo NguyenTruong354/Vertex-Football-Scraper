@@ -1,441 +1,383 @@
 # Data Checklist — Vertex Football Scraper
-> Cập nhật: 01/03/2026 | Giải: Multi-League (EPL, La Liga, Bundesliga, Serie A, Ligue 1, …)
-> File CSV output tự động theo league: `dataset_{league}_*.csv`
+> Cập nhật: 01/03/2026 | Trạng thái: 4 nguồn scraping + PostgreSQL + Live Tracker
+> File output theo league: `output/{source}/{league}/dataset_{league}_*.csv`
 
 ---
 
-## ✅ DỮ LIỆU ĐÃ CÓ
+## Tổng quan nguồn dữ liệu
 
-### 📦 Nguồn: Understat
-*Pipeline: `understat/async_scraper.py` → 3 CSVs*
+| # | Nguồn | Pipeline | Tables trong DB | Trạng thái |
+|---|-------|----------|-----------------|-----------|
+| 1 | **Understat** | `understat/async_scraper.py` | `match_stats`, `shots`, `player_match_stats` | ✅ Production |
+| 2 | **FBref** | `fbref/fbref_scraper.py` | `standings`, `squad_rosters`, `squad_stats`, `player_season_stats`, `fixtures`, `gk_stats` | ✅ Production |
+| 3 | **SofaScore** | `sofascore/sofascore_client.py` | `ss_events`, `player_avg_positions`, `heatmaps` | ✅ Production |
+| 4 | **Transfermarkt** | `transfermarkt/tm_scraper.py` | `team_metadata`, `market_values` | ✅ Production |
+| 5 | **Live Tracker** | `live_match.py` | `live_snapshots`, `live_incidents` | ✅ Production |
+| — | **Cross-source** | `db/loader.py` (auto-build) | `player_crossref` | ✅ Production |
 
 ---
 
-#### 1. Shot-level xG (`dataset_epl_xg.csv`)
+## 📦 Nguồn 1: Understat
+
+*Script: `understat/async_scraper.py` | Kỹ thuật: aiohttp async JSON API*
+
+### 1. Shot-level xG — bảng `shots`
+
 | Field | Kiểu | Mô tả |
 |---|---|---|
-| `id` | str | Shot ID duy nhất |
-| `match_id` | int | ID trận đấu |
-| `player_id` | int | ID cầu thủ sút |
-| `player` | str | Tên cầu thủ |
-| `player_assisted` | str | Cầu thủ kiến tạo (nếu có) |
-| `h_team` / `a_team` | str | Tên đội sân nhà / sân khách |
-| `h_goals` / `a_goals` | int | Tỉ số trận đấu |
-| `date` | str | Ngày thi đấu |
-| `season` | int | Mùa giải (VD: 2025) |
-| `minute` | int | Phút sút (0–90+) |
-| `result` | str | Kết quả: `Goal`, `SavedShot`, `MissedShots`, `BlockedShot`, `OwnGoal` |
-| `situation` | str | Tình huống: `OpenPlay`, `SetPiece`, `FromCorner`, `DirectFreekick`, `Penalty` |
-| `shot_type` | str | Chân/đầu: `LeftFoot`, `RightFoot`, `Head`, `OtherBodyPart` |
-| `last_action` | str | Hành động trước khi sút: `Pass`, `Cross`, `TakeOn`, `None`… |
-| `x` | float | Tọa độ X trên sân [0–1] |
-| `y` | float | Tọa độ Y trên sân [0–1] |
-| `xg` | float | Expected Goals của cú sút |
-| `h_a` | str | Cầu thủ thuộc đội nào: `h` hoặc `a` |
+| `id` | BIGINT | Shot ID (Understat) — PK cùng `league_id` |
+| `match_id` | BIGINT | ID trận đấu |
+| `player_id` | BIGINT | ID cầu thủ sút |
+| `player` | TEXT | Tên cầu thủ |
+| `player_assisted` | TEXT | Cầu thủ kiến tạo (nếu có) |
+| `h_team` / `a_team` | TEXT | Tên đội sân nhà / sân khách |
+| `h_goals` / `a_goals` | INTEGER | Tỉ số trận đấu |
+| `date` | TEXT | Ngày thi đấu |
+| `season` | INTEGER | Mùa giải (VD: 2025) |
+| `minute` | INTEGER | Phút sút (0–90+) |
+| `result` | TEXT | `Goal`, `SavedShot`, `MissedShots`, `BlockedShot`, `OwnGoal` |
+| `situation` | TEXT | `OpenPlay`, `SetPiece`, `FromCorner`, `DirectFreekick`, `Penalty` |
+| `shot_type` | TEXT | `LeftFoot`, `RightFoot`, `Head`, `OtherBodyPart` |
+| `last_action` | TEXT | Hành động trước khi sút: `Pass`, `Cross`, `TakeOn`… |
+| `x` / `y` | REAL | Tọa độ trên sân [0–1] |
+| `xg` | REAL | Expected Goals của cú sút |
+| `h_a` | TEXT | `h` (home) hoặc `a` (away) |
+| `league_id` | TEXT | EPL / LALIGA / BUNDESLIGA / SERIEA / LIGUE1 |
 
-**Phạm vi hiện tại:** 127 shots / 5 matches (test limit)
-**Phạm vi đầy đủ:** ~3,400 shots / 380 matches (full season)
+**Scale:** ~9,120 shots/mùa/giải — ~3.2 MB/mùa
 
 ---
 
-#### 2. Player xG per Match (`dataset_epl_player_stats.csv`)
+### 2. Player xG per Match — bảng `player_match_stats`
+
 | Field | Kiểu | Mô tả |
 |---|---|---|
-| `id` | int | Row ID |
-| `match_id` | int | ID trận đấu |
-| `player_id` | int | ID cầu thủ |
-| `player` | str | Tên cầu thủ |
-| `team_id` | int | ID đội bóng |
-| `position` | str | Vị trí thi đấu trong trận |
-| `time` | int | Số phút ra sân |
-| `goals` | int | Số bàn thắng |
-| `own_goals` | int | Bàn phản lưới |
-| `shots` | int | Số lần sút |
-| `assists` | int | Số đường kiến tạo |
-| `key_passes` | int | Số đường chuyền tạo cơ hội |
-| `xg` | float | Expected Goals |
-| `xa` | float | Expected Assists |
-| `xg_chain` | float | xG của mọi lần cầu thủ có bóng dẫn đến cú sút |
-| `xg_buildup` | float | xG của những tình huống cầu thủ liên quan (không tính xa/xg) |
+| `id` | BIGINT | PK cùng `league_id` |
+| `match_id` | BIGINT | ID trận đấu |
+| `player_id` | BIGINT | ID cầu thủ |
+| `player` | TEXT | Tên cầu thủ |
+| `team_id` | BIGINT | ID đội bóng (Understat internal) |
+| `position` | TEXT | Vị trí thi đấu trong trận |
+| `time` | INTEGER | Số phút ra sân |
+| `goals` / `own_goals` | INTEGER | Bàn thắng / Phản lưới |
+| `shots` / `assists` / `key_passes` | INTEGER | Sút / Kiến tạo / Chuyền tạo cơ hội |
+| `xg` / `xa` | REAL | Expected Goals / Assists |
+| `xg_chain` | REAL | xG tổng của chuỗi tấn công cầu thủ tham gia |
+| `xg_buildup` | REAL | xG tình huống xây dựng (không tính xa/xg) |
+| `league_id` | TEXT | League ID |
 
-**Phạm vi hiện tại:** 147 player-match records / 5 matches
-**Phạm vi đầy đủ:** ~8,000–10,000 records / full season
+**Scale:** ~10,640 records/mùa/giải
 
 ---
 
-#### 3. Match Aggregates (`dataset_epl_match_stats.csv`)
+### 3. Match Aggregates — bảng `match_stats`
+
 | Field | Kiểu | Mô tả |
 |---|---|---|
-| `match_id` | int | ID trận đấu |
-| `h_team` / `a_team` | str | Đội nhà / Đội khách |
-| `h_goals` / `a_goals` | int | Tỉ số thực |
-| `h_xg` / `a_xg` | float | Tổng xG đội nhà / đội khách |
-| `datetime_str` | str | Thời gian thi đấu |
-| `league` | str | Tên giải đấu |
-| `season` | int | Mùa giải |
+| `match_id` | BIGINT | PK cùng `league_id` |
+| `h_team` / `a_team` | TEXT | Đội nhà / Đội khách |
+| `h_goals` / `a_goals` | INTEGER | Tỉ số thực |
+| `h_xg` / `a_xg` | REAL | Tổng xG đội nhà / đội khách |
+| `datetime_str` | TEXT | Thời gian thi đấu |
+| `league` | TEXT | Tên giải đấu |
+| `season` | INTEGER | Mùa giải |
+| `league_id` | TEXT | League ID |
 
-**Phạm vi hiện tại:** 5 matches (test)
-**Phạm vi đầy đủ:** 380 matches / full season
-
----
-
-### 📦 Nguồn: FBref
-*Pipeline: `fbref/fbref_scraper.py` → 4 CSVs*
+**Scale:** 380 matches/mùa EPL
 
 ---
 
-#### 4. League Standings (`dataset_epl_standings.csv`)
+## 📦 Nguồn 2: FBref
+
+*Script: `fbref/fbref_scraper.py` | Kỹ thuật: nodriver (Chrome headed) — bypass Cloudflare*
+
+### 4. League Standings — bảng `standings`
+
 | Field | Kiểu | Mô tả |
 |---|---|---|
-| `position` | int | Hạng trên bảng xếp hạng |
-| `team_name` | str | Tên đội bóng |
-| `team_id` | str | FBref team ID (e.g. `18bb7c10`) |
-| `matches_played` | int | Số trận đã thi đấu |
-| `wins` / `draws` / `losses` | int | Thắng / Hoà / Thua |
-| `goals_for` | int | Số bàn thắng ghi được |
-| `goals_against` | int | Số bàn thủng lưới |
-| `goal_difference` | str | Hiệu số bàn thắng |
-| `points` | int | Số điểm |
-| `points_avg` | float | Điểm trung bình/trận |
-| `form_last5` | str | Form 5 trận gần nhất (VD: `W W D L W`) |
-| `attendance_per_g` | str | Lượng khán giả TB/trận |
-| `top_scorer` | str | Cầu thủ ghi nhiều bàn nhất đội |
-| `top_keeper` | str | Thủ môn chính |
-
-**Phạm vi:** 20 đội / snapshot hiện tại
+| `team_id` | TEXT | FBref team ID (VD: `18bb7c10`) — PK cùng `league_id` |
+| `position` | INTEGER | Hạng trên BXH |
+| `team_name` / `team_url` | TEXT | Tên & URL đội |
+| `matches_played` | INTEGER | Số trận đã thi đấu |
+| `wins` / `draws` / `losses` | INTEGER | Thắng / Hoà / Thua |
+| `goals_for` / `goals_against` / `goal_difference` | INTEGER | Bàn ghi / Thủng / Hiệu số |
+| `points` | INTEGER | Số điểm |
+| `points_avg` | REAL | Điểm TB/trận |
+| `form_last5` | TEXT | Form 5 trận gần nhất (VD: `W W D L W`) |
+| `attendance_per_g` | TEXT | Khán giả TB/trận |
+| `top_scorer` / `top_keeper` | TEXT | Cầu thủ ghi bàn / Thủ môn chính |
 
 ---
 
-#### 5. Squad Stats (`dataset_epl_squad_stats.csv`)
+### 5. Squad Stats — bảng `squad_stats`
+
 | Field | Kiểu | Mô tả |
 |---|---|---|
-| `team_name` / `team_id` | str | Tên & ID đội |
-| `season` | str | Mùa giải |
-| `players_used` | int | Số cầu thủ đã ra sân |
-| `avg_age` | float | Tuổi trung bình của đội |
-| `possession` | float | % kiểm soát bóng trung bình |
-| `matches_played` | int | Số trận đã đấu |
-| `goals` / `assists` | int | Tổng bàn / kiến tạo |
-| `pens_made` / `pens_att` | int | Phạt đền thành công / thực hiện |
-| `yellow_cards` / `red_cards` | int | Thẻ vàng / thẻ đỏ |
-| `goals_per90` / `assists_per90` | float | Chỉ số ghi bàn/kiến tạo per 90 phút |
-
-**Phạm vi:** 20 đội / snapshot hiện tại
+| `team_id` / `team_name` / `season` | TEXT | PK kép cùng `league_id` |
+| `players_used` | INTEGER | Số cầu thủ đã ra sân |
+| `avg_age` | REAL | Tuổi trung bình |
+| `possession` | REAL | % kiểm soát bóng TB |
+| `matches_played` | INTEGER | Số trận đã đấu |
+| `goals` / `assists` | INTEGER | Tổng bàn / kiến tạo |
+| `pens_made` / `pens_att` | INTEGER | Phạt đền thành công / thực hiện |
+| `yellow_cards` / `red_cards` | INTEGER | Thẻ vàng / thẻ đỏ |
+| `goals_per90` / `assists_per90` | REAL | Chỉ số per 90 phút |
 
 ---
 
-#### 6. Squad Rosters / Player Profiles (`dataset_epl_squad_rosters.csv`)
+### 6. Squad Rosters — bảng `squad_rosters`
+
 | Field | Kiểu | Mô tả |
 |---|---|---|
-| `player_name` | str | Tên cầu thủ |
-| `player_id` | str | FBref player ID |
-| `player_url` | str | URL trang cầu thủ trên FBref |
-| `nationality` | str | Quốc tịch (ISO 3-letter, VD: `ENG`) |
-| `position` | str | Vị trí (VD: `GK`, `DF`, `MF`, `FW`, `MF,FW`) |
-| `age` | str | Tuổi dạng FBref: `30-165` (năm-ngày) |
-| `age_years` | int | Tuổi (năm) đã parse |
-| `team_name` / `team_id` | str | Đội & ID đội |
-| `season` | str | Mùa giải |
+| `player_id` | TEXT | FBref player ID — PK cùng `team_id` + `league_id` |
+| `player_name` / `player_url` | TEXT | Tên & URL cầu thủ |
+| `nationality` | TEXT | Quốc tịch (ISO 3-letter, VD: `ENG`) |
+| `position` | TEXT | Vị trí (VD: `GK`, `DF`, `MF`, `FW`) |
+| `age` | TEXT | Tuổi dạng FBref: `30-165` (năm-ngày) |
+| `age_years` | INTEGER | Tuổi (năm) đã parse |
+| `team_name` / `team_id` | TEXT | Đội & ID đội |
+| `season` | TEXT | Mùa giải |
 
-**Phạm vi hiện tại:** 64 players / 2 teams (test limit)
-**Phạm vi đầy đủ:** ~550–600 players / 20 teams
+**Scale:** ~560 players/mùa EPL
 
 ---
 
-#### 7. Player Season Stats (`dataset_epl_player_season_stats.csv`)
+### 7. Player Season Stats — bảng `player_season_stats`
+
 | Field | Kiểu | Mô tả |
 |---|---|---|
-| `player_name` / `player_id` | str | Tên & ID cầu thủ |
-| `team_name` / `team_id` | str | Đội & ID đội |
-| `season` / `nationality` / `position` / `age` | str | Metadata |
-| `matches_played` / `starts` | int | Số trận ra sân / đá chính |
-| `minutes` | int | Tổng số phút thi đấu |
-| `minutes_90s` | float | Số 90 phút tương đương |
-| `goals` / `assists` | int | Bàn thắng / Kiến tạo |
-| `goals_assists` | int | Bàn + Kiến tạo |
-| `goals_non_pen` | int | Bàn thắng ngoài phạt đền |
-| `pens_made` / `pens_att` | int | Phạt đền thành công / thực hiện |
-| `shots` / `shots_on_target` | int | Tổng sút / Sút trúng đích |
-| `shots_on_target_pct` | float | % sút trúng đích |
-| `goals_per90` / `assists_per90` / `goals_assists_per90` | float | Chỉ số per 90 phút |
-| `yellow_cards` / `red_cards` | int | Thẻ vàng / thẻ đỏ |
-
-**Phạm vi hiện tại:** 64 player-season records / 2 teams (test)
-**Phạm vi đầy đủ:** ~550–600 records / 20 teams
+| `player_id` / `team_id` / `season` | TEXT | PK kép cùng `league_id` |
+| `player_name` / `team_name` | TEXT | Tên cầu thủ / đội |
+| `nationality` / `position` / `age` | TEXT | Metadata cầu thủ |
+| `matches_played` / `starts` | INTEGER | Trận ra sân / đá chính |
+| `minutes` | INTEGER | Tổng số phút thi đấu |
+| `minutes_90s` | REAL | Số 90 phút tương đương |
+| `goals` / `assists` / `goals_assists` | INTEGER | Bàn / Kiến tạo / Tổng |
+| `goals_non_pen` | INTEGER | Bàn ngoài phạt đền |
+| `pens_made` / `pens_att` | INTEGER | Phạt đền thành công / thực hiện |
+| `shots` / `shots_on_target` / `shots_on_target_pct` | REAL | Thống kê sút |
+| `goals_per90` / `assists_per90` / `goals_assists_per90` | REAL | Per 90 phút |
+| `yellow_cards` / `red_cards` | INTEGER | Thẻ vàng / thẻ đỏ |
 
 ---
 
-#### 8. Defensive Stats (`dataset_{league}_defensive_stats.csv`)
+### 8. Fixtures — bảng `fixtures`
+
 | Field | Kiểu | Mô tả |
 |---|---|---|
-| `player_name` / `player_id` | str | Tên & ID cầu thủ |
-| `team_name` / `team_id` | str | Đội & ID đội |
-| `season` / `nationality` / `position` / `age` | str | Metadata |
-| `minutes_90s` | float | Số 90 phút tương đương |
-| `tackles` | int | Tổng số pha tắc bóng |
-| `tackles_won` | int | Tắc bóng thành công |
-| `tackles_def_3rd` / `tackles_mid_3rd` / `tackles_att_3rd` | int | Tắc bóng theo khu vực |
-| `challenge_tackles` | int | Dribblers tackled |
-| `challenges` | int | Số lần đối đầu 1v1 |
-| `challenge_tackles_pct` | float | % tackle thành công khi 1v1 |
-| `blocks` | int | Tổng blocks |
-| `blocked_shots` / `blocked_passes` | int | Chặn sút / chặn chuyền |
-| `interceptions` | int | Số lần cắt bóng |
-| `tackles_interceptions` | int | Tkl + Int tổng hợp |
-| `clearances` | int | Phá bóng |
-| `errors` | int | Lỗi dẫn đến cơ hội đối thủ |
-| `pressures` | int | Tổng số lần pressing |
-| `pressure_regains` | int | Pressing thành công (đoạt bóng) |
-| `pressure_regain_pct` | float | % pressing thành công |
-| `pressures_def_3rd` / `pressures_mid_3rd` / `pressures_att_3rd` | int | Pressing theo khu vực |
-
-**Phạm vi đầy đủ:** ~550–600 records / 20 teams
+| `match_id` | TEXT | FBref match ID — PK cùng `league_id` |
+| `gameweek` | INTEGER | Vòng đấu |
+| `date` / `start_time` / `dayofweek` | TEXT | Thời gian thi đấu |
+| `home_team` / `away_team` | TEXT | Đội nhà / khách |
+| `score` | TEXT | Tỉ số (nếu đã diễn ra) |
+| `home_xg` / `away_xg` | REAL | xG (nếu đã diễn ra) |
+| `attendance` | TEXT | Số khán giả |
+| `venue` / `referee` | TEXT | Sân / Trọng tài |
+| `match_report_url` | TEXT | URL báo cáo trận đấu FBref |
+| `home_team_id` / `away_team_id` | TEXT | Team IDs |
 
 ---
 
-#### 9. Possession & Carry Stats (`dataset_{league}_possession_stats.csv`)
+### 9. Goalkeeper Stats — bảng `gk_stats`
+
 | Field | Kiểu | Mô tả |
 |---|---|---|
-| `player_name` / `player_id` | str | Tên & ID cầu thủ |
-| `team_name` / `team_id` | str | Đội & ID đội |
-| `season` / `nationality` / `position` / `age` | str | Metadata |
-| `minutes_90s` | float | Số 90 phút tương đương |
-| `touches` | int | Tổng số lần chạm bóng |
-| `touches_def_pen_area` | int | Chạm bóng trong vòng cấm nhà |
-| `touches_def_3rd` / `touches_mid_3rd` / `touches_att_3rd` | int | Chạm bóng theo khu vực |
-| `touches_att_pen_area` | int | Chạm bóng trong vòng cấm đối phương |
-| `touches_live_ball` | int | Chạm bóng trực tiếp (không đặt) |
-| `take_ons` | int | Tổng lần rê bóng qua người |
-| `take_ons_won` | int | Rê bóng thành công |
-| `take_ons_won_pct` | float | % rê bóng thành công |
-| `take_ons_tackled` | int | Bị tắc khi rê |
-| `carries` | int | Tổng lần mang bóng |
-| `carries_distance` | float | Tổng quãng đường mang bóng (yards) |
-| `carries_progressive_distance` | float | Quãng đường mang bóng tiến lên |
-| `progressive_carries` | int | Số lần mang bóng tiến vào phần sân đối phương |
-| `carries_into_final_third` | int | Mang bóng vào 1/3 cuối sân |
-| `carries_into_penalty_area` | int | Mang bóng vào vòng cấm |
-| `miscontrols` | int | Mất kiểm soát bóng |
-| `dispossessed` | int | Bị đoạt bóng |
-| `passes_received` | int | Số lần nhận bóng |
-| `progressive_passes_received` | int | Nhận đường chuyền tiến lên |
-
-**Phạm vi đầy đủ:** ~550–600 records / 20 teams
+| `player_id` / `team_id` | TEXT | PK cùng `league_id` |
+| `player_name` / `team_name` | TEXT | Tên thủ môn / đội |
+| `gk_games` / `gk_games_starts` | INTEGER | Trận ra sân / đá chính |
+| `minutes_gk` | INTEGER | Tổng phút |
+| `gk_goals_against` / `gk_goals_against_per90` | INTEGER/REAL | Bàn thủng lưới |
+| `gk_saves` / `gk_save_pct` | INTEGER/REAL | Cứu thua / % cứu thua |
+| `gk_clean_sheets` / `gk_clean_sheets_pct` | INTEGER/REAL | Sạch lưới / % |
+| `gk_psxg` / `gk_psxg_per_shot_on_target` | REAL | Post-shot xG |
+| `gk_passes` / `gk_passes_launched` / `gk_passes_pct_launched` | INTEGER/REAL | Chuyền bóng GK |
+| `gk_crosses_faced` / `gk_crosses_stopped` / `gk_crosses_stopped_pct` | ... | Bắt phạt góc |
+| `gk_def_actions_outside_pen_area` / `gk_avg_distance_def_actions` | ... | Ngoài vùng cấm |
 
 ---
 
-#### 10. GK Stats (`dataset_{league}_gk_stats.csv`)
+## 📦 Nguồn 3: SofaScore
+
+*Script: `sofascore/sofascore_client.py` | Kỹ thuật: nodriver — SofaScore API private*
+
+### 10. Match Events — bảng `ss_events`
+
 | Field | Kiểu | Mô tả |
 |---|---|---|
-| `player_name` / `player_id` | str | Tên & ID thủ môn |
-| `team_name` / `team_id` | str | Đội & ID đội |
-| `season` / `nationality` / `position` / `age` | str | Metadata |
-| `gk_games` / `gk_games_starts` | int | Số trận ra sân / đá chính |
-| `minutes_gk` | int | Tổng phút thi đấu |
-| `gk_goals_against` | int | Số bàn thủng lưới |
-| `gk_goals_against_per90` | float | Bàn thủng/90 phút |
-| `gk_shots_on_target_against` | int | Sút trúng đích đối mặt |
-| `gk_saves` | int | Số pha cứu thua |
-| `gk_save_pct` | float | % cứu thua |
-| `gk_wins` / `gk_ties` / `gk_losses` | int | Thắng / Hòa / Thua |
-| `gk_clean_sheets` | int | Số trận giữ sạch lưới |
-| `gk_clean_sheets_pct` | float | % trận giữ sạch lưới |
-| `gk_pens_att` / `gk_pens_allowed` / `gk_pens_saved` | int | PK: đối mặt / thủng / cản |
-| `gk_psxg` | float | Post-Shot Expected Goals |
-| `gk_psxg_per_shot_on_target` | float | PSxG / sút trúng đích |
-| `gk_passes_completed_launched` / `gk_passes_launched` | int | Phát bóng dài hoàn thành / thực hiện |
-| `gk_passes_pct_launched` | float | % phát bóng dài thành công |
-| `gk_passes` / `gk_passes_throws` | int | Tổng chuyền / chuyền tay |
-| `gk_goal_kicks` | int | Số lần phát bóng |
-| `gk_crosses_faced` / `gk_crosses_stopped` | int | Tạt bóng đối mặt / cắt |
-| `gk_crosses_stopped_pct` | float | % cắt tạt bóng |
-| `gk_def_actions_outside_pen_area` | int | Hành động ngoài vòng cấm |
-| `gk_avg_distance_def_actions` | float | Khoảng cách TB hành động (yards) |
-
-**Phạm vi đầy đủ:** ~40–60 thủ môn / 20 teams
+| `event_id` | BIGINT | SofaScore event ID — PK cùng `league_id` |
+| `tournament_id` / `season_id` | INTEGER | IDs giải đấu / mùa giải |
+| `round_num` | INTEGER | Vòng đấu |
+| `home_team` / `home_team_id` | TEXT/INTEGER | Đội nhà & ID |
+| `away_team` / `away_team_id` | TEXT/INTEGER | Đội khách & ID |
+| `home_score` / `away_score` | INTEGER | Tỉ số |
+| `status` | TEXT | `finished`, `inprogress`, `notstarted` |
+| `start_timestamp` | BIGINT | Unix timestamp |
+| `match_date` | TEXT | Ngày thi đấu (YYYY-MM-DD) |
+| `slug` | TEXT | URL slug |
 
 ---
 
-#### 11. Fixture Schedule (`dataset_{league}_fixtures.csv`)
+### 11. Player Average Positions — bảng `player_avg_positions`
+
 | Field | Kiểu | Mô tả |
 |---|---|---|
-| `gameweek` | str | Vòng đấu |
-| `date` | str | Ngày thi đấu (YYYY-MM-DD) |
-| `start_time` | str | Giờ kick-off (local) |
-| `dayofweek` | str | Thứ trong tuần |
-| `home_team` / `home_team_id` | str | Đội nhà & FBref ID |
-| `away_team` / `away_team_id` | str | Đội khách & FBref ID |
-| `score` | str | Tỉ số (VD: `2–1`) |
-| `home_xg` / `away_xg` | float | xG đội nhà / khách |
-| `attendance` | str | Lượng khán giả |
-| `venue` | str | Sân vận động |
-| `referee` | str | Trọng tài |
-| `match_report_url` | str | URL match report trên FBref |
-| `match_id` | str | FBref match ID |
-
-**Phạm vi đầy đủ:** 380 matches / full season
+| `event_id` / `player_id` | BIGINT | PK kép cùng `league_id` |
+| `player_name` / `team_name` | TEXT | Tên cầu thủ / đội |
+| `position` | TEXT | Vị trí thi đấu |
+| `jersey_number` | INTEGER | Số áo |
+| `avg_x` / `avg_y` | REAL | Vị trí trung bình trên sân [0–1] |
+| `minutes_played` | INTEGER | Số phút ra sân |
+| `rating` | REAL | Điểm số SofaScore |
 
 ---
 
-#### 12. Match Passing Stats (`dataset_{league}_match_passing.csv`)
+### 12. Heatmaps — bảng `heatmaps`
+
 | Field | Kiểu | Mô tả |
 |---|---|---|
-| `match_id` / `match_date` | str | Match ID & ngày thi đấu |
-| `home_team` / `away_team` | str | Đội nhà / khách |
-| `player_name` / `player_id` | str | Cầu thủ & ID |
-| `team_name` / `team_id` | str | Đội của cầu thủ |
-| `nationality` / `age` / `minutes` | str/int | Metadata |
-| `passes_completed` / `passes` | int | Chuyền thành công / thực hiện |
-| `passes_pct` | float | % chuyền chính xác |
-| `passes_total_distance` | float | Tổng quãng đường chuyền (yards) |
-| `passes_progressive_distance` | float | Quãng đường chuyền tiến lên |
-| `passes_short_completed` / `passes_short` | int | Chuyền ngắn |
-| `passes_medium_completed` / `passes_medium` | int | Chuyền trung bình |
-| `passes_long_completed` / `passes_long` | int | Chuyền dài |
-| `passes_pct_short` / `passes_pct_medium` / `passes_pct_long` | float | % chính xác theo loại |
-| `assists` / `xa` | int/float | Kiến tạo / xA |
-| `key_passes` | int | Số đường chuyền tạo cơ hội |
-| `passes_into_final_third` | int | Chuyền vào 1/3 cuối sân |
-| `passes_into_penalty_area` | int | Chuyền vào vòng cấm |
-| `crosses_into_penalty_area` | int | Tạt vào vòng cấm |
-| `progressive_passes` | int | Đường chuyền tiến lên |
+| `event_id` / `player_id` | BIGINT | PK kép cùng `league_id` |
+| `player_name` / `team_name` | TEXT | Tên cầu thủ / đội |
+| `num_points` | INTEGER | Số điểm heatmap |
+| `avg_x` / `avg_y` | REAL | Trung tâm hoạt động trên sân |
+| `heatmap_points_json` | TEXT | JSON array: `[{"x": 0.5, "y": 0.3, "v": 2}, ...]` |
 
-**Phạm vi đầy đủ:** ~8,000–10,000 player-match records / full season
+> ⚠️ Bảng `heatmaps` là bảng lớn nhất (~47 MB/mùa) do lưu JSON thô.
 
 ---
 
-### 📦 Nguồn: Transfermarkt
-*Pipeline: `transfermarkt/tm_scraper.py` → 2 CSVs*
+## 📦 Nguồn 4: Transfermarkt
 
----
+*Script: `transfermarkt/tm_scraper.py` | Kỹ thuật: nodriver (Chrome headed)*
 
-#### 13. Team Metadata (`dataset_{league}_team_metadata.csv`) ✅ **MỚI**
+### 13. Team Metadata — bảng `team_metadata`
+
 | Field | Kiểu | Mô tả |
 |---|---|---|
-| `team_name` | str | Tên CLB |
-| `team_id` | str | Transfermarkt team ID |
-| `team_url` | str | URL trang CLB trên TM |
-| `league_id` | str | League ID từ registry |
-| `season` | str | Mùa giải |
-| `logo_url` | str | URL logo CLB |
-| `stadium_name` | str | Tên sân vận động |
-| `stadium_capacity` | int | Sức chứa sân |
-| `stadium_url` | str | URL trang sân trên TM |
-| `manager_name` | str | Tên HLV trưởng |
-| `manager_url` | str | URL trang HLV trên TM |
-| `squad_size` | int | Số cầu thủ trong đội |
-| `avg_age` | float | Tuổi trung bình |
-| `num_foreigners` | int | Số cầu thủ ngoại |
-| `total_market_value` | str | Tổng giá trị đội hình (VD: €1.23bn) |
-| `formation` | str | Đội hình (VD: 4-3-3, 3-4-2-1) |
-
-**Phạm vi đầy đủ:** 20 đội / giải
+| `team_id` | TEXT | Transfermarkt team ID — PK cùng `league_id` |
+| `team_name` / `team_url` | TEXT | Tên & URL đội |
+| `logo_url` | TEXT | URL logo đội |
+| `stadium_name` / `stadium_capacity` / `stadium_url` | TEXT | Thông tin sân vận động |
+| `manager_name` / `manager_url` | TEXT | Tên & URL HLV |
+| `manager_since` / `manager_contract_until` | TEXT | Thời hạn hợp đồng HLV |
+| `squad_size` | INTEGER | Kích thước đội hình |
+| `avg_age` | REAL | Tuổi trung bình |
+| `num_foreigners` | INTEGER | Số cầu thủ nước ngoài |
+| `total_market_value` | TEXT | Tổng giá trị chuyển nhượng (VD: `€893.60m`) |
+| `formation` | TEXT | Sơ đồ chiến thuật (VD: `4-3-3`) |
 
 ---
 
-#### 14. Player Market Values (`dataset_{league}_market_values.csv`) ✅ **MỚI**
+### 14. Player Market Values — bảng `market_values`
+
 | Field | Kiểu | Mô tả |
 |---|---|---|
-| `player_name` | str | Tên cầu thủ |
-| `player_id` | str | Transfermarkt player ID |
-| `player_url` | str | URL trang cầu thủ trên TM |
-| `player_image_url` | str | URL ảnh cầu thủ |
-| `team_name` / `team_id` | str | Đội & ID đội |
-| `league_id` | str | League ID từ registry |
-| `season` | str | Mùa giải |
-| `position` | str | Vị trí (VD: Centre-Forward, Goalkeeper) |
-| `shirt_number` | int | Số áo |
-| `date_of_birth` | str | Ngày sinh |
-| `age` | int | Tuổi |
-| `nationality` | str | Quốc tịch chính |
-| `second_nationality` | str | Quốc tịch thứ hai |
-| `height_cm` | int | Chiều cao (cm) |
-| `foot` | str | Chân thuận (left/right/both) |
-| `joined` | str | Ngày gia nhập CLB |
-| `contract_until` | str | Hết hạn hợp đồng |
-| `market_value` | str | Giá trị chuyển nhượng (VD: €65.00m) |
-| `market_value_numeric` | float | Giá trị quy ra EUR (VD: 65000000.0) |
-
-**Phạm vi đầy đủ:** ~550–600 cầu thủ / 20 đội
+| `player_id` | TEXT | Transfermarkt player ID — PK cùng `team_id` + `league_id` |
+| `player_name` / `player_url` | TEXT | Tên & URL cầu thủ |
+| `player_image_url` | TEXT | URL ảnh cầu thủ |
+| `position` | TEXT | Vị trí thi đấu |
+| `shirt_number` | TEXT | Số áo |
+| `date_of_birth` / `age` | TEXT | Ngày sinh / Tuổi |
+| `nationality` / `second_nationality` | TEXT | Quốc tịch chính / phụ |
+| `height_cm` | TEXT | Chiều cao (cm) |
+| `foot` | TEXT | Chân thuận (`left`, `right`, `both`) |
+| `joined` / `contract_until` | TEXT | Ngày ký / Hết hạn hợp đồng |
+| `market_value` | TEXT | Giá trị thị trường (VD: `€180.00m`) |
+| `market_value_numeric` | REAL | Giá trị dạng số (triệu EUR) |
 
 ---
 
-### 📦 Nguồn: SofaScore
-*Pipeline: `sofascore/sofascore_client.py` → 3 CSVs*
+## 📦 Nguồn 5: Live Match Tracker
 
----
+*Script: `live_match.py` | Kỹ thuật: nodriver — SofaScore live API — polling 60-90s*
 
-#### 15. Heatmaps (`dataset_{league}_heatmaps.csv`) ✅ **MỚI**
+### 15. Live Snapshots — bảng `live_snapshots`
+
+Mỗi poll là 1 upsert vào bảng này (PK = `event_id`). Dữ liệu được cập nhật liên tục.
+
 | Field | Kiểu | Mô tả |
 |---|---|---|
-| `event_id` | int | SofaScore event ID |
-| `match_date` | str | Ngày thi đấu (YYYY-MM-DD) |
-| `home_team` / `away_team` | str | Đội nhà / Đội khách |
-| `score` | str | Tỉ số (VD: 2-1) |
-| `player_id` | int | SofaScore player ID |
-| `player_name` | str | Tên cầu thủ |
-| `team_name` | str | Đội của cầu thủ |
-| `position` | str | Vị trí (M, F, D, G) |
-| `jersey_number` | int | Số áo |
-| `num_points` | int | Số điểm heatmap |
-| `avg_x` | float | Vị trí X trung bình (0–100) |
-| `avg_y` | float | Vị trí Y trung bình (0–100) |
-| `heatmap_points_json` | str | JSON array tọa độ [{x, y, v}, ...] |
-| `league_id` | str | League ID |
-| `season` | str | Mùa giải |
+| `event_id` | BIGINT | SofaScore event ID — PK |
+| `home_team` / `away_team` | TEXT | Tên 2 đội |
+| `home_score` / `away_score` | INTEGER | Tỉ số hiện tại |
+| `status` | TEXT | `notstarted`, `inprogress`, `finished` |
+| `minute` | INTEGER | Phút thi đấu hiện tại |
+| `statistics_json` | JSONB | 40+ thống kê live (possession, xG, shots, passes, duels…) |
+| `incidents_json` | JSONB | Toàn bộ sự kiện trận đấu dạng JSON |
+| `poll_count` | INTEGER | Số lần đã poll |
+| `loaded_at` | TIMESTAMPTZ | Lần cuối cập nhật |
 
-**Phạm vi:** ~22 cầu thủ × N trận (default 5 trận = ~110 rows)
+**Queryable JSONB:**
+```sql
+SELECT
+    statistics_json->'Ball possession'->>'home'  AS poss_home,
+    statistics_json->'Expected goals'->>'away'   AS xg_away,
+    statistics_json->'Total shots'->>'home'      AS shots_home
+FROM live_snapshots WHERE event_id = 14023979;
+```
 
 ---
 
-#### 16. Player Average Positions (`dataset_{league}_player_avg_positions.csv`) ✅ **MỚI**
+### 16. Live Incidents — bảng `live_incidents`
+
+Mỗi sự kiện là 1 row riêng biệt. Upsert dựa trên `(event_id, incident_type, minute, player_name)`.
+
 | Field | Kiểu | Mô tả |
 |---|---|---|
-| `event_id` | int | SofaScore event ID |
-| `match_date` | str | Ngày thi đấu |
-| `home_team` / `away_team` | str | Đội nhà / Đội khách |
-| `player_id` | int | SofaScore player ID |
-| `player_name` | str | Tên cầu thủ |
-| `team_name` | str | Đội của cầu thủ |
-| `position` | str | Vị trí |
-| `jersey_number` | int | Số áo |
-| `avg_x` | float | Vị trí trung bình X (0–100) |
-| `avg_y` | float | Vị trí trung bình Y (0–100) |
-| `minutes_played` | int | Số phút thi đấu |
-| `rating` | float | SofaScore rating (0–10) |
-| `league_id` | str | League ID |
-| `season` | str | Mùa giải |
-
-**Phạm vi:** ~30 cầu thủ × N trận (default 5 trận = ~150 rows)
+| `id` | BIGSERIAL | PK tự tăng |
+| `event_id` | BIGINT | SofaScore event ID |
+| `incident_type` | TEXT | `goal`, `card`, `substitution`, `varDecision` |
+| `minute` | INTEGER | Phút xảy ra |
+| `added_time` | INTEGER | Phút bù giờ |
+| `player_name` | TEXT | Cầu thủ gây ra sự kiện |
+| `player_in_name` / `player_out_name` | TEXT | Cầu thủ vào / ra (thay người) |
+| `is_home` | BOOLEAN | Thuộc đội sân nhà không |
+| `detail` | TEXT | `penalty`, `ownGoal`, `yellow`, `red`, `yellowRed`… |
 
 ---
 
-## ❌ DỮ LIỆU CHƯA CÓ
+## 🔗 Cross-Source Mapping
 
-### 🟢 Nice-to-have
-| Loại dữ liệu | Nguồn | Ghi chú |
+### 17. Player Crossref — bảng `player_crossref`
+
+Ánh xạ Understat player_id (INTEGER) ↔ FBref player_id (TEXT slug). Được build tự động sau khi load data bằng fuzzy name matching.
+
+| Field | Kiểu | Mô tả |
 |---|---|---|
-| Player Photo | FBref / Wikipedia | URL ảnh đại diện (hiện đã có `player_image_url` từ TM) |
+| `understat_player_id` | BIGINT | ID từ Understat (VD: 8260) |
+| `fbref_player_id` | TEXT | Slug từ FBref (VD: `a23b4c5d/Bukayo-Saka`) |
+| `canonical_name` | TEXT | Tên chuẩn hóa |
+| `league_id` | TEXT | League ID |
+| `matched_by` | TEXT | `name_exact`, `name_fuzzy`, `manual` |
+
+**Cross-source query ví dụ:**
+```sql
+SELECT s.player, SUM(s.xg) AS understat_xg, p.goals, p.shots_on_target_pct
+FROM shots s
+JOIN player_crossref cx ON s.player_id = cx.understat_player_id AND s.league_id = cx.league_id
+JOIN player_season_stats p ON cx.fbref_player_id = p.player_id AND cx.league_id = p.league_id
+WHERE s.league_id = 'EPL' AND s.season = 2025
+GROUP BY s.player, p.goals, p.shots_on_target_pct
+ORDER BY understat_xg DESC LIMIT 20;
+```
 
 ---
 
-## 📊 Tổng kết
+## 📊 Scale ước tính (1 mùa EPL)
 
-| # | File CSV | Nguồn | Rows (full season ước tính) | Trạng thái |
-|---|---|---|---|---|
-| 1 | `dataset_{league}_xg.csv` | Understat | ~3,400 shots | ✅ Sẵn sàng |
-| 2 | `dataset_{league}_player_stats.csv` | Understat | ~10,000 records | ✅ Sẵn sàng |
-| 3 | `dataset_{league}_match_stats.csv` | Understat | 380 matches | ✅ Sẵn sàng |
-| 4 | `dataset_{league}_standings.csv` | FBref | 20 rows | ✅ Sẵn sàng |
-| 5 | `dataset_{league}_squad_stats.csv` | FBref | 20 rows | ✅ Sẵn sàng |
-| 6 | `dataset_{league}_squad_rosters.csv` | FBref | ~580 players | ✅ Sẵn sàng |
-| 7 | `dataset_{league}_player_season_stats.csv` | FBref | ~580 records | ✅ Sẵn sàng |
-| 8 | `dataset_{league}_defensive_stats.csv` | FBref | ~580 records | ✅ Sẵn sàng |
-| 9 | `dataset_{league}_possession_stats.csv` | FBref | ~580 records | ✅ Sẵn sàng |
-| 10 | `dataset_{league}_gk_stats.csv` | FBref | ~50 thủ môn | ✅ Sẵn sàng |
-| 11 | `dataset_{league}_fixtures.csv` | FBref | 380 matches | ✅ Sẵn sàng |
-| 12 | `dataset_{league}_match_passing.csv` | FBref | ~10,000 records | ✅ Sẵn sàng |
-| 13 | `dataset_{league}_team_metadata.csv` | Transfermarkt | 20 đội | ✅ **MỚI** |
-| 14 | `dataset_{league}_market_values.csv` | Transfermarkt | ~580 cầu thủ | ✅ **MỚI** |
-| 15 | `dataset_{league}_heatmaps.csv` | SofaScore | ~110–8,000 records | ✅ **MỚI** |
-| 16 | `dataset_{league}_player_avg_positions.csv` | SofaScore | ~150–10,000 records | ✅ **MỚI** |
+| Bảng | Rows | Kích thước |
+|------|------|-----------|
+| `shots` | ~9,120 | ~3.2 MB |
+| `player_match_stats` | ~10,640 | ~2.7 MB |
+| `player_avg_positions` | ~10,640 | ~3.2 MB |
+| `heatmaps` | ~8,500 | ~47 MB (JSON thô) |
+| `player_season_stats` | ~560 | ~0.2 MB |
+| `fixtures` | 380 | ~0.1 MB |
+| `match_stats` | 380 | ~0.1 MB |
+| `standings` | 20 | ~0.01 MB |
+| `live_snapshots` | ~100/mùa | ~0.35 MB |
+| `live_incidents` | ~1,500/mùa | ~0.3 MB |
+| Còn lại | — | ~1 MB |
+| **Tổng 1 mùa EPL** | | **~58 MB** |
+| *Bỏ heatmap JSON* | | *~11 MB* |
+
+> Bottleneck lớn nhất: `heatmaps.heatmap_points_json` (~82% tổng dung lượng)
