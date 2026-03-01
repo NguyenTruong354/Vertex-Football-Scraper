@@ -26,23 +26,37 @@ if _env_file.exists():
 # ────────────────────────────────────────────────────────────
 # Connection parameters
 # ────────────────────────────────────────────────────────────
-DB_HOST: str = os.getenv("POSTGRES_HOST", "localhost")
-DB_PORT: int = int(os.getenv("POSTGRES_PORT", "5432"))
-DB_NAME: str = os.getenv("POSTGRES_DB", "vertex_football")
-DB_USER: str = os.getenv("POSTGRES_USER", "postgres")
-DB_PASSWORD: str = os.getenv("POSTGRES_PASSWORD", "postgres")
+POSTGRES_HOST: str = os.getenv("POSTGRES_HOST", "localhost")
 
-# psycopg2 DSN string
-DSN: str = (
-    f"host={DB_HOST} port={DB_PORT} dbname={DB_NAME} "
-    f"user={DB_USER} password={DB_PASSWORD}"
-)
+if POSTGRES_HOST.startswith("postgres://") or POSTGRES_HOST.startswith("postgresql://"):
+    DSN: str = POSTGRES_HOST
+    SQLALCHEMY_URL: str = POSTGRES_HOST.replace("postgres://", "postgresql://", 1)
+    
+    import urllib.parse
+    parsed = urllib.parse.urlparse(POSTGRES_HOST)
+    DB_HOST = parsed.hostname
+    DB_PORT = parsed.port
+    DB_NAME = parsed.path.lstrip('/')
+    DB_USER = parsed.username
+    DB_PASSWORD = parsed.password
+else:
+    DB_HOST: str = POSTGRES_HOST
+    DB_PORT: int = int(os.getenv("POSTGRES_PORT", "5432"))
+    DB_NAME: str = os.getenv("POSTGRES_DB", "vertex_football")
+    DB_USER: str = os.getenv("POSTGRES_USER", "postgres")
+    DB_PASSWORD: str = os.getenv("POSTGRES_PASSWORD", "postgres")
 
-# SQLAlchemy connection URL
-SQLALCHEMY_URL: str = (
-    f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}"
-    f"@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-)
+    # psycopg2 DSN string
+    DSN: str = (
+        f"host={DB_HOST} port={DB_PORT} dbname={DB_NAME} "
+        f"user={DB_USER} password={DB_PASSWORD}"
+    )
+
+    # SQLAlchemy connection URL
+    SQLALCHEMY_URL: str = (
+        f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}"
+        f"@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+    )
 
 
 def get_engine():

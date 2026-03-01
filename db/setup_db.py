@@ -61,7 +61,7 @@ def ensure_database() -> bool:
         conn = psycopg2.connect(
             host=cfg.DB_HOST,
             port=cfg.DB_PORT,
-            dbname="postgres",
+            dbname=cfg.DB_NAME,
             user=cfg.DB_USER,
             password=cfg.DB_PASSWORD,
         )
