@@ -129,7 +129,6 @@ CREATE TABLE IF NOT EXISTS shots (
 );
 
 -- Index match_id + league_id: query "tất cả shot của trận X"
-CREATE INDEX IF NOT EXISTS idx_shots_match   ON shots (match_id, league_id);
 -- Index player_id: query "tất cả shot của cầu thủ Y"
 CREATE INDEX IF NOT EXISTS idx_shots_match_cov
     ON shots (match_id, league_id)
@@ -166,7 +165,6 @@ CREATE TABLE IF NOT EXISTS player_match_stats (
 );
 
 -- Index match_id + league_id: query "tất cả player stats của trận X"
-CREATE INDEX IF NOT EXISTS idx_pms_match   ON player_match_stats (match_id, league_id);
 -- Index player_id: query timeline của 1 cầu thủ qua nhiều trận
 CREATE INDEX IF NOT EXISTS idx_pms_match_cov
     ON player_match_stats (match_id, league_id)
@@ -666,6 +664,6 @@ DO $$ BEGIN
     END IF;
 END $$;
 
-ALTER DATABASE vertex_football SET random_page_cost    = 2.0;
-ALTER DATABASE vertex_football SET effective_cache_size = '512MB';
-ALTER DATABASE vertex_football SET work_mem             = '8MB';
+ALTER DATABASE defaultdb SET random_page_cost    = 2.0;
+ALTER DATABASE defaultdb SET effective_cache_size = '512MB';
+ALTER DATABASE defaultdb SET work_mem             = '8MB';
