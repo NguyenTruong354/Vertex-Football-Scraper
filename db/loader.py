@@ -151,7 +151,8 @@ def load_standings(conn, league_id: str = "EPL") -> int:
         logger.warning("  File không tồn tại: %s", path)
         return 0
     df = pd.read_csv(path)
-    count = _upsert(conn, "standings", df, ["team_id", "league_id"], league_id=league_id)
+    df["season"] = "2025-2026"
+    count = _upsert(conn, "standings", df, ["team_id", "league_id", "season"], league_id=league_id)
     logger.info("  standings: %d rows upserted ← %s", count, path.name)
     return count
 
@@ -249,6 +250,7 @@ def load_heatmaps(conn, league_id: str = "EPL") -> int:
         logger.warning("  File không tồn tại: %s", path)
         return 0
     df = pd.read_csv(path)
+    df.rename(columns={"heatmap_points_json": "heatmap_points"}, inplace=True)
     count = _upsert(conn, "heatmaps", df, ["event_id", "player_id", "league_id"], league_id=league_id)
     logger.info("  heatmaps: %d rows upserted ← %s", count, path.name)
     return count

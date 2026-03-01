@@ -88,8 +88,9 @@ CREATE TABLE IF NOT EXISTS standings (
     top_scorer       TEXT,
     top_keeper       TEXT,
     league_id        TEXT NOT NULL DEFAULT 'EPL',
+    season           TEXT NOT NULL DEFAULT '2024-2025',
     loaded_at        TIMESTAMPTZ DEFAULT NOW(),
-    PRIMARY KEY (team_id, league_id)
+    PRIMARY KEY (team_id, league_id, season)
 );
 
 -- ============================================================
@@ -130,9 +131,12 @@ CREATE TABLE IF NOT EXISTS shots (
 -- Index match_id + league_id: query "tất cả shot của trận X"
 CREATE INDEX IF NOT EXISTS idx_shots_match   ON shots (match_id, league_id);
 -- Index player_id: query "tất cả shot của cầu thủ Y"
-CREATE INDEX IF NOT EXISTS idx_shots_player  ON shots (player_id);
-CREATE INDEX IF NOT EXISTS idx_shots_season  ON shots (season);
-CREATE INDEX IF NOT EXISTS idx_shots_result  ON shots (result);
+CREATE INDEX IF NOT EXISTS idx_shots_match_cov
+    ON shots (match_id, league_id)
+    INCLUDE (player_id, player, minute, result, situation, shot_type, x, y, xg, h_a);
+CREATE INDEX IF NOT EXISTS idx_shots_player_cov
+    ON shots (player_id, season, league_id)
+    INCLUDE (match_id, xg, result, situation, minute, x, y);
 
 -- ──────────────────────────────────────────────────────────
 -- 4. PLAYER MATCH STATS (per-player xG per match, Understat)
@@ -164,8 +168,12 @@ CREATE TABLE IF NOT EXISTS player_match_stats (
 -- Index match_id + league_id: query "tất cả player stats của trận X"
 CREATE INDEX IF NOT EXISTS idx_pms_match   ON player_match_stats (match_id, league_id);
 -- Index player_id: query timeline của 1 cầu thủ qua nhiều trận
-CREATE INDEX IF NOT EXISTS idx_pms_player  ON player_match_stats (player_id);
-CREATE INDEX IF NOT EXISTS idx_pms_team    ON player_match_stats (team_id);
+CREATE INDEX IF NOT EXISTS idx_pms_match_cov
+    ON player_match_stats (match_id, league_id)
+    INCLUDE (player_id, player, goals, assists, xg, xa, position, time);
+CREATE INDEX IF NOT EXISTS idx_pms_player_cov
+    ON player_match_stats (player_id, league_id)
+    INCLUDE (match_id, goals, assists, xg, xa, xg_chain, time);
 
 -- ============================================================
 -- NHÓM C: CHILD TABLES (FBref)
@@ -255,7 +263,6 @@ CREATE TABLE IF NOT EXISTS player_season_stats (
 );
 
 CREATE INDEX IF NOT EXISTS idx_pss_team    ON player_season_stats (team_id, league_id);
-CREATE INDEX IF NOT EXISTS idx_pss_season  ON player_season_stats (season);
 
 -- ============================================================
 -- NHÓM D: CROSS-SOURCE MAPPING
@@ -450,10 +457,12 @@ CREATE TABLE IF NOT EXISTS heatmaps (
     avg_y               REAL,
     league_id           TEXT    NOT NULL DEFAULT 'EPL',
     season              TEXT,
-    heatmap_points_json TEXT,   -- JSON array of {x, y, v}
+    heatmap_points      JSONB,   -- JSON array of {x, y, v}
     loaded_at           TIMESTAMPTZ DEFAULT NOW(),
     PRIMARY KEY (event_id, player_id, league_id)
 );
+
+ALTER TABLE heatmaps ALTER COLUMN heatmap_points SET STORAGE EXTENDED;
 
 CREATE INDEX IF NOT EXISTS idx_hm_event ON heatmaps (event_id, league_id);
 
@@ -560,8 +569,8 @@ DO $$ BEGIN
     ) THEN
         ALTER TABLE squad_rosters
             ADD CONSTRAINT fk_rosters_team
-            FOREIGN KEY (team_id, league_id)
-            REFERENCES standings (team_id, league_id)
+            FOREIGN KEY (team_id, league_id, season)
+            REFERENCES standings (team_id, league_id, season)
             ON DELETE CASCADE
             DEFERRABLE INITIALLY DEFERRED;
     END IF;
@@ -604,6 +613,27 @@ CREATE INDEX IF NOT EXISTS idx_live_inc_event   ON live_incidents (event_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_live_inc
     ON live_incidents (event_id, incident_type, minute, COALESCE(player_name, ''));
 
+CREATE OR REPLACE FUNCTION cleanup_live_data(keep_days INTEGER DEFAULT 7)
+RETURNS TABLE (deleted_snapshots INT, deleted_incidents INT)
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_snap INT;
+    v_inc  INT;
+BEGIN
+    DELETE FROM live_incidents
+    WHERE loaded_at < NOW() - make_interval(days => keep_days)
+      AND event_id NOT IN (
+          SELECT event_id FROM live_snapshots WHERE status = 'inprogress'
+      );
+    GET DIAGNOSTICS v_inc = ROW_COUNT;
+    DELETE FROM live_snapshots
+    WHERE status = 'finished'
+      AND loaded_at < NOW() - make_interval(days => keep_days);
+    GET DIAGNOSTICS v_snap = ROW_COUNT;
+    RETURN QUERY SELECT v_snap, v_inc;
+END;
+$$;
+
 -- ============================================================
 -- FK CONSTRAINTS (cuối cùng, sau khi tất cả bảng tồn tại)
 -- ============================================================
@@ -615,8 +645,8 @@ DO $$ BEGIN
     ) THEN
         ALTER TABLE squad_stats
             ADD CONSTRAINT fk_squad_stats_team
-            FOREIGN KEY (team_id, league_id)
-            REFERENCES standings (team_id, league_id)
+            FOREIGN KEY (team_id, league_id, season)
+            REFERENCES standings (team_id, league_id, season)
             ON DELETE CASCADE
             DEFERRABLE INITIALLY DEFERRED;
     END IF;
@@ -629,9 +659,13 @@ DO $$ BEGIN
     ) THEN
         ALTER TABLE player_season_stats
             ADD CONSTRAINT fk_pss_team
-            FOREIGN KEY (team_id, league_id)
-            REFERENCES standings (team_id, league_id)
+            FOREIGN KEY (team_id, league_id, season)
+            REFERENCES standings (team_id, league_id, season)
             ON DELETE CASCADE
             DEFERRABLE INITIALLY DEFERRED;
     END IF;
 END $$;
+
+ALTER DATABASE vertex_football SET random_page_cost    = 2.0;
+ALTER DATABASE vertex_football SET effective_cache_size = '512MB';
+ALTER DATABASE vertex_football SET work_mem             = '8MB';
