@@ -1,0 +1,20 @@
+[Unit]
+Description=Vertex Football Scheduler — Bundesliga
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vertex
+WorkingDirectory=/opt/vertex-football-scraper
+ExecStart=/opt/vertex-football-scraper/.venv/bin/python scheduler.py --league BUNDESLIGA
+Restart=always
+RestartSec=30
+Environment=PYTHONUNBUFFERED=1
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=scheduler-bundesliga
+
+[Install]
+WantedBy=multi-user.target

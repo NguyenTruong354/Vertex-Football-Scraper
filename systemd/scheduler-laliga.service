@@ -1,0 +1,20 @@
+[Unit]
+Description=Vertex Football Scheduler — La Liga
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vertex
+WorkingDirectory=/opt/vertex-football-scraper
+ExecStart=/opt/vertex-football-scraper/.venv/bin/python scheduler.py --league LALIGA
+Restart=always
+RestartSec=30
+Environment=PYTHONUNBUFFERED=1
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=scheduler-laliga
+
+[Install]
+WantedBy=multi-user.target

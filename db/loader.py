@@ -80,8 +80,9 @@ def _upsert(
     df = df.copy()
     df["league_id"] = league_id
 
-    # Replace NaN với None cho psycopg2
-    df = df.where(df.notna(), other=None)
+    import numpy as np
+    # Replace NaN với None cho psycopg2 (df.where không hoạt động trên float dtype)
+    df = df.replace({np.nan: None})
 
     cols = list(df.columns)
     placeholders = ", ".join(["%s"] * len(cols))

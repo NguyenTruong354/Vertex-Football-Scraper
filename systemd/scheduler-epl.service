@@ -1,0 +1,21 @@
+[Unit]
+Description=Vertex Football Scheduler — EPL
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vertex
+WorkingDirectory=/opt/vertex-football-scraper
+ExecStart=/opt/vertex-football-scraper/.venv/bin/python scheduler.py --league EPL
+Restart=always
+RestartSec=30
+Environment=PYTHONUNBUFFERED=1
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=scheduler-epl
+
+[Install]
+WantedBy=multi-user.target

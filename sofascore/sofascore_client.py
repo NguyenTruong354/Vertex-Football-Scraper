@@ -407,7 +407,6 @@ def export_sofascore_data(
     output_dir = league_cfg.output_dir
 
     mode = "a" if append else "w"
-    header = not append
 
     # ── Heatmap summary (flattened — 1 row per player per match) ──
     if heatmaps:
@@ -425,7 +424,8 @@ def export_sofascore_data(
 
         df = pd.DataFrame(rows)
         path = output_dir / league_cfg.heatmaps_csv
-        df.to_csv(path, mode=mode, header=header if not path.exists() else False, index=False, encoding="utf-8-sig")
+        write_header = not path.exists() or not append
+        df.to_csv(path, mode=mode, header=write_header, index=False, encoding="utf-8-sig")
         logger.info("Exported heatmaps → %s (%d rows)", path, len(df))
         if str(path) not in exported:
             exported.append(str(path))
@@ -434,7 +434,8 @@ def export_sofascore_data(
     if avg_positions:
         df = pd.DataFrame([p.model_dump(by_alias=False) for p in avg_positions])
         path = output_dir / league_cfg.player_positions_csv
-        df.to_csv(path, mode=mode, header=header if not path.exists() else False, index=False, encoding="utf-8-sig")
+        write_header = not path.exists() or not append
+        df.to_csv(path, mode=mode, header=write_header, index=False, encoding="utf-8-sig")
         logger.info("Exported avg positions → %s (%d rows)", path, len(df))
         if str(path) not in exported:
             exported.append(str(path))
@@ -443,7 +444,8 @@ def export_sofascore_data(
     if events:
         df = pd.DataFrame([e.model_dump(by_alias=False) for e in events])
         path = output_dir / f"dataset_{league_cfg.league_id.lower()}_ss_events.csv"
-        df.to_csv(path, mode=mode, header=header if not path.exists() else False, index=False, encoding="utf-8-sig")
+        write_header = not path.exists() or not append
+        df.to_csv(path, mode=mode, header=write_header, index=False, encoding="utf-8-sig")
         logger.info("Exported events → %s (%d rows)", path, len(df))
         if str(path) not in exported:
             exported.append(str(path))
