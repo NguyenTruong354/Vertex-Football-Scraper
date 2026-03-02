@@ -400,10 +400,14 @@ def export_sofascore_data(
     events: list[MatchEvent],
     *,
     league_cfg: SSLeagueConfig,
+    append: bool = False,
 ) -> list[str]:
     """Export SofaScore data ra CSV files."""
     exported: list[str] = []
     output_dir = league_cfg.output_dir
+
+    mode = "a" if append else "w"
+    header = not append
 
     # ── Heatmap summary (flattened — 1 row per player per match) ──
     if heatmaps:
@@ -421,25 +425,28 @@ def export_sofascore_data(
 
         df = pd.DataFrame(rows)
         path = output_dir / league_cfg.heatmaps_csv
-        df.to_csv(path, index=False, encoding="utf-8-sig")
+        df.to_csv(path, mode=mode, header=header if not path.exists() else False, index=False, encoding="utf-8-sig")
         logger.info("Exported heatmaps → %s (%d rows)", path, len(df))
-        exported.append(str(path))
+        if str(path) not in exported:
+            exported.append(str(path))
 
     # ── Average positions ──
     if avg_positions:
         df = pd.DataFrame([p.model_dump(by_alias=False) for p in avg_positions])
         path = output_dir / league_cfg.player_positions_csv
-        df.to_csv(path, index=False, encoding="utf-8-sig")
+        df.to_csv(path, mode=mode, header=header if not path.exists() else False, index=False, encoding="utf-8-sig")
         logger.info("Exported avg positions → %s (%d rows)", path, len(df))
-        exported.append(str(path))
+        if str(path) not in exported:
+            exported.append(str(path))
 
     # ── Match events ──
     if events:
         df = pd.DataFrame([e.model_dump(by_alias=False) for e in events])
         path = output_dir / f"dataset_{league_cfg.league_id.lower()}_ss_events.csv"
-        df.to_csv(path, index=False, encoding="utf-8-sig")
+        df.to_csv(path, mode=mode, header=header if not path.exists() else False, index=False, encoding="utf-8-sig")
         logger.info("Exported events → %s (%d rows)", path, len(df))
-        exported.append(str(path))
+        if str(path) not in exported:
+            exported.append(str(path))
 
     return exported
 
@@ -496,6 +503,18 @@ async def main(
 
         for idx, event in enumerate(raw_events, 1):
             event_id = event["event_id"]
+            
+            # CHECK IF EVENT ALLREADY EXISTS IN CSV
+            events_path = league_cfg.output_dir / f"dataset_{league_cfg.league_id.lower()}_ss_events.csv"
+            if events_path.exists():
+                try:
+                    df_events = pd.read_csv(events_path)
+                    if event_id in df_events["event_id"].values:
+                        logger.info("── [%d/%d] SKIP %s vs %s (Đã lấy) ──", idx, total_matches, event.get("home_team"), event.get("away_team"))
+                        continue
+                except Exception:
+                    pass
+
             home = event.get("home_team", "?")
             away = event.get("away_team", "?")
             date = event.get("match_date", "?")
@@ -506,6 +525,9 @@ async def main(
             lineups = await fetch_match_lineups(client, event_id)
             home_players = lineups.get("home", [])
             away_players = lineups.get("away", [])
+
+            match_heatmaps: list[dict] = []
+            match_avg_positions: list[dict] = []
 
             # Process each side
             for side, players, team_name in [
@@ -556,7 +578,7 @@ async def main(
                                 "league_id": league_id,
                                 "season": league_cfg.season,
                             }
-                            all_heatmaps.append(hm_dict)
+                            match_heatmaps.append(hm_dict)
 
                             # ── Avg position (tính từ heatmap data) ──
                             pos_dict = {
@@ -576,31 +598,33 @@ async def main(
                                 "league_id": league_id,
                                 "season": league_cfg.season,
                             }
-                            all_avg_positions.append(pos_dict)
+                            match_avg_positions.append(pos_dict)
 
             logger.info("  ✓ %d players processed", len(home_players) + len(away_players))
 
-    # ── Validate ──
-    valid_events = safe_parse_list(MatchEvent, raw_events, context_label="events")
-    valid_heatmaps = safe_parse_list(PlayerHeatmap, all_heatmaps, context_label="heatmaps")
-    valid_positions = safe_parse_list(PlayerAvgPosition, all_avg_positions, context_label="avg_positions")
+            # Validate list models
+            valid_events = safe_parse_list(MatchEvent, [event], context_label="events")
+            valid_heatmaps = safe_parse_list(PlayerHeatmap, match_heatmaps, context_label="heatmaps")
+            valid_positions = safe_parse_list(PlayerAvgPosition, match_avg_positions, context_label="avg_positions")
 
-    # ── Export ──
-    logger.info("━━ STEP 3: Export CSV ━━")
-    exported = export_sofascore_data(
-        valid_heatmaps, valid_positions, valid_events,
-        league_cfg=league_cfg,
-    )
+            all_heatmaps.extend(match_heatmaps)
+            all_avg_positions.extend(match_avg_positions)
+
+            # Export incrementally
+            export_sofascore_data(
+                valid_heatmaps, valid_positions, valid_events,
+                league_cfg=league_cfg,
+                append=True
+            )
 
     # ── Summary ──
     elapsed = time.perf_counter() - t_start
     logger.info("=" * 60)
     logger.info("SOFASCORE PIPELINE SUMMARY")
     logger.info("=" * 60)
-    logger.info("  Matches        : %d", len(valid_events))
-    logger.info("  Heatmaps       : %d", len(valid_heatmaps))
-    logger.info("  Avg positions  : %d", len(valid_positions))
-    logger.info("  CSV files      : %d", len(exported))
+    logger.info("  Matches        : %d", total_matches)
+    logger.info("  Heatmaps       : %d", len(all_heatmaps))
+    logger.info("  Avg positions  : %d", len(all_avg_positions))
     logger.info("  Thời gian      : %.1f giây", elapsed)
     logger.info("=" * 60)
 
