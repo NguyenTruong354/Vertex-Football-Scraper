@@ -1,0 +1,20 @@
+[Unit]
+Description=Vertex Football Master Scheduler — All Leagues
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vertex
+WorkingDirectory=/opt/vertex-football-scraper
+ExecStart=/opt/vertex-football-scraper/.venv/bin/python scheduler_master.py
+Restart=always
+RestartSec=30
+Environment=PYTHONUNBUFFERED=1
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=scheduler-master
+
+[Install]
+WantedBy=multi-user.target
