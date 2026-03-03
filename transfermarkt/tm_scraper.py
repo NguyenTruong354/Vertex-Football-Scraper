@@ -105,8 +105,14 @@ class TMBrowser:
 
     async def __aenter__(self) -> "TMBrowser":
         import nodriver as uc
-        logger.info("▶ Khởi động Chrome browser (headed mode) cho Transfermarkt…")
-        self._browser = await uc.start(headless=False)
+        import os
+        is_ci = os.environ.get("CI", "").lower() == "true"
+        if is_ci:
+            logger.info("▶ Khởi động Chrome browser (headless, CI mode) cho Transfermarkt…")
+            self._browser = await uc.start(headless=True, sandbox=False)
+        else:
+            logger.info("▶ Khởi động Chrome browser (headed mode) cho Transfermarkt…")
+            self._browser = await uc.start(headless=False)
         return self
 
     async def __aexit__(self, *args: Any) -> None:

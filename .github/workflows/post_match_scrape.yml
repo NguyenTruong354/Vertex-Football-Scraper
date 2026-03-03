@@ -43,7 +43,6 @@ jobs:
 
           async def check():
               today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-              # Also check yesterday (in case workflow runs just after midnight)
               yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
 
               leagues_with_matches = []
@@ -70,7 +69,6 @@ jobs:
               has_matches = len(leagues_with_matches) > 0
               print(f"Checked {today} & {yesterday}: found finished matches in {leagues_with_matches}")
 
-              # Set GitHub Actions outputs
               with open(os.environ["GITHUB_OUTPUT"], "a") as f:
                   f.write(f"has_matches={'true' if has_matches else 'false'}\n")
                   f.write(f"leagues={json.dumps(leagues_with_matches)}\n")
@@ -113,13 +111,11 @@ jobs:
 
       - name: "🔧 Setup .env"
         run: |
-          cat << EOF > .env
-          DATABASE_URL=${{ secrets.DATABASE_URL }}
-          PGSSLROOTCERT=./certs/ca.pem
-          DISCORD_WEBHOOK_LIVE=${{ secrets.DISCORD_WEBHOOK_LIVE }}
-          DISCORD_WEBHOOK_ERROR=${{ secrets.DISCORD_WEBHOOK_ERROR }}
-          DISCORD_WEBHOOK_INFO=${{ secrets.DISCORD_WEBHOOK_INFO }}
-          EOF
+          echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" > .env
+          echo "PGSSLROOTCERT=./certs/ca.pem" >> .env
+          echo "DISCORD_WEBHOOK_LIVE=${{ secrets.DISCORD_WEBHOOK_LIVE }}" >> .env
+          echo "DISCORD_WEBHOOK_ERROR=${{ secrets.DISCORD_WEBHOOK_ERROR }}" >> .env
+          echo "DISCORD_WEBHOOK_INFO=${{ secrets.DISCORD_WEBHOOK_INFO }}" >> .env
 
       - name: "🔐 Setup Aiven CA certificate"
         run: |
@@ -128,18 +124,16 @@ jobs:
 
       - name: "📊 Run FBref Scraper"
         run: |
-          LEAGUES='${{ needs.check-matches.outputs.leagues_with_matches }}'
-          # Parse JSON array and run for each league
           for league in $(echo '${{ needs.check-matches.outputs.leagues_with_matches }}' | python3 -c "import sys,json; [print(l) for l in json.load(sys.stdin)]" 2>/dev/null || echo "EPL"); do
             echo "═══ Scraping FBref: $league ═══"
-            cd fbref && python3 fbref_scraper.py --league "$league" && cd .. || echo "⚠ FBref $league failed, continuing..."
+            python3 fbref/fbref_scraper.py --league "$league" || echo "⚠ FBref $league failed, continuing..."
           done
 
       - name: "📊 Run Transfermarkt Scraper"
         run: |
           for league in $(echo '${{ needs.check-matches.outputs.leagues_with_matches }}' | python3 -c "import sys,json; [print(l) for l in json.load(sys.stdin)]" 2>/dev/null || echo "EPL"); do
             echo "═══ Scraping Transfermarkt: $league ═══"
-            cd transfermarkt && python3 tm_scraper.py --league "$league" && cd .. || echo "⚠ TM $league failed, continuing..."
+            python3 transfermarkt/tm_scraper.py --league "$league" || echo "⚠ TM $league failed, continuing..."
           done
 
       - name: "💾 Load data into Aiven DB"
