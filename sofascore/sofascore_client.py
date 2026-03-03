@@ -39,7 +39,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import nodriver as uc
+import random
+from curl_cffi.requests import AsyncSession
 import pandas as pd
 
 import config_sofascore as cfg
@@ -92,40 +93,43 @@ logger = _setup_logging()
 
 class SofaScoreClient:
     """
-    Async client cho SofaScore API, dùng nodriver (undetected Chrome)
-    để bypass Cloudflare protection.
+    Async client cho SofaScore API, dùng curl_cffi (TLS impersonation)
+    để bypass Cloudflare protection — KHÔNG cần Chrome browser.
 
     Lifecycle:
         async with SofaScoreClient() as client:
             data = await client.get_json("/event/12345/heatmap/67890")
     """
 
+    RETRY_BACKOFF = [5, 15, 30, 60, 120]
+
     def __init__(self) -> None:
-        self._browser: uc.Browser | None = None
-        self._tab = None
+        self._session: AsyncSession | None = None
         self._last_request_time: float = 0.0
+        self._request_count: int = 0
 
     async def __aenter__(self) -> "SofaScoreClient":
-        self._browser = await uc.start()
-        # Warm up: navigate to SofaScore homepage first to get cookies/CF clearance
-        self._tab = await self._browser.get("https://www.sofascore.com/")
-        await asyncio.sleep(3)
-        logger.info("▶ SofaScore browser client khởi tạo (nodriver)")
+        self._session = AsyncSession(
+            impersonate="chrome120",
+            headers=cfg.SS_HEADERS,
+        )
+        logger.info("▶ SofaScore client khởi tạo (curl_cffi — không cần Chrome)")
         return self
 
     async def __aexit__(self, *args: Any) -> None:
-        if self._browser:
+        if self._session:
             try:
-                self._browser.stop()
+                await self._session.close()
             except Exception:
                 pass
-            logger.info("✓ SofaScore browser client đóng")
+            logger.info("✓ SofaScore client đóng (tổng %d requests)", self._request_count)
 
     async def _rate_limit(self) -> None:
+        """Human-like random delay between requests."""
         elapsed = time.monotonic() - self._last_request_time
-        if elapsed < cfg.SS_DELAY_BETWEEN_REQUESTS:
-            wait = cfg.SS_DELAY_BETWEEN_REQUESTS - elapsed
-            await asyncio.sleep(wait)
+        jitter = random.uniform(1.5, 3.0)
+        if elapsed < jitter:
+            await asyncio.sleep(jitter - elapsed)
 
     async def get_json(
         self,
@@ -134,7 +138,7 @@ class SofaScoreClient:
         retries: int = cfg.SS_MAX_RETRIES,
     ) -> dict | list | None:
         """
-        GET request tới SofaScore API → JSON (via nodriver browser).
+        GET request tới SofaScore API → JSON (via curl_cffi).
 
         Args:
             endpoint: Path sau API base (VD: "/event/12345/...")
@@ -149,50 +153,23 @@ class SofaScoreClient:
         for attempt in range(1, retries + 1):
             try:
                 logger.debug("  📡 GET %s (attempt %d)", url, attempt)
-                self._tab = await self._browser.get(url)
                 self._last_request_time = time.monotonic()
-                await asyncio.sleep(1.5)  # Wait for page to load
+                self._request_count += 1
 
-                # Extract JSON from <pre> tag (API returns JSON wrapped in HTML)
-                content = await self._tab.get_content()
+                resp = await self._session.get(url, timeout=15)
 
-                # Try to extract JSON from <pre> tag
-                json_str = None
-                if "<pre" in content:
-                    import re
-                    m = re.search(r"<pre[^>]*>(.*?)</pre>", content, re.DOTALL)
-                    if m:
-                        json_str = m.group(1).strip()
-                elif content.strip().startswith("{") or content.strip().startswith("["):
-                    json_str = content.strip()
+                if resp.status_code == 200:
+                    data = resp.json()
 
-                if not json_str:
-                    # Try JS extraction
-                    try:
-                        json_str = await self._tab.evaluate("document.body.innerText")
-                    except Exception:
-                        pass
-
-                if json_str:
-                    # Unescape HTML entities
-                    json_str = (
-                        json_str
-                        .replace("&amp;", "&")
-                        .replace("&lt;", "<")
-                        .replace("&gt;", ">")
-                        .replace("&quot;", '"')
-                    )
-                    data = json.loads(json_str)
-
-                    # Check for API error
+                    # Check for API error inside JSON
                     if isinstance(data, dict) and data.get("error"):
                         status = data["error"].get("code", 0)
                         if status == 404:
                             logger.debug("  404: %s", url)
                             return None
                         elif status == 429:
-                            wait = cfg.SS_DELAY_BETWEEN_REQUESTS * (2 ** attempt)
-                            logger.warning("  429 Rate limited — chờ %.1fs", wait)
+                            wait = self.RETRY_BACKOFF[min(attempt - 1, len(self.RETRY_BACKOFF) - 1)]
+                            logger.warning("  429 Rate limited — chờ %ds", wait)
                             await asyncio.sleep(wait)
                             continue
                         else:
@@ -202,10 +179,25 @@ class SofaScoreClient:
                             continue
 
                     return data
+
+                elif resp.status_code == 403:
+                    wait = self.RETRY_BACKOFF[min(attempt - 1, len(self.RETRY_BACKOFF) - 1)] * 2
+                    logger.warning("  HTTP 403 (attempt %d/%d) — backoff %ds", attempt, retries, wait)
+                    await asyncio.sleep(wait)
+
+                elif resp.status_code == 429:
+                    wait = self.RETRY_BACKOFF[min(attempt - 1, len(self.RETRY_BACKOFF) - 1)] * 3
+                    logger.warning("  HTTP 429 Rate Limited (attempt %d/%d) — backoff %ds", attempt, retries, wait)
+                    await asyncio.sleep(wait)
+
+                elif resp.status_code == 404:
+                    logger.debug("  404: %s", url)
+                    return None
+
                 else:
-                    logger.warning("  No JSON found in response: %s", url)
+                    logger.warning("  HTTP %d: %s", resp.status_code, url)
                     if attempt < retries:
-                        await asyncio.sleep(cfg.SS_DELAY_BETWEEN_REQUESTS * 2)
+                        await asyncio.sleep(cfg.SS_DELAY_BETWEEN_REQUESTS)
 
             except json.JSONDecodeError as exc:
                 logger.warning("  JSON parse error: %s – %s", url, exc)
@@ -486,6 +478,9 @@ async def main(
 
     all_heatmaps: list[dict] = []
     all_avg_positions: list[dict] = []
+    all_valid_events: list = []
+    all_valid_heatmaps: list = []
+    all_valid_positions: list = []
 
     async with SofaScoreClient() as client:
         # ── STEP 1: Get finished events ──
@@ -611,6 +606,9 @@ async def main(
 
             all_heatmaps.extend(match_heatmaps)
             all_avg_positions.extend(match_avg_positions)
+            all_valid_events.extend(valid_events)
+            all_valid_heatmaps.extend(valid_heatmaps)
+            all_valid_positions.extend(valid_positions)
 
             # Export incrementally
             export_sofascore_data(
@@ -631,9 +629,9 @@ async def main(
     logger.info("=" * 60)
 
     return {
-        "events": valid_events,
-        "heatmaps": valid_heatmaps,
-        "avg_positions": valid_positions,
+        "events": all_valid_events,
+        "heatmaps": all_valid_heatmaps,
+        "avg_positions": all_valid_positions,
     }
 
 
