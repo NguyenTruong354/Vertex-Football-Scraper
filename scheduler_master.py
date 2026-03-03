@@ -103,32 +103,59 @@ def setup_logging() -> logging.Logger:
 # ════════════════════════════════════════════════════════════
 
 class Notifier:
+    """Routes messages to specific Discord webhooks based on event type."""
     EMOJI = {
         "match_start": "🟢", "goal": "⚽", "match_end": "🏁",
         "post_match_done": "📊", "error": "🔴", "daily_done": "🔧",
         "info": "ℹ️", "recycle": "♻️",
     }
+    
+    # Map event types to specific webhook environment variables
+    ROUTING = {
+        "match_start": "DISCORD_WEBHOOK_LIVE",
+        "goal": "DISCORD_WEBHOOK_LIVE",
+        "match_end": "DISCORD_WEBHOOK_LIVE",
+        "error": "DISCORD_WEBHOOK_ERROR",
+        "info": "DISCORD_WEBHOOK_INFO",
+        "daily_done": "DISCORD_WEBHOOK_INFO",
+        "post_match_done": "DISCORD_WEBHOOK_INFO",
+        "recycle": "DISCORD_WEBHOOK_INFO",
+    }
 
     def __init__(self, log: logging.Logger):
         self.log = log
-        self.webhook_url = os.environ.get("DISCORD_WEBHOOK", "")
+        # Default webhook if specific ones aren't set
+        self.default_webhook = os.environ.get("DISCORD_WEBHOOK", "")
 
     def send(self, event_type: str, message: str) -> None:
         emoji = self.EMOJI.get(event_type, "📢")
         full_msg = f"{emoji} **[MASTER]** {message}"
         self.log.info("NOTIFY [%s]: %s", event_type, message)
-        if not self.webhook_url:
-            return
+        
+        # Determine which webhook to use
+        env_var = self.ROUTING.get(event_type, "")
+        webhook_url = os.environ.get(env_var) if env_var else ""
+        
+        # Fallback to default
+        if not webhook_url:
+            webhook_url = self.default_webhook
+            
+        if not webhook_url:
+            return  # No webhook configured for this event
+            
         try:
             import urllib.request
             payload = json.dumps({"content": full_msg}).encode()
             req = urllib.request.Request(
-                self.webhook_url, data=payload,
-                headers={"Content-Type": "application/json"}, method="POST",
+                webhook_url, data=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "User-Agent": "VertexFootballScraper/1.0",
+                }, method="POST",
             )
             urllib.request.urlopen(req, timeout=10)
         except Exception as exc:
-            self.log.warning("Discord send failed: %s", exc)
+            self.log.warning("Discord send failed for [%s]: %s", event_type, exc)
 
 
 # ════════════════════════════════════════════════════════════
