@@ -132,8 +132,14 @@ class FBrefBrowser:
         import os
         is_ci = os.environ.get("CI", "").lower() == "true"
         if is_ci:
-            logger.info("▶ Khởi động Chrome browser (headless, CI mode)…")
-            self._browser = await uc.start(headless=True, sandbox=False)
+            # CI: headed mode + Xvfb virtual display (Cloudflare detects headless!)
+            chrome_path = os.environ.get("CHROME_PATH", "/usr/bin/google-chrome-stable")
+            logger.info("▶ Khởi động Chrome browser (CI mode, Xvfb headed)…")
+            self._browser = await uc.start(
+                headless=False,
+                sandbox=False,
+                browser_executable_path=chrome_path,
+            )
         else:
             logger.info("▶ Khởi động Chrome browser (headed mode)…")
             self._browser = await uc.start(headless=False)

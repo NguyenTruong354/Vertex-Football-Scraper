@@ -83,7 +83,7 @@ jobs:
 
   # ═══════════════════════════════════════════════════════════
   # BƯỚC 2: Chạy FBref & Transfermarkt scraper (CHỈ khi có trận)
-  # Cần Chrome (nodriver) → chạy ~25-30 phút
+  # Dùng Xvfb + Chrome headed mode (bypass Cloudflare JS Challenge)
   # ═══════════════════════════════════════════════════════════
   scrape:
     needs: check-matches
@@ -103,13 +103,21 @@ jobs:
           pip install -r requirements.txt
           pip install nodriver curl-cffi
 
-      - name: "🌐 Install Chrome"
+      - name: "🌐 Install Chrome + Xvfb"
         run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y xvfb
           wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
           sudo dpkg -i google-chrome-stable_current_amd64.deb || sudo apt-get -f install -y
-          google-chrome --version
+          google-chrome-stable --version
 
-      - name: "🔧 Setup .env"
+      - name: "�️ Start Xvfb virtual display"
+        run: |
+          Xvfb :99 -screen 0 1920x1080x24 &
+          sleep 2
+          echo "DISPLAY=:99" >> $GITHUB_ENV
+
+      - name: "�🔧 Setup .env"
         run: |
           echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" > .env
           echo "PGSSLROOTCERT=./certs/ca.pem" >> .env
@@ -123,17 +131,25 @@ jobs:
           echo "${{ secrets.AIVEN_CA_PEM }}" > certs/ca.pem
 
       - name: "📊 Run FBref Scraper"
+        env:
+          DISPLAY: ":99"
+          CHROME_PATH: "/usr/bin/google-chrome-stable"
         run: |
           for league in $(echo '${{ needs.check-matches.outputs.leagues_with_matches }}' | python3 -c "import sys,json; [print(l) for l in json.load(sys.stdin)]" 2>/dev/null || echo "EPL"); do
             echo "═══ Scraping FBref: $league ═══"
             python3 fbref/fbref_scraper.py --league "$league" || echo "⚠ FBref $league failed, continuing..."
+            sleep 5
           done
 
       - name: "📊 Run Transfermarkt Scraper"
+        env:
+          DISPLAY: ":99"
+          CHROME_PATH: "/usr/bin/google-chrome-stable"
         run: |
           for league in $(echo '${{ needs.check-matches.outputs.leagues_with_matches }}' | python3 -c "import sys,json; [print(l) for l in json.load(sys.stdin)]" 2>/dev/null || echo "EPL"); do
             echo "═══ Scraping Transfermarkt: $league ═══"
             python3 transfermarkt/tm_scraper.py --league "$league" || echo "⚠ TM $league failed, continuing..."
+            sleep 5
           done
 
       - name: "💾 Load data into Aiven DB"

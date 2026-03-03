@@ -108,8 +108,13 @@ class TMBrowser:
         import os
         is_ci = os.environ.get("CI", "").lower() == "true"
         if is_ci:
-            logger.info("▶ Khởi động Chrome browser (headless, CI mode) cho Transfermarkt…")
-            self._browser = await uc.start(headless=True, sandbox=False)
+            chrome_path = os.environ.get("CHROME_PATH", "/usr/bin/google-chrome-stable")
+            logger.info("▶ Khởi động Chrome browser (CI mode, Xvfb headed) cho Transfermarkt…")
+            self._browser = await uc.start(
+                headless=False,
+                sandbox=False,
+                browser_executable_path=chrome_path,
+            )
         else:
             logger.info("▶ Khởi động Chrome browser (headed mode) cho Transfermarkt…")
             self._browser = await uc.start(headless=False)
