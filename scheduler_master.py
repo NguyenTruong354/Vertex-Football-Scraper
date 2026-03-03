@@ -769,6 +769,10 @@ def run_with_retry(cmd: list[str], cwd: Path, label: str,
                 log.info("✓ %s — %.1fs", label, time.perf_counter() - t0)
                 return True
             log.warning("✗ %s — exit code %d", label, proc.returncode)
+            if proc.stderr:
+                err_lines = proc.stderr.strip().split("\n")[:2]
+                for line in err_lines:
+                    log.warning("  stderr: %s", line)
         except subprocess.TimeoutExpired:
             log.warning("✗ %s — timeout", label)
         except Exception as exc:
