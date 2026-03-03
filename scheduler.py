@@ -160,7 +160,14 @@ async def main():
     date_str = sys.argv[1]
     url = f"https://api.sofascore.com/api/v1/sport/football/scheduled-events/{date_str}"
 
-    browser = await uc.start()
+    browser_args = [
+        "--disable-dev-shm-usage", "--no-sandbox", "--disable-gpu",
+        "--disable-software-rasterizer", "--disable-extensions",
+        "--disable-background-networking", "--disable-default-apps",
+        "--mute-audio", "--no-first-run", "--disable-sync",
+        "--disable-translate", "--blink-settings=imagesEnabled=false"
+    ]
+    browser = await uc.start(browser_args=browser_args)
     # First visit sofascore.com to establish cookies
     tab = await browser.get("https://www.sofascore.com/")
     await asyncio.sleep(3)
@@ -717,9 +724,10 @@ class Scheduler:
         return not self._shutdown.is_set()
 
     def _next_morning_utc(self) -> datetime:
-        """Return next 06:00 UTC."""
+        """Return next 06:00 UTC + Jitter offset."""
         now = datetime.now(timezone.utc)
-        morning = now.replace(hour=6, minute=0, second=0, microsecond=0)
+        jitter_minute = TOURNAMENT_IDS[self.league] % 60
+        morning = now.replace(hour=6, minute=jitter_minute, second=0, microsecond=0)
         if morning <= now:
             morning += timedelta(days=1)
         return morning
@@ -776,11 +784,11 @@ class Scheduler:
         self.log.info("─" * 50)
         self.log.info("CYCLE START — %s", now.strftime("%Y-%m-%d %H:%M UTC"))
 
-        # ── Daily maintenance ──
+        # ── Daily maintenance (with Jitter) ──
         if self.daily.is_due():
-            now_hour = now.hour
-            # Run at 06:00 UTC or if never run today
-            if now_hour >= 6:
+            jitter_minute = TOURNAMENT_IDS[self.league] % 60
+            if now.hour > 6 or (now.hour == 6 and now.minute >= jitter_minute):
+                self.log.info("⏰ Jitter offset met: %02d minutes past 06:00", jitter_minute)
                 self.daily.run()
 
         # ── Fetch schedule ──

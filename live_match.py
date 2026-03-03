@@ -125,10 +125,17 @@ class LiveClient:
         self._last_request: float = 0.0
 
     async def start(self) -> None:
-        self._browser = await uc.start()
+        browser_args = [
+            "--disable-dev-shm-usage", "--no-sandbox", "--disable-gpu",
+            "--disable-software-rasterizer", "--disable-extensions",
+            "--disable-background-networking", "--disable-default-apps",
+            "--mute-audio", "--no-first-run", "--disable-sync",
+            "--disable-translate", "--blink-settings=imagesEnabled=false"
+        ]
+        self._browser = await uc.start(browser_args=browser_args)
         self._tab = await self._browser.get("https://www.sofascore.com/")
         await asyncio.sleep(3)
-        logger.debug("Browser started")
+        logger.debug("Browser started with low-RAM flags")
 
     async def stop(self) -> None:
         if self._browser:
