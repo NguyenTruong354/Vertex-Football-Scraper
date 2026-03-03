@@ -17,23 +17,7 @@ sudo apt install python3.11 python3.11-venv python3.11-dev git -y
 
 ---
 
-## Bước 2: Cài đặt PostgreSQL
-Hệ thống sử dụng cơ sở dữ liệu PostgreSQL để lưu trữ.
-
-```bash
-# 1. Cài đặt PostgreSQL
-sudo apt install postgresql postgresql-contrib -y
-
-# 2. Đổi password cho user postgres mặc định
-sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'Chon1MatKhauSieuKho@123';"
-
-# 3. Tạo database cho dự án
-sudo -u postgres createdb vertex_football
-```
-
----
-
-## Bước 3: Phân quyền bảo mật (Tạo user riêng)
+## Bước 2: Phân quyền bảo mật (Tạo user riêng)
 Không bao giờ nên chạy Bot bằng user `root`. Hãy tạo riêng một user tên là `vertex` để quản lý source code. (Đây cũng là user được định nghĩa trong file `systemd/scheduler-master.service`).
 
 ```bash
@@ -46,7 +30,7 @@ sudo usermod -aG sudo vertex
 
 ---
 
-## Bước 4: Clone Source Code & Cài đặt Thư viện
+## Bước 3: Clone Source Code & Cài đặt Thư viện
 Chuyển quyền điều khiển sang user `vertex` và clone code vào thư mục `/opt/vertex-football-scraper` theo đúng cấu hình của systemd.
 
 ```bash
@@ -73,21 +57,24 @@ pip install -r requirements.txt
 
 ---
 
-## Bước 5: Cấu hình Biến môi trường (.env)
-Tạo file `.env` từ file mẫu và điền thông tin Database cũng như Webhook Discord.
+## Bước 4: Tải Chứng chỉ Aiven (ca.pem) & Cấu hình Biến môi trường (.env)
+Dự án sử dụng cơ sở dữ liệu trên mây của Aiven. Bạn cần tải chứng chỉ bảo mật và khai báo chuỗi kết nối.
 
 ```bash
+# 1. Tải file ca.pem từ Aiven (Nên tải trực tiếp trên máy chủ ảo)
+mkdir -p /opt/vertex-football-scraper/certs
+# Sử dụng nano copy/paste nội dung ca.pem của bạn vào đây:
+nano /opt/vertex-football-scraper/certs/ca.pem
+
+# 2. Tạo file .env
 cp .env.example .env
 nano .env
 ```
 Nội dung file `.env` tham khảo:
 ```env
-# Database (Dùng pass bạn đã set ở Bước 2)
-DB_HOST=127.0.0.1
-DB_PORT=5432
-DB_USER=postgres
-DB_PASSWORD=Chon1MatKhauSieuKho@123
-DB_NAME=vertex_football
+# Aiven PostgreSQL — lấy từ console.aiven.io (Connection → Service URI)
+DATABASE_URL=postgres://avnadmin:MAT_KHAU_CUA_BAN@pg-xxx.aivencloud.com:PORT/defaultdb?sslmode=require
+PGSSLROOTCERT=/opt/vertex-football-scraper/certs/ca.pem
 
 # Discord (Tạo webhook trong Server > Integrations)
 DISCORD_WEBHOOK_LIVE=https://discord.com/api/webhooks/123/abc
@@ -97,8 +84,8 @@ DISCORD_WEBHOOK_INFO=https://discord.com/api/webhooks/123/ghi
 
 ---
 
-## Bước 6: Khởi tạo Cấu trúc Bảng (Schema)
-Chạy script tạo bảng cơ sở dữ liệu ban đầu.
+## Bước 5: Khởi tạo Cấu trúc Bảng (Schema)
+Tuy database nằm trên Aiven, nhưng bạn cần chạy script lần đầu từ server e2-micro để nó thiết lập các bảng nếu chưa có.
 
 ```bash
 # (Đảm bảo đang bật .venv)
@@ -107,7 +94,7 @@ python db/setup_db.py
 
 ---
 
-## Bước 7: Kích hoạt Systemd Daemon 24/7
+## Bước 6: Kích hoạt Systemd Daemon 24/7
 Systemd là trình quản lý tiến trình của Linux, giúp bot tự động bật khi máy chủ khởi động lại và tự động restart nếu bị crash.
 
 ```bash
@@ -129,7 +116,7 @@ sudo systemctl start scheduler-master.service
 
 ---
 
-## Bước 8: Kiểm tra Log Trực tiếp
+## Bước 7: Kiểm tra Log Trực tiếp
 Để theo dõi xem Bot có đang đọc lịch, bypass Cloudflare SofaScore thành công hay không:
 
 ```bash
