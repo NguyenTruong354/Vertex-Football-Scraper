@@ -436,7 +436,53 @@ class ScheduleManager:
             self.log.info("  • [%s] %s vs %s @ %s UTC [%s]",
                           m["league"], m["home_team"], m["away_team"], kt, m["status"])
 
+        # Write to DB so frontend can display upcoming matches
+        # We only UPSERT the basic info; LiveTrackingPool handles updates later
+        self._upsert_upcoming_to_db(unique)
+
         return unique
+
+    def _upsert_upcoming_to_db(self, upcoming: list[dict]) -> None:
+        """Upsert upcoming matches to live_snapshots table."""
+        if not upcoming:
+            return
+            
+        try:
+            from db.config_db import get_connection
+            conn = get_connection()
+            cur = conn.cursor()
+
+            # Prepare data
+            data = []
+            for m in upcoming:
+                data.append((
+                    m["event_id"],
+                    m["home_team"],
+                    m["away_team"],
+                    m["home_score"] or 0,
+                    m["away_score"] or 0,
+                    m["status"],
+                    0, # minute
+                    json.dumps({}), # empty statistics
+                    json.dumps([]), # empty incidents
+                ))
+
+            # Batch upsert
+            cur.executemany("""
+                INSERT INTO live_snapshots
+                    (event_id, home_team, away_team, home_score, away_score, 
+                     status, minute, statistics_json, incidents_json)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (event_id) DO UPDATE SET
+                    home_team = EXCLUDED.home_team,
+                    away_team = EXCLUDED.away_team,
+                    status = EXCLUDED.status,
+                    loaded_at = NOW()
+            """, data)
+            conn.commit()
+            
+        except Exception as e:
+            self.log.error("Failed to upsert upcoming match schedule to DB: %s", e)
 
 
 # ════════════════════════════════════════════════════════════
