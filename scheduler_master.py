@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import random
 import logging
 import logging.handlers
 import os
@@ -44,8 +45,8 @@ PYTHON = sys.executable
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "sofascore"))
 
-import nodriver as uc
 import sofascore.config_sofascore as cfg
+from curl_cffi.requests import AsyncSession
 
 # ── SofaScore tournament IDs ──
 TOURNAMENT_IDS = {
@@ -105,7 +106,7 @@ def setup_logging() -> logging.Logger:
 class Notifier:
     """Routes messages to specific Discord webhooks based on event type."""
     EMOJI = {
-        "match_start": "🟢", "goal": "⚽", "match_end": "🏁",
+        "match_start": "🟢", "goal": "⚽", "match_end": "🏁", "match_event": "⚡",
         "post_match_done": "📊", "error": "🔴", "daily_done": "🔧",
         "info": "ℹ️", "recycle": "♻️",
     }
@@ -114,6 +115,7 @@ class Notifier:
     ROUTING = {
         "match_start": "DISCORD_WEBHOOK_LIVE",
         "goal": "DISCORD_WEBHOOK_LIVE",
+        "match_event": "DISCORD_WEBHOOK_LIVE",
         "match_end": "DISCORD_WEBHOOK_LIVE",
         "error": "DISCORD_WEBHOOK_ERROR",
         "info": "DISCORD_WEBHOOK_INFO",
@@ -126,6 +128,13 @@ class Notifier:
         self.log = log
         # Default webhook if specific ones aren't set
         self.default_webhook = os.environ.get("DISCORD_WEBHOOK", "")
+
+    @property
+    def is_enabled(self) -> bool:
+        return bool(
+            self.default_webhook or 
+            any(os.environ.get(env) for env in set(self.ROUTING.values()))
+        )
 
     def send(self, event_type: str, message: str) -> None:
         emoji = self.EMOJI.get(event_type, "📢")
@@ -159,136 +168,196 @@ class Notifier:
 
 
 # ════════════════════════════════════════════════════════════
-# SHARED BROWSER — single Chrome, asyncio.Lock, auto-recycle
+# HTTP CLIENT — curl_cffi (Replaces SharedBrowser)
 # ════════════════════════════════════════════════════════════
 
-BROWSER_ARGS = [
-    "--disable-dev-shm-usage", "--no-sandbox", "--disable-gpu",
-    "--disable-software-rasterizer", "--disable-extensions",
-    "--disable-background-networking", "--disable-default-apps",
-    "--mute-audio", "--no-first-run", "--disable-sync",
-    "--disable-translate", "--blink-settings=imagesEnabled=false",
-]
+class CurlCffiClient:
+    """Lightweight HTTP client that bypasses Cloudflare using TLS impersonation."""
 
+    # Retry backoff timings (seconds)
+    RETRY_BACKOFF = [4, 10, 20]
+    MAX_RETRIES = 3
 
-class SharedBrowser:
-    """Single nodriver browser shared by all components. Thread-safe via asyncio.Lock."""
-
-    def __init__(self, log: logging.Logger, *, dry_run: bool = False):
+    def __init__(self, log: logging.Logger, notifier: "Notifier", *, dry_run: bool = False):
         self.log = log
+        self.notifier = notifier
         self.dry_run = dry_run
-        self._browser: uc.Browser | None = None
-        self._tab = None
+        self._session: AsyncSession | None = None
         self._lock = asyncio.Lock()
         self._request_count = 0
         self._last_request: float = 0.0
+        self._consecutive_403 = 0
+        self._consecutive_429 = 0
+        self._last_block_alert = 0.0
+
+    def _check_block_alert(self, url: str, code: int) -> None:
+        """Trigger a Discord alert if Cloudflare/rate-limit blocking is persistent."""
+        count = self._consecutive_403 if code == 403 else self._consecutive_429
+        if count >= 5:
+            now = time.time()
+            if now - self._last_block_alert > 3600:  # Alert once per hour max
+                if code == 403:
+                    self.log.error("CRITICAL: Cloudflare persistently blocked our TLS footprint (403 Forbidden).")
+                    self.notifier.send("error", 
+                        f"**🚨 CLOUDFLARE BLOCK ALERT**\n"
+                        f"Received {count} consecutive `403 Forbidden` responses.\n"
+                        f"The impersonate profile (`chrome120`) may have been detected and blocked by Cloudflare.\n"
+                        f"Last blocked URL: `{url}`\n"
+                        f"*Action required: Update impersonate version in CurlCffiClient.*"
+                    )
+                else:
+                    self.log.error("CRITICAL: SofaScore rate limiting our IP (429 Too Many Requests).")
+                    self.notifier.send("error",
+                        f"**⚡ RATE LIMIT ALERT**\n"
+                        f"Received {count} consecutive `429 Too Many Requests` responses.\n"
+                        f"SofaScore is throttling our requests. IP may be temporarily blocked.\n"
+                        f"*The system will auto-backoff, but monitor closely.*"
+                    )
+                self._last_block_alert = now
 
     async def start(self) -> None:
         if self.dry_run:
-            self.log.info("[DRY-RUN] Browser start skipped")
+            self.log.info("[DRY-RUN] HTTP Client start skipped")
             return
-        self.log.info("🌐 Starting shared browser...")
-        self._browser = await uc.start(browser_args=BROWSER_ARGS)
-        self._tab = await self._browser.get("https://www.sofascore.com/")
-        await asyncio.sleep(3)
+        self.log.info("🌐 Starting Curl CFFI HTTP Client (impersonating Chrome 120)...")
+        self._session = AsyncSession(
+            impersonate="chrome120",
+            headers={
+                "Accept": "application/json, text/plain, */*",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Cache-Control": "no-cache",
+                "Referer": "https://www.sofascore.com/",
+                "Origin": "https://www.sofascore.com",
+            }
+        )
         self._request_count = 0
-        self.log.info("🌐 Browser ready (PID=%s)", getattr(self._browser, 'pid', '?'))
 
     async def stop(self) -> None:
-        if self._browser:
-            try:
-                self._browser.stop()
-            except Exception:
-                pass
-            self._browser = None
-            self._tab = None
+        if self._session:
+            await self._session.close()
+            self._session = None
 
     async def recycle(self) -> None:
-        """Kill and restart browser to prevent memory leaks."""
-        self.log.info("♻️  Recycling browser (after %d requests)...", self._request_count)
+        """curl_cffi doesn't leak memory like Chrome, but we recycle the session to clear cookies/state."""
+        self.log.info("♻️  Recycling HTTP session (after %d requests)...", self._request_count)
         await self.stop()
-        await asyncio.sleep(2)
         await self.start()
 
     def needs_recycle(self) -> bool:
         return self._request_count >= BROWSER_RECYCLE_EVERY
 
     async def get_json(self, endpoint: str) -> dict | list | None:
-        """Fetch JSON from SofaScore API via browser navigation. Serialized by Lock."""
+        """Fetch JSON from SofaScore API with retry and jitter. Serialized by Lock."""
         if self.dry_run:
             return None
 
         async with self._lock:
             url = f"{cfg.SS_API_BASE}{endpoint}"
 
-            # Rate limit — min 1.5s between requests
-            elapsed = time.monotonic() - self._last_request
-            if elapsed < 1.5:
-                await asyncio.sleep(1.5 - elapsed)
+            for attempt in range(self.MAX_RETRIES):
+                # Rate limit with randomized jitter (2-4s) to look human
+                elapsed = time.monotonic() - self._last_request
+                jitter = random.uniform(2.0, 4.0)
+                if elapsed < jitter:
+                    await asyncio.sleep(jitter - elapsed)
 
-            try:
-                if not self._browser:
-                    await self.start()
-
-                self._tab = await self._browser.get(url)
-                self._last_request = time.monotonic()
-                self._request_count += 1
-                await asyncio.sleep(1.2)
-
-                # Try to get JSON via innerText (works for large responses)
                 try:
-                    txt = await self._tab.evaluate("document.body.innerText")
-                    if txt and txt.strip().startswith(("{", "[")):
-                        data = json.loads(txt)
+                    if not self._session:
+                        await self.start()
+
+                    self._last_request = time.monotonic()
+                    self._request_count += 1
+
+                    resp = await self._session.get(url, timeout=15)
+
+                    if resp.status_code == 200:
+                        self._consecutive_403 = 0
+                        self._consecutive_429 = 0
+                        data = resp.json()
                         if isinstance(data, dict) and data.get("error"):
                             if data["error"].get("code") == 404:
                                 return None
                         return data
-                except Exception:
-                    pass
 
-                # Fallback: get_content + regex
-                content = await self._tab.get_content()
-                if "<pre" in content:
-                    import re
-                    m = re.search(r"<pre[^>]*>(.*?)</pre>", content, re.DOTALL)
-                    if m:
-                        json_str = m.group(1).strip()
-                        json_str = (json_str.replace("&amp;", "&")
-                                    .replace("&lt;", "<").replace("&gt;", ">")
-                                    .replace("&quot;", '"'))
-                        return json.loads(json_str)
+                    elif resp.status_code == 403:
+                        self._consecutive_403 += 1
+                        self.log.warning("HTTP 403 Forbidden (attempt %d/%d): %s",
+                                         attempt + 1, self.MAX_RETRIES, url)
+                        self._check_block_alert(url, 403)
+                        if attempt < self.MAX_RETRIES - 1:
+                            backoff = self.RETRY_BACKOFF[attempt] * 2
+                            self.log.info("  ⏳ Backoff %ds before retry...", backoff)
+                            await asyncio.sleep(backoff)
 
-            except Exception as exc:
-                self.log.debug("Request failed: %s — %s", endpoint, exc)
+                    elif resp.status_code == 429:
+                        self._consecutive_429 += 1
+                        self.log.warning("HTTP 429 Rate Limited (attempt %d/%d): %s",
+                                         attempt + 1, self.MAX_RETRIES, url)
+                        self._check_block_alert(url, 429)
+                        if attempt < self.MAX_RETRIES - 1:
+                            backoff = self.RETRY_BACKOFF[attempt] * 3
+                            self.log.info("  ⏳ Rate limit backoff %ds...", backoff)
+                            await asyncio.sleep(backoff)
+
+                    else:
+                        self.log.warning("HTTP %d: %s", resp.status_code, url)
+                        if attempt < self.MAX_RETRIES - 1:
+                            await asyncio.sleep(self.RETRY_BACKOFF[attempt])
+
+                except Exception as exc:
+                    self.log.debug("Request failed (attempt %d): %s — %s",
+                                   attempt + 1, endpoint, exc)
+                    if attempt < self.MAX_RETRIES - 1:
+                        await asyncio.sleep(self.RETRY_BACKOFF[attempt])
+
             return None
 
     async def get_schedule_json(self, date_str: str) -> dict:
-        """Fetch scheduled-events for a date (large JSON, uses innerText)."""
+        """Fetch scheduled-events for a date with retry."""
         if self.dry_run:
             return {}
 
         async with self._lock:
             url = f"https://api.sofascore.com/api/v1/sport/football/scheduled-events/{date_str}"
 
-            elapsed = time.monotonic() - self._last_request
-            if elapsed < 1.5:
-                await asyncio.sleep(1.5 - elapsed)
+            for attempt in range(self.MAX_RETRIES):
+                elapsed = time.monotonic() - self._last_request
+                jitter = random.uniform(2.0, 4.0)
+                if elapsed < jitter:
+                    await asyncio.sleep(jitter - elapsed)
 
-            try:
-                if not self._browser:
-                    await self.start()
+                try:
+                    if not self._session:
+                        await self.start()
 
-                self._tab = await self._browser.get(url)
-                self._last_request = time.monotonic()
-                self._request_count += 1
-                await asyncio.sleep(2)
+                    self._last_request = time.monotonic()
+                    self._request_count += 1
 
-                txt = await self._tab.evaluate("document.body.innerText")
-                if txt and txt.strip().startswith("{"):
-                    return json.loads(txt)
-            except Exception as exc:
-                self.log.warning("Schedule fetch failed for %s: %s", date_str, exc)
+                    resp = await self._session.get(url, timeout=20)
+                    if resp.status_code == 200:
+                        self._consecutive_403 = 0
+                        self._consecutive_429 = 0
+                        return resp.json()
+                    elif resp.status_code == 403:
+                        self._consecutive_403 += 1
+                        self.log.warning("HTTP 403 on schedule fetch (attempt %d): %s", attempt + 1, url)
+                        self._check_block_alert(url, 403)
+                        if attempt < self.MAX_RETRIES - 1:
+                            await asyncio.sleep(self.RETRY_BACKOFF[attempt] * 2)
+                    elif resp.status_code == 429:
+                        self._consecutive_429 += 1
+                        self.log.warning("HTTP 429 on schedule fetch (attempt %d): %s", attempt + 1, url)
+                        self._check_block_alert(url, 429)
+                        if attempt < self.MAX_RETRIES - 1:
+                            await asyncio.sleep(self.RETRY_BACKOFF[attempt] * 3)
+
+                except Exception as exc:
+                    self.log.warning("Schedule fetch failed for %s (attempt %d): %s",
+                                     date_str, attempt + 1, exc)
+                    if attempt < self.MAX_RETRIES - 1:
+                        await asyncio.sleep(self.RETRY_BACKOFF[attempt])
+
             return {}
 
 
@@ -297,7 +366,7 @@ class SharedBrowser:
 # ════════════════════════════════════════════════════════════
 
 class ScheduleManager:
-    def __init__(self, tournament_ids: dict[str, int], browser: SharedBrowser,
+    def __init__(self, tournament_ids: dict[str, int], browser: CurlCffiClient,
                  log: logging.Logger):
         self.tournament_ids = tournament_ids  # {"EPL": 17, "LALIGA": 8, ...}
         self.browser = browser
@@ -396,9 +465,9 @@ class LiveMatchState:
 # ════════════════════════════════════════════════════════════
 
 class LiveTrackingPool:
-    """Tracks multiple concurrent matches via round-robin polling on a shared browser."""
+    """Tracks multiple concurrent matches via round-robin polling on HTTP client."""
 
-    def __init__(self, browser: SharedBrowser, log: logging.Logger,
+    def __init__(self, browser: CurlCffiClient, log: logging.Logger,
                  notifier: Notifier, *, dry_run: bool = False):
         self.browser = browser
         self.log = log
@@ -465,9 +534,10 @@ class LiveTrackingPool:
                 })
                 del self._matches[eid]
 
-            # Brief pause between matches to avoid hammering
+            # Smooth pacing: spread polling evenly across 60 seconds
             if len(event_ids) > 1:
-                await asyncio.sleep(2)
+                per_match_interval = max(60.0 / len(event_ids), 3.0)
+                await asyncio.sleep(per_match_interval)
 
         return finished
 
@@ -510,22 +580,48 @@ class LiveTrackingPool:
         # 2. Incidents
         inc_data = await self.browser.get_json(f"/event/{state.event_id}/incidents")
         if inc_data:
-            state.incidents = inc_data.get("incidents", [])
+            current_incidents = inc_data.get("incidents", [])
+            
+            # Detect new incidents for Discord alerts
+            if state.poll_count > 1 and state.incidents:
+                old_ids = {i.get("id") for i in state.incidents if i.get("id")}
+                for inc in current_incidents:
+                    iid = inc.get("id")
+                    if iid and iid not in old_ids:
+                        inc_type = inc.get("incidentType", "")
+                        inc_class = inc.get("incidentClass", "")
+                        player = inc.get("player", {}).get("name", "")
+                        time_str = f"{inc.get('time', '?')}'"
+                        if inc.get("addedTime"):
+                            time_str += f"+{inc.get('addedTime')}'"
 
-        # 3. Statistics
-        stat_data = await self.browser.get_json(f"/event/{state.event_id}/statistics")
-        if stat_data:
-            stats = {}
-            for period in stat_data.get("statistics", []):
-                if period.get("period") != "ALL":
-                    continue
-                for group in period.get("groups", []):
-                    for item in group.get("statisticsItems", []):
-                        stats[item.get("name", "")] = {
-                            "home": item.get("home", ""),
-                            "away": item.get("away", ""),
-                        }
-            state.statistics = stats
+                        if inc_type == "card" and inc_class in ("red", "yellowRed"):
+                            self.notifier.send("match_event", 
+                                f"🟥 **RED CARD** [{state.league}] {state.home_team} vs {state.away_team} | {player} ({time_str})")
+                        elif inc_type == "varDecision":
+                            self.notifier.send("match_event", 
+                                f"📺 **VAR DECISION** [{state.league}] {state.home_team} vs {state.away_team} | {time_str}")
+                        elif inc_type == "penalty":
+                            self.notifier.send("match_event", 
+                                f"🎯 **PENALTY** [{state.league}] {state.home_team} vs {state.away_team} | {time_str}")
+            
+            state.incidents = current_incidents
+
+        # 3. Statistics — only every 3rd poll to reduce request volume
+        if state.poll_count % 3 == 1:
+            stat_data = await self.browser.get_json(f"/event/{state.event_id}/statistics")
+            if stat_data:
+                stats = {}
+                for period in stat_data.get("statistics", []):
+                    if period.get("period") != "ALL":
+                        continue
+                    for group in period.get("groups", []):
+                        for item in group.get("statisticsItems", []):
+                            stats[item.get("name", "")] = {
+                                "home": item.get("home", ""),
+                                "away": item.get("away", ""),
+                            }
+                state.statistics = stats
 
         # 4. Save to DB every poll
         self._save_to_db(state)
@@ -803,7 +899,7 @@ class DailyMaintenance:
 # ════════════════════════════════════════════════════════════
 
 class MasterScheduler:
-    """Single-process, single-browser daemon for all leagues."""
+    """Single-process HTTP worker daemon for all leagues."""
 
     def __init__(self, leagues: list[str], *, dry_run: bool = False):
         self.leagues = [l.upper() for l in leagues]
@@ -813,7 +909,7 @@ class MasterScheduler:
         self._shutdown = asyncio.Event()
 
         self.tournament_ids = {l: TOURNAMENT_IDS[l] for l in self.leagues}
-        self.browser = SharedBrowser(self.log, dry_run=dry_run)
+        self.browser = CurlCffiClient(self.log, self.notifier, dry_run=dry_run)
         self.schedule = ScheduleManager(self.tournament_ids, self.browser, self.log)
         self.pool = LiveTrackingPool(self.browser, self.log, self.notifier,
                                       dry_run=dry_run)
@@ -859,7 +955,7 @@ class MasterScheduler:
         self.log.info("  Dry run:    %s", self.dry_run)
         self.log.info("  PID:        %d", os.getpid())
         self.log.info("  Recycle:    every %d requests", BROWSER_RECYCLE_EVERY)
-        self.log.info("  Discord:    %s", "YES" if self.notifier.webhook_url else "NO")
+        self.log.info("  Discord:    %s", "YES" if self.notifier.is_enabled else "NO")
         self.log.info("═" * 60)
 
         await self.browser.start()
@@ -931,10 +1027,10 @@ class MasterScheduler:
 
             # Sleep based on number of active matches
             if not self.pool.is_empty:
-                sleep_time = max(10, 60 // self.pool.active_count)
-                self.log.info("⏳ Next poll in %ds (%d active matches)",
-                              sleep_time, self.pool.active_count)
-                if not self._sleep_interruptible(sleep_time):
+                # poll_all() already spread its requests across ~60 seconds via per_match_interval
+                # We just need a short 5s technical break before the next cycle starts
+                self.log.info("⏳ Cycle complete for %d active matches. Next cycle shortly...", self.pool.active_count)
+                if not self._sleep_interruptible(5):
                     return
                 return  # Go straight to next cycle
 
