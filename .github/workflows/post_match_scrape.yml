@@ -1,0 +1,158 @@
+name: "⚽ Post-Match FBref & Transfermarkt Scraper"
+
+on:
+  schedule:
+    # Chạy lúc 00:30 UTC mỗi ngày (7:30 sáng giờ VN)
+    # Sau khi các trận đấu tối châu Âu (19:30-22:00 UTC) đã kết thúc
+    - cron: "30 0 * * *"
+  workflow_dispatch: # Cho phép chạy thủ công từ GitHub UI
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  # ═══════════════════════════════════════════════════════════
+  # BƯỚC 1: Kiểm tra xem hôm nay có trận đấu nào kết thúc không
+  # Chạy ~1 phút, KHÔNG cần Chrome. Nếu không có trận → DỪNG
+  # ═══════════════════════════════════════════════════════════
+  check-matches:
+    runs-on: ubuntu-latest
+    outputs:
+      has_matches: ${{ steps.check.outputs.has_matches }}
+      leagues_with_matches: ${{ steps.check.outputs.leagues }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: "🔍 Check if today had matches (lightweight, no Chrome)"
+        id: check
+        run: |
+          pip install curl-cffi > /dev/null 2>&1
+          python3 << 'PYEOF'
+          import asyncio, json, os
+          from datetime import datetime, timezone, timedelta
+          from curl_cffi.requests import AsyncSession
+
+          TOURNAMENT_IDS = {
+              "EPL": 17, "LALIGA": 8, "BUNDESLIGA": 35,
+              "SERIEA": 23, "LIGUE1": 34,
+          }
+
+          async def check():
+              today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+              # Also check yesterday (in case workflow runs just after midnight)
+              yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+
+              leagues_with_matches = []
+
+              async with AsyncSession(impersonate="chrome120") as s:
+                  for date in [today, yesterday]:
+                      url = f"https://api.sofascore.com/api/v1/sport/football/scheduled-events/{date}"
+                      try:
+                          r = await s.get(url, timeout=15)
+                          if r.status_code != 200:
+                              continue
+                          data = r.json()
+                          events = data.get("events", [])
+                          for ev in events:
+                              tid = ev.get("tournament", {}).get("uniqueTournament", {}).get("id")
+                              status_type = ev.get("status", {}).get("type", "")
+                              for league, lid in TOURNAMENT_IDS.items():
+                                  if tid == lid and status_type == "finished":
+                                      if league not in leagues_with_matches:
+                                          leagues_with_matches.append(league)
+                      except Exception as e:
+                          print(f"Error checking {date}: {e}")
+
+              has_matches = len(leagues_with_matches) > 0
+              print(f"Checked {today} & {yesterday}: found finished matches in {leagues_with_matches}")
+
+              # Set GitHub Actions outputs
+              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                  f.write(f"has_matches={'true' if has_matches else 'false'}\n")
+                  f.write(f"leagues={json.dumps(leagues_with_matches)}\n")
+
+          asyncio.run(check())
+          PYEOF
+
+      - name: "📋 Result"
+        run: |
+          echo "Has matches: ${{ steps.check.outputs.has_matches }}"
+          echo "Leagues: ${{ steps.check.outputs.leagues }}"
+
+  # ═══════════════════════════════════════════════════════════
+  # BƯỚC 2: Chạy FBref & Transfermarkt scraper (CHỈ khi có trận)
+  # Cần Chrome (nodriver) → chạy ~25-30 phút
+  # ═══════════════════════════════════════════════════════════
+  scrape:
+    needs: check-matches
+    if: needs.check-matches.outputs.has_matches == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: "📦 Install dependencies"
+        run: |
+          pip install -r requirements.txt
+          pip install nodriver curl-cffi
+
+      - name: "🌐 Install Chrome"
+        run: |
+          wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo dpkg -i google-chrome-stable_current_amd64.deb || sudo apt-get -f install -y
+          google-chrome --version
+
+      - name: "🔧 Setup .env"
+        run: |
+          cat << EOF > .env
+          DATABASE_URL=${{ secrets.DATABASE_URL }}
+          PGSSLROOTCERT=./certs/ca.pem
+          DISCORD_WEBHOOK_LIVE=${{ secrets.DISCORD_WEBHOOK_LIVE }}
+          DISCORD_WEBHOOK_ERROR=${{ secrets.DISCORD_WEBHOOK_ERROR }}
+          DISCORD_WEBHOOK_INFO=${{ secrets.DISCORD_WEBHOOK_INFO }}
+          EOF
+
+      - name: "🔐 Setup Aiven CA certificate"
+        run: |
+          mkdir -p certs
+          echo "${{ secrets.AIVEN_CA_PEM }}" > certs/ca.pem
+
+      - name: "📊 Run FBref Scraper"
+        run: |
+          LEAGUES='${{ needs.check-matches.outputs.leagues_with_matches }}'
+          # Parse JSON array and run for each league
+          for league in $(echo '${{ needs.check-matches.outputs.leagues_with_matches }}' | python3 -c "import sys,json; [print(l) for l in json.load(sys.stdin)]" 2>/dev/null || echo "EPL"); do
+            echo "═══ Scraping FBref: $league ═══"
+            cd fbref && python3 fbref_scraper.py --league "$league" && cd .. || echo "⚠ FBref $league failed, continuing..."
+          done
+
+      - name: "📊 Run Transfermarkt Scraper"
+        run: |
+          for league in $(echo '${{ needs.check-matches.outputs.leagues_with_matches }}' | python3 -c "import sys,json; [print(l) for l in json.load(sys.stdin)]" 2>/dev/null || echo "EPL"); do
+            echo "═══ Scraping Transfermarkt: $league ═══"
+            cd transfermarkt && python3 tm_scraper.py --league "$league" && cd .. || echo "⚠ TM $league failed, continuing..."
+          done
+
+      - name: "💾 Load data into Aiven DB"
+        run: |
+          for league in $(echo '${{ needs.check-matches.outputs.leagues_with_matches }}' | python3 -c "import sys,json; [print(l) for l in json.load(sys.stdin)]" 2>/dev/null || echo "EPL"); do
+            echo "═══ Loading DB: $league ═══"
+            python3 -m db.loader --league "$league" || echo "⚠ DB load $league failed, continuing..."
+          done
+
+      - name: "✅ Summary"
+        if: always()
+        run: |
+          echo "═══════════════════════════════════════"
+          echo "Workflow completed!"
+          echo "Leagues scraped: ${{ needs.check-matches.outputs.leagues_with_matches }}"
+          echo "═══════════════════════════════════════"
