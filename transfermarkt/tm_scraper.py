@@ -105,18 +105,22 @@ class TMBrowser:
 
     async def __aenter__(self) -> "TMBrowser":
         import nodriver as uc
-        import os
-        is_ci = os.environ.get("CI", "").lower() == "true"
-        if is_ci:
-            chrome_path = os.environ.get("CHROME_PATH", "/usr/bin/google-chrome-stable")
-            logger.info("▶ Khởi động Chrome browser (CI mode, Xvfb headed) cho Transfermarkt…")
+        import sys
+        
+        is_linux = sys.platform.startswith('linux')
+        
+        if is_linux:
+            logger.info("▶ Khởi động Chrome browser (Linux Headless) cho Transfermarkt…")
             self._browser = await uc.start(
-                headless=False,
+                headless=True,
                 sandbox=False,
-                browser_executable_path=chrome_path,
+                browser_args=[
+                    '--disable-dev-shm-usage',
+                    '--disable-gpu',
+                ],
             )
         else:
-            logger.info("▶ Khởi động Chrome browser (headed mode) cho Transfermarkt…")
+            logger.info("▶ Khởi động Chrome browser (Local Headed) cho Transfermarkt…")
             self._browser = await uc.start(headless=False)
         return self
 

@@ -138,12 +138,11 @@ class FBrefBrowser:
             logger.info("▶ Khởi động Chrome browser (Linux Headless mode)…")
             self._browser = await uc.start(
                 headless=True,
+                sandbox=False,
                 browser_args=[
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
                     '--disable-dev-shm-usage',
-                    '--disable-gpu'
-                ]
+                    '--disable-gpu',
+                ],
             )
         else:
             logger.info("▶ Khởi động Chrome browser (Local Headed mode)…")
