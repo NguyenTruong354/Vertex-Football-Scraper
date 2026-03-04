@@ -8,13 +8,27 @@
 - Pagination: `?page=1&limit=20`
 - Date format: ISO 8601 (`YYYY-MM-DD`)
 
+## Security & Anti-Scraping Measures
+Given the high value and difficulty of acquiring this exclusive football data, the Spring Boot API MUST implement the following defenses to prevent third parties from "stealing" our data:
+
+1. **Strict CORS Policy**: The API must ONLY accept requests originating from our official frontend domain (e.g., `https://vertex-football.com`). Cross-origin requests from tools like Postman or unknown domains should be blocked for public endpoints.
+2. **Rate Limiting (Throttling)**: Implement IP-based and User-based rate limiting (e.g., max 100 requests / minute / IP via Redis). If an IP exceeds this, temporarily ban it (HTTP 429 Too Many Requests).
+3. **Hard Pagination Limits**: Never allow a client to request a massive data dump. Hardcode `limit` max values to `50`. For example, someone calling `?limit=10000` must be rejected immediately to prevent database scraping.
+4. **JWT & API Keys**:
+   - **Public Read (Guest)**: Allowed limited read access to basic stats.
+   - **Authenticated Read (User)**: Requires a valid JWT token. Can access deeper insights (like AI Stories, Player Trends).
+   - **Admin/Write**: Creating or updating records (POST/PUT/DELETE) requires an Admin Role JWT. The Python Daemon will authenticate using an internal `SERVICE_API_KEY`.
+5. **WAF (Web Application Firewall)**: Place the API behind Cloudflare to automatically block known scraping bots, headless browsers, and malicious data-mining traffic.
+
 ## Table of Contents
+- [Security & Anti-Scraping Measures](#security--anti-scraping-measures)
 - [Teams](#teams)
 - [Players](#players)
 - [Matches](#matches)
 - [Match Events & Live Data](#match-events--live-data)
 - [Standings](#standings)
 - [Statistics](#statistics)
+- [AI Insights & News](#ai-insights--news)
 - [Error Codes](#error-codes)
 
 ---
@@ -773,6 +787,106 @@ Content-Type: application/json
 ```http
 DELETE /api/statistics/a23b4c5d?type=player
 Authorization: Bearer <token>
+```
+
+---
+
+## AI Insights & News
+This domain exposes the narrative, AI-generated content and aggregated RSS news created by the background Python Daemon (Live Insights, Match Stories, Player Trends, News Radar).
+
+### `GET /api/news`
+**Description:** Retrieve the freshest football news from the `news_feed` table (aggregated from BBC/Sky Sports).
+**Query Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| limit | integer | No | Items per page, default 10 |
+| league_id | string | No | Filter by league (Default: 'EPL') |
+
+**Example Request:**
+```http
+GET /api/news?limit=5
+Authorization: Bearer <token>
+```
+
+**Example Response:**
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "title": "Arsenal sign new striker",
+      "link": "https://www.bbc.co.uk/sport/football/...",
+      "summary": "Mikel Arteta confirms...",
+      "published_at": "2024-05-01T12:00:00Z",
+      "source": "BBC Sport"
+    }
+  ]
+}
+```
+
+---
+
+### `GET /api/insights/live/:match_id`
+**Description:** Retrieve the latest AI momentum insight for an ongoing match (from `live_snapshots.insight_text`).
+**Example Request:**
+```http
+GET /api/insights/live/12345
+```
+**Example Response:**
+```json
+{
+  "data": {
+    "match_id": "12345",
+    "insight_text": "Liverpool đang kiểm soát thế trận hoàn toàn ở hiệp 2, liên tục nhồi bóng bổng vào vòng cấm."
+  }
+}
+```
+
+---
+
+### `GET /api/insights/story/:match_id`
+**Description:** Retrieve the 30-second post-match AI narrative summary (from `match_summaries`).
+**Example Request:**
+```http
+GET /api/insights/story/12345
+```
+**Example Response:**
+```json
+{
+  "data": {
+    "match_id": "12345",
+    "summary_text": "Trận cầu đinh kết thúc với tỷ số hòa kịch tính. Arsenal áp đảo xG nhưng Chelsea vươn lên dẫn trước nhờ khoảnh khắc lóe sáng của Cole Palmer...",
+    "created_at": "2024-05-01T22:30:00Z"
+  }
+}
+```
+
+---
+
+### `GET /api/insights/players`
+**Description:** Retrieve all player performance trend alerts (Rising/Falling form) from `player_insights`.
+**Query Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| league_id | string | Yes | e.g., 'EPL' |
+| trend_type | string | No | 'GREEN', 'RED', or 'NEUTRAL' to filter |
+
+**Example Request:**
+```http
+GET /api/insights/players?league_id=EPL&trend_type=GREEN
+```
+**Example Response:**
+```json
+{
+  "data": [
+    {
+      "player_id": "a23b4c5d",
+      "trend_score": 85,
+      "trend_type": "GREEN",
+      "insight_text": "Bukayo Saka đang thăng hoa với nền tảng thể lực sung mãn, đóng góp 3 bàm trong 2 trận gần nhất."
+    }
+  ]
+}
 ```
 
 ---
