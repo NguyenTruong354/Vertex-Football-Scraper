@@ -288,6 +288,7 @@ CREATE INDEX IF NOT EXISTS idx_pss_team    ON player_season_stats (team_id, leag
 CREATE TABLE IF NOT EXISTS player_crossref (
     understat_player_id  BIGINT  NOT NULL,
     fbref_player_id      TEXT    NOT NULL,
+    tm_player_id         TEXT,
     canonical_name       TEXT,
     league_id            TEXT    NOT NULL DEFAULT 'EPL',
     matched_by           TEXT    DEFAULT 'name_exact',
@@ -738,3 +739,54 @@ END $$;
 ALTER DATABASE defaultdb SET random_page_cost    = 2.0;
 ALTER DATABASE defaultdb SET effective_cache_size = '512MB';
 ALTER DATABASE defaultdb SET work_mem             = '8MB';
+
+-- ============================================================
+-- VIEWS & MATERIALIZED VIEWS
+-- ============================================================
+
+-- ──────────────────────────────────────────────────────────
+-- mv_player_profiles: kết hợp 2 tầng matching để lấy ảnh từ Transfermarkt
+-- ──────────────────────────────────────────────────────────
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_player_profiles AS
+SELECT DISTINCT ON (r.player_id, r.league_id)
+    r.player_id AS fbref_player_id,
+    r.player_name,
+    r.team_id AS fbref_team_id,
+    r.league_id,
+    r.position,
+    r.nationality,
+    -- 2-Layer Match cho Ảnh và Giá trị
+    COALESCE(mv1.player_image_url, mv2.player_image_url) AS player_image_url,
+    COALESCE(mv1.market_value_numeric, mv2.market_value_numeric) AS market_value_numeric
+FROM squad_rosters r
+-- Tầng 1: Match qua ID (Crossref)
+LEFT JOIN player_crossref c 
+    ON c.fbref_player_id = r.player_id AND c.league_id = r.league_id
+LEFT JOIN market_values mv1 
+    ON mv1.player_id = c.tm_player_id AND mv1.league_id = r.league_id
+-- Tầng 2: Fallback qua tên (Normalized)
+LEFT JOIN market_values mv2
+    ON mv2.league_id = r.league_id
+    AND lower(regexp_replace(mv2.player_name, '\s+', '', 'g')) = lower(regexp_replace(r.player_name, '\s+', '', 'g'))
+ORDER BY r.player_id, r.league_id, mv1.market_value_numeric DESC NULLS LAST, mv2.market_value_numeric DESC NULLS LAST;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_player_profiles_id ON mv_player_profiles(fbref_player_id, league_id);
+
+-- ──────────────────────────────────────────────────────────
+-- mv_team_profiles: kết hợp bảng xếp hạng với Transfermarkt để lấy logo
+-- ──────────────────────────────────────────────────────────
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_team_profiles AS
+SELECT DISTINCT ON (t.team_id, t.league_id)
+    t.team_id AS fbref_team_id,
+    t.team_name,
+    t.league_id,
+    tm.logo_url,
+    tm.stadium_name,
+    tm.manager_name
+FROM standings t
+LEFT JOIN team_metadata tm 
+    ON tm.league_id = t.league_id
+    AND lower(regexp_replace(tm.team_name, '\s+', '', 'g')) = lower(regexp_replace(t.team_name, '\s+', '', 'g'))
+ORDER BY t.team_id, t.league_id;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_team_profiles_id ON mv_team_profiles(fbref_team_id, league_id);

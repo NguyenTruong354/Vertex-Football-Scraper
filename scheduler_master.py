@@ -1152,7 +1152,7 @@ class DailyMaintenance:
             from db.config_db import get_connection
             conn = get_connection()
             cur = conn.cursor()
-            for mv in ("mv_player_season_xg", "mv_match_summary"):
+            for mv in ("mv_player_season_xg", "mv_match_summary", "mv_player_profiles", "mv_team_profiles"):
                 try:
                     cur.execute(f"REFRESH MATERIALIZED VIEW CONCURRENTLY {mv}")
                     conn.commit()
