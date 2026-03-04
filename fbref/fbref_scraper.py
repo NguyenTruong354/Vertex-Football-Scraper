@@ -130,18 +130,23 @@ class FBrefBrowser:
     async def __aenter__(self) -> "FBrefBrowser":
         import nodriver as uc
         import os
-        is_ci = os.environ.get("CI", "").lower() == "true"
-        if is_ci:
-            # CI: headed mode + Xvfb virtual display (Cloudflare detects headless!)
-            chrome_path = os.environ.get("CHROME_PATH", "/usr/bin/google-chrome-stable")
-            logger.info("▶ Khởi động Chrome browser (CI mode, Xvfb headed)…")
+        import sys
+        
+        is_linux = sys.platform.startswith('linux')
+        
+        if is_linux:
+            logger.info("▶ Khởi động Chrome browser (Linux Headless mode)…")
             self._browser = await uc.start(
-                headless=False,
-                sandbox=False,
-                browser_executable_path=chrome_path,
+                headless=True,
+                browser_args=[
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-gpu'
+                ]
             )
         else:
-            logger.info("▶ Khởi động Chrome browser (headed mode)…")
+            logger.info("▶ Khởi động Chrome browser (Local Headed mode)…")
             self._browser = await uc.start(headless=False)
         return self
 
