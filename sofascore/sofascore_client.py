@@ -96,17 +96,28 @@ class SofaScoreClient:
     Async client cho SofaScore API, dùng curl_cffi (TLS impersonation)
     để bypass Cloudflare protection — KHÔNG cần Chrome browser.
 
+    Anti-ban features:
+      • Jitter 2.0-4.0s giữa mỗi request (human-like)
+      • Exponential backoff: 429 → 15s/45s/90s, 403 → 10s/30s/60s
+      • Emergency pause 60s nếu nhận 3 lần 429 liên tiếp
+      • Request volume logging mỗi 50 requests
+      • Retry tối đa 5 lần trước khi bỏ cuộc
+
     Lifecycle:
         async with SofaScoreClient() as client:
             data = await client.get_json("/event/12345/heatmap/67890")
     """
 
     RETRY_BACKOFF = [5, 15, 30, 60, 120]
+    MAX_CONSECUTIVE_429 = 3  # Emergency pause sau N lần 429 liên tiếp
 
     def __init__(self) -> None:
         self._session: AsyncSession | None = None
         self._last_request_time: float = 0.0
         self._request_count: int = 0
+        self._consecutive_429: int = 0
+        self._total_429: int = 0
+        self._total_403: int = 0
 
     async def __aenter__(self) -> "SofaScoreClient":
         self._session = AsyncSession(
@@ -122,12 +133,15 @@ class SofaScoreClient:
                 await self._session.close()
             except Exception:
                 pass
-            logger.info("✓ SofaScore client đóng (tổng %d requests)", self._request_count)
+            logger.info(
+                "✓ SofaScore client đóng (tổng %d requests, 429s=%d, 403s=%d)",
+                self._request_count, self._total_429, self._total_403,
+            )
 
     async def _rate_limit(self) -> None:
-        """Human-like random delay between requests."""
+        """Human-like random delay (2.0-4.0s) between requests."""
         elapsed = time.monotonic() - self._last_request_time
-        jitter = random.uniform(1.5, 3.0)
+        jitter = random.uniform(2.0, 4.0)
         if elapsed < jitter:
             await asyncio.sleep(jitter - elapsed)
 
@@ -135,14 +149,14 @@ class SofaScoreClient:
         self,
         endpoint: str,
         *,
-        retries: int = cfg.SS_MAX_RETRIES,
+        retries: int = 5,
     ) -> dict | list | None:
         """
         GET request tới SofaScore API → JSON (via curl_cffi).
 
         Args:
             endpoint: Path sau API base (VD: "/event/12345/...")
-            retries: Số lần retry khi lỗi
+            retries: Số lần retry khi lỗi (default: 5)
 
         Returns:
             JSON response dict/list, hoặc None nếu lỗi
@@ -156,9 +170,17 @@ class SofaScoreClient:
                 self._last_request_time = time.monotonic()
                 self._request_count += 1
 
+                # Log request volume mỗi 50 requests
+                if self._request_count % 50 == 0:
+                    logger.info(
+                        "  📊 Request volume: %d total (429s=%d, 403s=%d)",
+                        self._request_count, self._total_429, self._total_403,
+                    )
+
                 resp = await self._session.get(url, timeout=15)
 
                 if resp.status_code == 200:
+                    self._consecutive_429 = 0  # Reset consecutive counter
                     data = resp.json()
 
                     # Check for API error inside JSON
@@ -168,9 +190,19 @@ class SofaScoreClient:
                             logger.debug("  404: %s", url)
                             return None
                         elif status == 429:
+                            self._total_429 += 1
+                            self._consecutive_429 += 1
                             wait = self.RETRY_BACKOFF[min(attempt - 1, len(self.RETRY_BACKOFF) - 1)]
-                            logger.warning("  429 Rate limited — chờ %ds", wait)
-                            await asyncio.sleep(wait)
+                            logger.warning("  429 Rate limited (JSON) — chờ %ds", wait)
+                            if self._consecutive_429 >= self.MAX_CONSECUTIVE_429:
+                                logger.error(
+                                    "  🚨 %d lần 429 liên tiếp! Emergency pause 60s",
+                                    self._consecutive_429,
+                                )
+                                await asyncio.sleep(60)
+                                self._consecutive_429 = 0
+                            else:
+                                await asyncio.sleep(wait)
                             continue
                         else:
                             logger.warning("  API error %d: %s", status, url)
@@ -181,32 +213,47 @@ class SofaScoreClient:
                     return data
 
                 elif resp.status_code == 403:
+                    self._total_403 += 1
                     wait = self.RETRY_BACKOFF[min(attempt - 1, len(self.RETRY_BACKOFF) - 1)] * 2
                     logger.warning("  HTTP 403 (attempt %d/%d) — backoff %ds", attempt, retries, wait)
                     await asyncio.sleep(wait)
 
                 elif resp.status_code == 429:
+                    self._total_429 += 1
+                    self._consecutive_429 += 1
                     wait = self.RETRY_BACKOFF[min(attempt - 1, len(self.RETRY_BACKOFF) - 1)] * 3
                     logger.warning("  HTTP 429 Rate Limited (attempt %d/%d) — backoff %ds", attempt, retries, wait)
-                    await asyncio.sleep(wait)
+                    if self._consecutive_429 >= self.MAX_CONSECUTIVE_429:
+                        logger.error(
+                            "  🚨 %d lần 429 liên tiếp! Emergency pause 60s",
+                            self._consecutive_429,
+                        )
+                        await asyncio.sleep(60)
+                        self._consecutive_429 = 0
+                    else:
+                        await asyncio.sleep(wait)
 
                 elif resp.status_code == 404:
+                    self._consecutive_429 = 0
                     logger.debug("  404: %s", url)
                     return None
 
                 else:
+                    self._consecutive_429 = 0
                     logger.warning("  HTTP %d: %s", resp.status_code, url)
                     if attempt < retries:
                         await asyncio.sleep(cfg.SS_DELAY_BETWEEN_REQUESTS)
 
             except json.JSONDecodeError as exc:
+                self._consecutive_429 = 0
                 logger.warning("  JSON parse error: %s – %s", url, exc)
                 if attempt < retries:
                     await asyncio.sleep(cfg.SS_DELAY_BETWEEN_REQUESTS)
             except Exception as exc:
+                self._consecutive_429 = 0
                 logger.warning("  Request error: %s – %s", url, exc)
                 if attempt < retries:
-                    await asyncio.sleep(cfg.SS_DELAY_BETWEEN_REQUESTS)
+                    await asyncio.sleep(cfg.SS_DELAY_BETWEEN_REQUESTS * 2)
 
         logger.error("  ✗ Failed after %d attempts: %s", retries, url)
         return None
@@ -705,11 +752,20 @@ Lưu ý:
         )
         return
 
-    asyncio.run(main(
-        league_id=league_id,
-        match_limit=args.match_limit,
-        skip_heatmaps=args.skip_heatmaps,
-    ))
+    try:
+        import sys
+        if sys.platform == "win32":
+            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        
+        asyncio.run(main(
+            league_id=league_id,
+            match_limit=args.match_limit,
+            skip_heatmaps=args.skip_heatmaps,
+        ))
+    except KeyboardInterrupt:
+        logger.info("Script bị ngừng bởi người dùng (Ctrl+C).")
+    except Exception as exc:
+        logger.exception("SofaScore pipeline lỗi: %s", exc)
 
 
 if __name__ == "__main__":

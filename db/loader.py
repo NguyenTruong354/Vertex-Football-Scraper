@@ -118,7 +118,7 @@ def load_shots(conn, league_id: str = "EPL") -> int:
     if not path.exists():
         logger.warning("  File không tồn tại: %s", path)
         return 0
-    df = pd.read_csv(path)
+    df = pd.read_csv(path, on_bad_lines="skip")
     count = _upsert(conn, "shots", df, ["id", "league_id"], league_id=league_id)
     logger.info("  shots: %d rows upserted ← %s", count, path.name)
     return count
@@ -129,7 +129,7 @@ def load_player_match_stats(conn, league_id: str = "EPL") -> int:
     if not path.exists():
         logger.warning("  File không tồn tại: %s", path)
         return 0
-    df = pd.read_csv(path)
+    df = pd.read_csv(path, on_bad_lines="skip")
     count = _upsert(conn, "player_match_stats", df, ["id", "league_id"], league_id=league_id)
     logger.info("  player_match_stats: %d rows upserted ← %s", count, path.name)
     return count
@@ -140,7 +140,7 @@ def load_match_stats(conn, league_id: str = "EPL") -> int:
     if not path.exists():
         logger.warning("  File không tồn tại: %s", path)
         return 0
-    df = pd.read_csv(path)
+    df = pd.read_csv(path, on_bad_lines="skip")
     count = _upsert(conn, "match_stats", df, ["match_id", "league_id"], league_id=league_id)
     logger.info("  match_stats: %d rows upserted ← %s", count, path.name)
     return count
@@ -151,7 +151,7 @@ def load_standings(conn, league_id: str = "EPL") -> int:
     if not path.exists():
         logger.warning("  File không tồn tại: %s", path)
         return 0
-    df = pd.read_csv(path)
+    df = pd.read_csv(path, on_bad_lines="skip")
     df["season"] = "2025-2026"
     count = _upsert(conn, "standings", df, ["team_id", "league_id", "season"], league_id=league_id)
     logger.info("  standings: %d rows upserted ← %s", count, path.name)
@@ -163,7 +163,7 @@ def load_squad_rosters(conn, league_id: str = "EPL") -> int:
     if not path.exists():
         logger.warning("  File không tồn tại: %s", path)
         return 0
-    df = pd.read_csv(path)
+    df = pd.read_csv(path, on_bad_lines="skip")
     count = _upsert(conn, "squad_rosters", df, ["player_id", "team_id", "league_id"], league_id=league_id)
     logger.info("  squad_rosters: %d rows upserted ← %s", count, path.name)
     return count
@@ -174,7 +174,7 @@ def load_squad_stats(conn, league_id: str = "EPL") -> int:
     if not path.exists():
         logger.warning("  File không tồn tại: %s", path)
         return 0
-    df = pd.read_csv(path)
+    df = pd.read_csv(path, on_bad_lines="skip")
     count = _upsert(conn, "squad_stats", df, ["team_id", "season", "league_id"], league_id=league_id)
     logger.info("  squad_stats: %d rows upserted ← %s", count, path.name)
     return count
@@ -185,7 +185,7 @@ def load_player_season_stats(conn, league_id: str = "EPL") -> int:
     if not path.exists():
         logger.warning("  File không tồn tại: %s", path)
         return 0
-    df = pd.read_csv(path)
+    df = pd.read_csv(path, on_bad_lines="skip")
     count = _upsert(conn, "player_season_stats", df, ["player_id", "team_id", "season", "league_id"], league_id=league_id)
     logger.info("  player_season_stats: %d rows upserted ← %s", count, path.name)
     return count
@@ -200,7 +200,7 @@ def load_fixtures(conn, league_id: str = "EPL") -> int:
     if not path.exists():
         logger.warning("  File không tồn tại: %s", path)
         return 0
-    df = pd.read_csv(path)
+    df = pd.read_csv(path, on_bad_lines="skip")
     # Bỏ fixtures chưa có match_id (trận chưa diễn ra)
     df = df.dropna(subset=["match_id"])
     count = _upsert(conn, "fixtures", df, ["match_id", "league_id"], league_id=league_id)
@@ -213,7 +213,7 @@ def load_gk_stats(conn, league_id: str = "EPL") -> int:
     if not path.exists():
         logger.warning("  File không tồn tại: %s", path)
         return 0
-    df = pd.read_csv(path)
+    df = pd.read_csv(path, on_bad_lines="skip")
     count = _upsert(conn, "gk_stats", df, ["player_id", "team_id", "league_id"], league_id=league_id)
     logger.info("  gk_stats: %d rows upserted ← %s", count, path.name)
     return count
@@ -228,7 +228,7 @@ def load_ss_events(conn, league_id: str = "EPL") -> int:
     if not path.exists():
         logger.warning("  File không tồn tại: %s", path)
         return 0
-    df = pd.read_csv(path)
+    df = pd.read_csv(path, on_bad_lines="skip")
     count = _upsert(conn, "ss_events", df, ["event_id", "league_id"], league_id=league_id)
     logger.info("  ss_events: %d rows upserted ← %s", count, path.name)
     return count
@@ -239,7 +239,7 @@ def load_player_avg_positions(conn, league_id: str = "EPL") -> int:
     if not path.exists():
         logger.warning("  File không tồn tại: %s", path)
         return 0
-    df = pd.read_csv(path)
+    df = pd.read_csv(path, on_bad_lines="skip")
     count = _upsert(conn, "player_avg_positions", df, ["event_id", "player_id", "league_id"], league_id=league_id)
     logger.info("  player_avg_positions: %d rows upserted ← %s", count, path.name)
     return count
@@ -250,7 +250,7 @@ def load_heatmaps(conn, league_id: str = "EPL") -> int:
     if not path.exists():
         logger.warning("  File không tồn tại: %s", path)
         return 0
-    df = pd.read_csv(path)
+    df = pd.read_csv(path, on_bad_lines="skip")
     df.rename(columns={"heatmap_points_json": "heatmap_points"}, inplace=True)
     count = _upsert(conn, "heatmaps", df, ["event_id", "player_id", "league_id"], league_id=league_id)
     logger.info("  heatmaps: %d rows upserted ← %s", count, path.name)
@@ -266,7 +266,7 @@ def load_team_metadata(conn, league_id: str = "EPL") -> int:
     if not path.exists():
         logger.warning("  File không tồn tại: %s", path)
         return 0
-    df = pd.read_csv(path)
+    df = pd.read_csv(path, on_bad_lines="skip")
     count = _upsert(conn, "team_metadata", df, ["team_id", "league_id"], league_id=league_id)
     logger.info("  team_metadata: %d rows upserted ← %s", count, path.name)
     return count
@@ -277,7 +277,7 @@ def load_market_values(conn, league_id: str = "EPL") -> int:
     if not path.exists():
         logger.warning("  File không tồn tại: %s", path)
         return 0
-    df = pd.read_csv(path)
+    df = pd.read_csv(path, on_bad_lines="skip")
     count = _upsert(conn, "market_values", df, ["player_id", "team_id", "league_id"], league_id=league_id)
     logger.info("  market_values: %d rows upserted ← %s", count, path.name)
     return count

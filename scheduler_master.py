@@ -35,6 +35,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
+import live_insight
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
@@ -501,6 +502,7 @@ class LiveMatchState:
     minute: int = 0
     incidents: list[dict] = field(default_factory=list)
     statistics: dict[str, dict] = field(default_factory=dict)
+    insight_text: str = ""
     poll_count: int = 0
     last_updated: str = ""
     start_timestamp: int = 0
@@ -669,7 +671,25 @@ class LiveTrackingPool:
                             }
                 state.statistics = stats
 
-        # 4. Save to DB every poll
+        # 4. Momentum Analysis & Insights
+        # Generate insight only if we just fetched fresh stats
+        if state.poll_count % 3 == 1 and state.statistics:
+            score, insight = live_insight.analyze(
+                home_team=state.home_team,
+                away_team=state.away_team,
+                minute=state.minute,
+                home_score=state.home_score,
+                away_score=state.away_score,
+                statistics=state.statistics,
+                incidents=state.incidents
+            )
+            if insight:
+                # Log insight on discord if it changes
+                if insight != state.insight_text:
+                    self.notifier.send("live", f"💡 [INSIGHT] {state.league} ({state.home_team} vs {state.away_team}): {insight}")
+                state.insight_text = insight
+
+        # 5. Save to DB every poll
         self._save_to_db(state)
 
         self.log.info("  📊 [%s] %s %d-%d %s | %s' | poll #%d",
@@ -689,8 +709,8 @@ class LiveTrackingPool:
             cur.execute("""
                 INSERT INTO live_snapshots
                     (event_id, home_team, away_team, home_score, away_score,
-                     status, minute, statistics_json, incidents_json, poll_count)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     status, minute, statistics_json, incidents_json, insight_text, poll_count)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (event_id) DO UPDATE SET
                     home_score = EXCLUDED.home_score,
                     away_score = EXCLUDED.away_score,
@@ -698,6 +718,7 @@ class LiveTrackingPool:
                     minute = EXCLUDED.minute,
                     statistics_json = EXCLUDED.statistics_json,
                     incidents_json = EXCLUDED.incidents_json,
+                    insight_text = EXCLUDED.insight_text,
                     poll_count = EXCLUDED.poll_count,
                     loaded_at = NOW()
             """, (
@@ -706,6 +727,7 @@ class LiveTrackingPool:
                 state.status, state.minute,
                 json.dumps(state.statistics, ensure_ascii=False),
                 json.dumps(state.incidents, ensure_ascii=False),
+                state.insight_text,
                 state.poll_count,
             ))
 
@@ -768,7 +790,10 @@ def run_with_retry(cmd: list[str], cwd: Path, label: str,
             if proc.returncode == 0:
                 log.info("✓ %s — %.1fs", label, time.perf_counter() - t0)
                 return True
-            log.warning("✗ %s — exit code %d", label, proc.returncode)
+            log.warning("✗ %s — exit code %d. Error details:", label, proc.returncode)
+            if proc.stderr:
+                for line in proc.stderr.strip().split("\n"):
+                    log.warning("  | %s", line)
         except subprocess.TimeoutExpired:
             log.warning("✗ %s — timeout", label)
         except Exception as exc:

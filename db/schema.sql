@@ -588,6 +588,7 @@ CREATE TABLE IF NOT EXISTS live_snapshots (
     minute            INTEGER  DEFAULT 0,
     statistics_json   JSONB,
     incidents_json    JSONB,
+    insight_text      TEXT,
     poll_count        INTEGER  DEFAULT 0,
     loaded_at         TIMESTAMPTZ DEFAULT NOW()
 );

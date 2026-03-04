@@ -622,7 +622,7 @@ def parse_fixtures_page(
                                 row["match_id"] = m.group(1)
                                 row["match_report_url"] = cfg.FBREF_BASE + href
 
-                if row and row.get("date"):
+                if row and row.get("date") and row.get("score"):
                     enriched.append(row)
 
             if enriched:
