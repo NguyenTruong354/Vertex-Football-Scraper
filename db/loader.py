@@ -257,6 +257,17 @@ def load_heatmaps(conn, league_id: str = "EPL") -> int:
     return count
 
 
+def load_match_lineups(conn, league_id: str = "EPL") -> int:
+    path = _csv_path(league_id, "lineups")
+    if not path.exists():
+        logger.warning("  File không tồn tại: %s", path)
+        return 0
+    df = pd.read_csv(path, on_bad_lines="skip")
+    count = _upsert(conn, "match_lineups", df, ["event_id", "player_id", "league_id"], league_id=league_id)
+    logger.info("  match_lineups: %d rows upserted ← %s", count, path.name)
+    return count
+
+
 # ────────────────────────────────────────────────────────────
 # Transfermarkt — team_metadata, market_values
 # ────────────────────────────────────────────────────────────
@@ -386,6 +397,7 @@ LOADERS: dict[str, callable] = {
     "ss_events":             load_ss_events,
     "player_avg_positions":  load_player_avg_positions,
     "heatmaps":              load_heatmaps,
+    "match_lineups":         load_match_lineups,
     # ── Nhóm E: Transfermarkt ────────────────────────────
     "team_metadata":         load_team_metadata,
     "market_values":         load_market_values,

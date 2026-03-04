@@ -464,6 +464,32 @@ ALTER TABLE heatmaps ALTER COLUMN heatmap_points SET STORAGE EXTENDED;
 
 CREATE INDEX IF NOT EXISTS idx_hm_event ON heatmaps (event_id, league_id);
 
+-- ──────────────────────────────────────────────────────────
+-- 13b. MATCH LINEUPS (SofaScore — starting XI + subs + formation)
+--      3-phase fetch: -60min (publish), -15min (refresh), post-match (stats)
+--      No avg_x/avg_y → JOIN player_avg_positions when drawing pitch
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS match_lineups (
+    event_id        BIGINT   NOT NULL,
+    player_id       BIGINT   NOT NULL,
+    player_name     TEXT,
+    team_side       TEXT     NOT NULL,          -- 'home' | 'away'
+    team_name       TEXT,
+    position        TEXT,                       -- 'G', 'D', 'M', 'F'
+    jersey_number   INTEGER,
+    is_substitute   BOOLEAN  DEFAULT FALSE,
+    minutes_played  INTEGER,                    -- NULL pre-match, filled post-match
+    rating          REAL,                       -- NULL pre-match, filled post-match
+    formation       TEXT,                       -- '4-3-3', '3-5-2' (denormalized per row)
+    status          TEXT     DEFAULT 'confirmed',  -- future: 'predicted'
+    league_id       TEXT     NOT NULL DEFAULT 'EPL',
+    season          TEXT,
+    loaded_at       TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (event_id, player_id, league_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_lineups_event ON match_lineups (event_id, league_id);
+
 -- ============================================================
 -- NHÓM G: TRANSFERMARKT TABLES
 -- ============================================================

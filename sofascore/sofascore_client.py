@@ -361,16 +361,19 @@ async def fetch_match_lineups(
     Lấy lineups cho một trận đấu.
 
     API: /event/{event_id}/lineups
-    Returns: {"home": [...players], "away": [...players]}
+    Returns: {"home": [...players], "away": [...players],
+              "home_formation": "4-3-3", "away_formation": "4-4-2"}
     """
     data = await client.get_json(f"/event/{event_id}/lineups")
     if not data:
-        return {"home": [], "away": []}
+        return {"home": [], "away": [], "home_formation": None, "away_formation": None}
 
-    result: dict[str, list] = {"home": [], "away": []}
+    result: dict[str, Any] = {"home": [], "away": [],
+                               "home_formation": None, "away_formation": None}
 
     for side in ("home", "away"):
         lineup_data = data.get(side, {})
+        result[f"{side}_formation"] = lineup_data.get("formation")
         players_raw = lineup_data.get("players", [])
 
         for p in players_raw:
@@ -382,8 +385,6 @@ async def fetch_match_lineups(
                 "player_name": player_info.get("name") or player_info.get("shortName"),
                 "position": player_info.get("position"),
                 "jersey_number": player_info.get("jerseyNumber"),
-                "avg_x": stats.get("averageX"),
-                "avg_y": stats.get("averageY"),
                 "minutes_played": stats.get("minutesPlayed"),
                 "rating": stats.get("rating"),
                 "substitute": p.get("substitute", False),
@@ -391,6 +392,51 @@ async def fetch_match_lineups(
             result[side].append(player_dict)
 
     return result
+
+
+def build_lineup_rows(
+    lineups: dict,
+    event_meta: dict,
+    league_id: str,
+    season: str,
+) -> list[dict]:
+    """
+    Flatten lineups → list[dict] ready for DB upsert.
+
+    Args:
+        lineups:    Return value of fetch_match_lineups()
+        event_meta: Dict with event_id, home_team, away_team
+        league_id:  e.g. "EPL"
+        season:     e.g. "2024-2025"
+    """
+    rows: list[dict] = []
+    team_names = {
+        "home": event_meta.get("home_team", ""),
+        "away": event_meta.get("away_team", ""),
+    }
+    for side in ("home", "away"):
+        formation = lineups.get(f"{side}_formation")
+        team_name = team_names[side]
+        for p in lineups.get(side, []):
+            if not p.get("player_id"):
+                continue
+            rows.append({
+                "event_id": event_meta["event_id"],
+                "player_id": p["player_id"],
+                "player_name": p.get("player_name"),
+                "team_side": side,
+                "team_name": team_name,
+                "position": p.get("position"),
+                "jersey_number": p.get("jersey_number"),
+                "is_substitute": p.get("substitute", False),
+                "minutes_played": p.get("minutes_played"),
+                "rating": p.get("rating"),
+                "formation": formation,
+                "status": "confirmed",
+                "league_id": league_id,
+                "season": season,
+            })
+    return rows
 
 
 # ────────────────────────────────────────────────────────────
@@ -438,6 +484,7 @@ def export_sofascore_data(
     avg_positions: list[PlayerAvgPosition],
     events: list[MatchEvent],
     *,
+    lineup_rows: list[dict] | None = None,
     league_cfg: SSLeagueConfig,
     append: bool = False,
 ) -> list[str]:
@@ -489,6 +536,16 @@ def export_sofascore_data(
         if str(path) not in exported:
             exported.append(str(path))
 
+    # ── Match lineups ──
+    if lineup_rows:
+        df = pd.DataFrame(lineup_rows)
+        path = output_dir / f"dataset_{league_cfg.league_id.lower()}_lineups.csv"
+        write_header = not path.exists() or not append
+        df.to_csv(path, mode=mode, header=write_header, index=False, encoding="utf-8-sig")
+        logger.info("Exported lineups → %s (%d rows)", path, len(df))
+        if str(path) not in exported:
+            exported.append(str(path))
+
     return exported
 
 
@@ -525,6 +582,7 @@ async def main(
 
     all_heatmaps: list[dict] = []
     all_avg_positions: list[dict] = []
+    all_lineup_rows: list[dict] = []
     all_valid_events: list = []
     all_valid_heatmaps: list = []
     all_valid_positions: list = []
@@ -569,6 +627,10 @@ async def main(
             lineups = await fetch_match_lineups(client, event_id)
             home_players = lineups.get("home", [])
             away_players = lineups.get("away", [])
+
+            # Build lineup rows for DB (Phase 3 — post-match)
+            lineup_rows = build_lineup_rows(lineups, event, league_id, league_cfg.season)
+            all_lineup_rows.extend(lineup_rows)
 
             match_heatmaps: list[dict] = []
             match_avg_positions: list[dict] = []
@@ -660,6 +722,7 @@ async def main(
             # Export incrementally
             export_sofascore_data(
                 valid_heatmaps, valid_positions, valid_events,
+                lineup_rows=lineup_rows,
                 league_cfg=league_cfg,
                 append=True
             )
@@ -672,6 +735,7 @@ async def main(
     logger.info("  Matches        : %d", total_matches)
     logger.info("  Heatmaps       : %d", len(all_heatmaps))
     logger.info("  Avg positions  : %d", len(all_avg_positions))
+    logger.info("  Lineups        : %d", len(all_lineup_rows))
     logger.info("  Thời gian      : %.1f giây", elapsed)
     logger.info("=" * 60)
 
@@ -679,6 +743,7 @@ async def main(
         "events": all_valid_events,
         "heatmaps": all_valid_heatmaps,
         "avg_positions": all_valid_positions,
+        "lineup_rows": all_lineup_rows,
     }
 
 

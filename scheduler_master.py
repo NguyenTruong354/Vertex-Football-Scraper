@@ -1191,6 +1191,7 @@ class MasterScheduler:
         self.daily = DailyMaintenance(self.leagues, self.log, self.notifier,
                                        dry_run=dry_run, shutdown_event=self._shutdown)
         self.last_news_fetch: datetime | None = None
+        self._lineup_fetched: set[int] = set()  # event_ids already fetched lineups
 
     def _install_signals(self) -> None:
         def handler(*_):
@@ -1258,6 +1259,7 @@ class MasterScheduler:
         if self.daily.is_due() and now.hour >= 6:
             if self.pool.is_empty:
                 self.log.info("🚧 Pool is empty — running daily maintenance")
+                self._lineup_fetched.clear()  # Reset lineup tracking daily
                 self.daily.run()
             else:
                 self.log.info("⏸️  Pool has %d active matches — deferring maintenance",
@@ -1281,6 +1283,9 @@ class MasterScheduler:
                 return
             return
 
+        # ── 3.5 Phase 1: Fetch lineups ~60min before kickoff ──
+        await self._check_lineups(upcoming)
+
         # ── 4. Add upcoming matches to pool when ready ──
         for match in upcoming:
             kickoff = match.get("kickoff_utc")
@@ -1291,6 +1296,8 @@ class MasterScheduler:
             # Add to pool if within 15 minutes or already in progress
             if time_to_kickoff <= 900 or match["status"] == "inprogress":
                 self.pool.add_match(match)
+                # Phase 2: Refresh lineup when entering pool (-15min)
+                await self._fetch_and_save_lineup(match)
 
         # ── 5. Poll active matches ──
         if not self.pool.is_empty:
@@ -1314,7 +1321,7 @@ class MasterScheduler:
             next_kickoff = min(
                 m["kickoff_utc"] for m in upcoming if m.get("kickoff_utc")
             )
-            wake_time = next_kickoff - timedelta(minutes=15)
+            wake_time = next_kickoff - timedelta(minutes=60)
             now = datetime.now(timezone.utc)
             if wake_time > now:
                 delta = (wake_time - now).total_seconds()
@@ -1349,6 +1356,109 @@ class MasterScheduler:
                 except Exception as exc:
                     self.log.error("News radar error: %s", exc)
             self.last_news_fetch = now
+
+    async def _check_lineups(self, upcoming: list[dict]) -> None:
+        """Phase 1: Fetch lineups for matches within 60 minutes of kickoff."""
+        now = datetime.now(timezone.utc)
+        for match in upcoming:
+            kickoff = match.get("kickoff_utc")
+            if not kickoff:
+                continue
+            ttk = (kickoff - now).total_seconds()
+            event_id = match.get("event_id")
+            # Fetch if within 60 min AND not yet fetched in this daily cycle
+            if 0 < ttk <= 3600 and event_id and event_id not in self._lineup_fetched:
+                await self._fetch_and_save_lineup(match)
+                self._lineup_fetched.add(event_id)
+
+    async def _fetch_and_save_lineup(self, match: dict) -> None:
+        """Fetch lineup from SofaScore and UPSERT into match_lineups table."""
+        event_id = match.get("event_id")
+        if not event_id:
+            return
+
+        home = match.get("home_team", "?")
+        away = match.get("away_team", "?")
+        league = match.get("league", "")
+
+        if self.dry_run:
+            self.log.info("[DRY-RUN] Would fetch lineup: %s vs %s (event=%d)", home, away, event_id)
+            return
+
+        try:
+            # Fetch lineup via browser client
+            data = await self.browser.get_json(f"/event/{event_id}/lineups")
+            if not data:
+                self.log.warning("  ⚠ No lineup data for %s vs %s", home, away)
+                return
+
+            # Parse lineup (same logic as sofascore_client.fetch_match_lineups)
+            rows = []
+            for side in ("home", "away"):
+                lineup_data = data.get(side, {})
+                formation = lineup_data.get("formation")
+                team_name = home if side == "home" else away
+                for p in lineup_data.get("players", []):
+                    pi = p.get("player", {})
+                    stats = p.get("statistics", {})
+                    pid = pi.get("id")
+                    if not pid:
+                        continue
+                    rows.append((
+                        event_id,
+                        pid,
+                        pi.get("name") or pi.get("shortName"),
+                        side,
+                        team_name,
+                        pi.get("position"),
+                        pi.get("jerseyNumber"),
+                        p.get("substitute", False),
+                        stats.get("minutesPlayed"),
+                        stats.get("rating"),
+                        formation,
+                        "confirmed",
+                        league,
+                        "",  # season placeholder
+                    ))
+
+            if not rows:
+                self.log.info("  ⚠ Empty lineup for %s vs %s", home, away)
+                return
+
+            # UPSERT into match_lineups
+            from db.config_db import get_connection
+            conn = get_connection()
+            try:
+                with conn.cursor() as cur:
+                    import psycopg2.extras
+                    sql = """
+                        INSERT INTO match_lineups
+                            (event_id, player_id, player_name, team_side, team_name,
+                             position, jersey_number, is_substitute, minutes_played,
+                             rating, formation, status, league_id, season)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (event_id, player_id, league_id) DO UPDATE SET
+                            player_name = EXCLUDED.player_name,
+                            team_side = EXCLUDED.team_side,
+                            team_name = EXCLUDED.team_name,
+                            position = EXCLUDED.position,
+                            jersey_number = EXCLUDED.jersey_number,
+                            is_substitute = EXCLUDED.is_substitute,
+                            minutes_played = COALESCE(EXCLUDED.minutes_played, match_lineups.minutes_played),
+                            rating = COALESCE(EXCLUDED.rating, match_lineups.rating),
+                            formation = EXCLUDED.formation,
+                            status = EXCLUDED.status,
+                            loaded_at = NOW()
+                    """
+                    psycopg2.extras.execute_batch(cur, sql, rows, page_size=100)
+                conn.commit()
+                self.log.info("  📋 Lineup saved: %s vs %s — %d players (event=%d)",
+                              home, away, len(rows), event_id)
+            finally:
+                conn.close()
+
+        except Exception as exc:
+            self.log.error("Lineup fetch error for event %d: %s", event_id, exc)
 
 
 # ════════════════════════════════════════════════════════════
