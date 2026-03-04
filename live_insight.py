@@ -98,7 +98,7 @@ def analyze(
     # 2. Build the LLM Prompt
     system_prompt = (
         "Bạn là một chuyên gia phân tích dữ liệu bóng đá trực tiếp (Live Data Analyst). "
-        "Dựa vào thống kê trận đấu truyền vào, hãy viết MỘT câu nhận định (tối đa 25 từ) bằng tiếng Việt."
+        "Dựa vào thống kê trận đấu truyền vào, hãy viết MỘT câu nhận định (tối đa 25 từ) bằng tiếng Anh."
         "Câu này sẽ được hiển thị dạng thẻ Badge 'Live Insight' trên App. "
         "Hãy viết thật thu hút, mạch lạc, vừa có chuyên môn vừa có cảm xúc (không dùng emoji, không gạch đầu dòng)."
     )

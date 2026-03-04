@@ -1,0 +1,284 @@
+"""
+Vertex Football - Player Performance Trend Analyzer
+
+Runs as a nightly job (e.g. 4 AM) on the e2-micro VM.
+Queries the last 5 matches of each player from `player_match_stats`,
+calculates a trend direction (GREEN = rising, RED = falling, NEUTRAL = stable),
+and generates a short AI-written explanation saved to `player_insights`.
+"""
+
+import json
+import logging
+from typing import Optional
+from llm_client import LLMClient
+
+log = logging.getLogger(__name__)
+llm = LLMClient()
+
+SYSTEM_PROMPT = (
+    "Bạn là chuyên gia phân tích phong độ cầu thủ bóng đá.\n"
+    "Nhiệm vụ: Viết MỘT câu nhận xét ngắn gọn (tối đa 20 từ) bằng tiếng Việt "
+    "về phong độ gần đây của cầu thủ.\n"
+    "Yêu cầu:\n"
+    "- Ngắn gọn, sắc bén, dùng ngôn ngữ bình luận viên\n"
+    "- KHÔNG dùng emoji, gạch đầu dòng, hay markdown\n"
+    "- Nếu cầu thủ đang thăng hoa: nhấn mạnh điểm mạnh\n"
+    "- Nếu cầu thủ đang sa sút: chỉ ra vấn đề một cách khách quan"
+)
+
+
+def analyze_all_players(league: str) -> list[dict]:
+    """
+    Analyze the trend of all players in a league and return a list of insights.
+    
+    Returns:
+        List of dicts: [{player_id, player_name, league_id, trend, score, insight_text}, ...]
+    """
+    try:
+        from db.config_db import get_connection
+        conn = get_connection()
+        cur = conn.cursor()
+
+        # Get the last 5 matches for each player who played >= 30 mins
+        # Uses window function to rank matches per player
+        cur.execute("""
+            WITH ranked AS (
+                SELECT
+                    player_id, player, match_id,
+                    goals, assists, xg, xa, xg_chain, shots, key_passes, time,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY player_id
+                        ORDER BY match_id DESC
+                    ) AS rn
+                FROM player_match_stats
+                WHERE league_id = %s AND time >= 30
+            )
+            SELECT player_id, player,
+                   array_agg(goals ORDER BY rn ASC) AS goals_arr,
+                   array_agg(assists ORDER BY rn ASC) AS assists_arr,
+                   array_agg(xg ORDER BY rn ASC) AS xg_arr,
+                   array_agg(xa ORDER BY rn ASC) AS xa_arr,
+                   array_agg(shots ORDER BY rn ASC) AS shots_arr,
+                   array_agg(key_passes ORDER BY rn ASC) AS kp_arr,
+                   COUNT(*) AS match_count
+            FROM ranked
+            WHERE rn <= 5
+            GROUP BY player_id, player
+            HAVING COUNT(*) >= 3
+            ORDER BY player
+        """, (league,))
+
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        log.info("📊 Analyzing trends for %d players in %s...", len(rows), league)
+
+        # Phase 1: Calculate trends for ALL players (pure math, no LLM)
+        all_players = []
+        for row in rows:
+            player_id, player_name = row[0], row[1]
+            goals = list(row[2])
+            assists = list(row[3])
+            xg_arr = [float(x or 0) for x in row[4]]
+            xa_arr = [float(x or 0) for x in row[5]]
+            shots = list(row[6])
+            key_passes = list(row[7])
+            match_count = row[8]
+
+            trend, score = _calculate_trend(goals, assists, xg_arr, xa_arr, shots, key_passes)
+
+            all_players.append({
+                "player_id": player_id,
+                "player_name": player_name,
+                "league_id": league,
+                "trend": trend,
+                "score": score,
+                "goals": goals,
+                "assists": assists,
+                "xg_arr": xg_arr,
+                "xa_arr": xa_arr,
+                "match_count": match_count,
+                "insight_text": "",
+            })
+
+        # Phase 2: Only call LLM for top 15 GREEN + top 15 RED (saves API quota)
+        LLM_BUDGET = 15
+        green_top = sorted([p for p in all_players if p["trend"] == "GREEN"], key=lambda x: -x["score"])[:LLM_BUDGET]
+        red_top = sorted([p for p in all_players if p["trend"] == "RED"], key=lambda x: x["score"])[:LLM_BUDGET]
+        llm_candidates = {p["player_id"] for p in green_top + red_top}
+
+        log.info("  🤖 Generating AI insights for %d notable players...", len(llm_candidates))
+
+        insights = []
+        for p in all_players:
+            if p["player_id"] in llm_candidates:
+                p["insight_text"] = _generate_insight_text(
+                    p["player_name"], p["trend"],
+                    p["goals"], p["assists"], p["xg_arr"], p["xa_arr"], p["match_count"]
+                )
+            else:
+                # Static fallback for non-notable players
+                p["insight_text"] = _static_insight(p)
+
+            insights.append({
+                "player_id": p["player_id"],
+                "player_name": p["player_name"],
+                "league_id": p["league_id"],
+                "trend": p["trend"],
+                "score": p["score"],
+                "insight_text": p["insight_text"],
+            })
+
+        return insights
+
+    except Exception as exc:
+        log.error("Failed to analyze player trends: %s", exc)
+        return []
+
+
+def _calculate_trend(
+    goals: list, assists: list,
+    xg: list, xa: list,
+    shots: list, key_passes: list
+) -> tuple[str, int]:
+    """
+    Calculate trend direction and momentum score.
+    
+    Compares the average of the last 2 matches vs the first 2-3 matches.
+    Returns: (trend: "GREEN" | "RED" | "NEUTRAL", score: -100 to 100)
+    """
+    n = len(goals)
+    if n < 3:
+        return "NEUTRAL", 0
+
+    # Split into "recent" (last 2) vs "earlier" (first matches)
+    split = max(1, n - 2)
+    
+    def avg(arr, start, end):
+        chunk = arr[start:end]
+        return sum(chunk) / max(len(chunk), 1)
+
+    # Weighted composite score: xG is most important indicator
+    recent_score = (
+        avg(xg, split, n) * 4.0 +
+        avg(goals, split, n) * 3.0 +
+        avg(xa, split, n) * 2.0 +
+        avg(assists, split, n) * 2.0 +
+        avg(key_passes, split, n) * 1.0 +
+        avg(shots, split, n) * 0.5
+    )
+    earlier_score = (
+        avg(xg, 0, split) * 4.0 +
+        avg(goals, 0, split) * 3.0 +
+        avg(xa, 0, split) * 2.0 +
+        avg(assists, 0, split) * 2.0 +
+        avg(key_passes, 0, split) * 1.0 +
+        avg(shots, 0, split) * 0.5
+    )
+
+    if earlier_score == 0:
+        delta_pct = 100 if recent_score > 0 else 0
+    else:
+        delta_pct = int(((recent_score - earlier_score) / earlier_score) * 100)
+
+    # Clamp
+    delta_pct = max(-100, min(100, delta_pct))
+
+    if delta_pct >= 15:
+        trend = "GREEN"
+    elif delta_pct <= -15:
+        trend = "RED"
+    else:
+        trend = "NEUTRAL"
+
+    return trend, delta_pct
+
+
+def _generate_insight_text(
+    player_name: str, trend: str,
+    goals: list, assists: list,
+    xg: list, xa: list,
+    match_count: int
+) -> str:
+    """Generate a short AI-powered insight about the player's form."""
+    recent_goals = sum(goals[-2:])
+    recent_assists = sum(assists[-2:])
+    recent_xg = sum(xg[-2:])
+    total_goals = sum(goals)
+    total_assists = sum(assists)
+    total_xg = sum(xg)
+
+    trend_label = {
+        "GREEN": "đang thăng hoa",
+        "RED": "đang sa sút",
+        "NEUTRAL": "phong độ ổn định"
+    }[trend]
+
+    prompt = f"""Cầu thủ: {player_name}
+Phong độ: {trend_label}
+Thống kê {match_count} trận gần nhất: {total_goals} bàn, {total_assists} kiến tạo, tổng xG {total_xg:.2f}
+2 trận gần nhất: {recent_goals} bàn, {recent_assists} kiến tạo, xG {recent_xg:.2f}
+
+Viết MỘT câu nhận xét ngắn gọn (dưới 20 từ)."""
+
+    text = llm.generate_insight(prompt, system_instruction=SYSTEM_PROMPT)
+    if not text:
+        # Fallback static text
+        text = f"{player_name} {trend_label} với {total_goals} bàn trong {match_count} trận gần nhất."
+    return text
+
+
+def _static_insight(player: dict) -> str:
+    """Generate a static template insight for non-notable players (no LLM call)."""
+    name = player["player_name"]
+    trend = player["trend"]
+    goals = sum(player["goals"])
+    assists = sum(player["assists"])
+    n = player["match_count"]
+
+    if trend == "GREEN":
+        return f"{name} đang có phong độ tốt với {goals} bàn, {assists} kiến tạo trong {n} trận gần nhất."
+    elif trend == "RED":
+        return f"{name} chưa tìm lại phong độ tốt nhất trong {n} trận gần đây."
+    else:
+        return f"{name} duy trì phong độ ổn định với {goals} bàn trong {n} trận gần nhất."
+
+
+def run_and_save(league: str) -> int:
+    """Run trend analysis for all players in a league and save to DB."""
+    insights = analyze_all_players(league)
+    if not insights:
+        return 0
+
+    saved = 0
+    try:
+        from db.config_db import get_connection
+        conn = get_connection()
+        cur = conn.cursor()
+
+        for ins in insights:
+            cur.execute("""
+                INSERT INTO player_insights
+                    (player_id, player_name, league_id, trend, trend_score, insight_text)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (player_id, league_id) DO UPDATE SET
+                    player_name = EXCLUDED.player_name,
+                    trend = EXCLUDED.trend,
+                    trend_score = EXCLUDED.trend_score,
+                    insight_text = EXCLUDED.insight_text,
+                    loaded_at = NOW()
+            """, (
+                ins["player_id"], ins["player_name"], ins["league_id"],
+                ins["trend"], ins["score"], ins["insight_text"],
+            ))
+            saved += 1
+
+        conn.commit()
+        cur.close()
+        conn.close()
+        log.info("✓ Saved %d player insights for %s", saved, league)
+    except Exception as exc:
+        log.error("Failed to save player insights: %s", exc)
+
+    return saved

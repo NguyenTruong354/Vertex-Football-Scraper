@@ -17,17 +17,25 @@ logger = logging.getLogger(__name__)
 
 class LLMClient:
     def __init__(self):
-        self.gemini_key = os.getenv("GEMINI_API_KEY")
+        self.gemini_key_1 = os.getenv("GEMINI_API_KEY")
+        self.gemini_key_2 = os.getenv("GEMINI_API_KEY_2")
         self.groq_key = os.getenv("GROQ_API_KEY")
         
-        self.gemini_client = None
+        self.gemini_client_1 = None
+        self.gemini_client_2 = None
         self.groq_client = None
         
-        if self.gemini_key:
+        if self.gemini_key_1:
             try:
-                self.gemini_client = genai.Client(api_key=self.gemini_key)
+                self.gemini_client_1 = genai.Client(api_key=self.gemini_key_1)
             except Exception as e:
-                logger.error("Failed to init Gemini client: %s", e)
+                logger.error("Failed to init Gemini client 1: %s", e)
+                
+        if self.gemini_key_2:
+            try:
+                self.gemini_client_2 = genai.Client(api_key=self.gemini_key_2)
+            except Exception as e:
+                logger.error("Failed to init Gemini client 2: %s", e)
                 
         if self.groq_key:
             try:
@@ -35,33 +43,44 @@ class LLMClient:
             except Exception as e:
                 logger.error("Failed to init Groq client: %s", e)
 
+    def _call_gemini(self, client, prompt: str, system_instruction: Optional[str] = None) -> str:
+        config = genai_types.GenerateContentConfig()
+        if system_instruction:
+            config.system_instruction = system_instruction
+            
+        response = client.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=prompt,
+            config=config
+        )
+        if response.text:
+            return response.text.strip()
+        return ""
+
     def generate_insight(self, prompt: str, system_instruction: Optional[str] = None) -> str:
         """
-        Generates text using Gemini first. If it fails (rate limit, error, or missing key),
-        it seamlessly falls back to Groq.
+        Generates text using Gemini 1 first. If it fails, tries Gemini 2.
+        If both fail, it seamlessly falls back to Groq.
         """
-        if not self.gemini_client and not self.groq_client:
+        if not self.gemini_client_1 and not self.gemini_client_2 and not self.groq_client:
             logger.warning("No LLM clients configured. Returning empty insight.")
             return ""
 
-        # 1. Try Primary: Gemini 2.5 Flash
-        if self.gemini_client:
+        # 1. Try Primary: Gemini Key 1
+        if self.gemini_client_1:
             try:
-                config = genai_types.GenerateContentConfig()
-                if system_instruction:
-                    config.system_instruction = system_instruction
-                    
-                response = self.gemini_client.models.generate_content(
-                    model='gemini-2.5-flash',
-                    contents=prompt,
-                    config=config
-                )
-                if response.text:
-                    return response.text.strip()
+                return self._call_gemini(self.gemini_client_1, prompt, system_instruction)
             except Exception as e:
-                logger.warning("Gemini API failed: %s. Falling back to Groq...", e)
+                logger.warning("Gemini API (Key 1) failed: %s. Trying Key 2...", e)
 
-        # 2. Try Fallback: Groq (Llama 3)
+        # 2. Try Secondary: Gemini Key 2
+        if self.gemini_client_2:
+            try:
+                return self._call_gemini(self.gemini_client_2, prompt, system_instruction)
+            except Exception as e:
+                logger.warning("Gemini API (Key 2) failed: %s. Falling back to Groq...", e)
+
+        # 3. Try Fallback: Groq (Llama 3)
         if self.groq_client:
             try:
                 messages = []

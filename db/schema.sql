@@ -593,6 +593,50 @@ CREATE TABLE IF NOT EXISTS live_snapshots (
     loaded_at         TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- ──────────────────────────────────────────────────────────
+-- MATCH SUMMARIES — AI-generated post-match narrative (30-second story)
+-- Generated via Gemini / Groq after final whistle
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS match_summaries (
+    event_id        BIGINT   NOT NULL PRIMARY KEY,
+    league_id       TEXT     NOT NULL,
+    home_team       TEXT,
+    away_team       TEXT,
+    home_score      INTEGER,
+    away_score      INTEGER,
+    summary_text    TEXT,
+    loaded_at       TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ──────────────────────────────────────────────────────────
+-- PLAYER INSIGHTS — AI-generated nightly performance trends
+-- trend: GREEN (rising), RED (falling), NEUTRAL (stable)
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS player_insights (
+    player_id       BIGINT   NOT NULL,
+    player_name     TEXT,
+    league_id       TEXT     NOT NULL,
+    trend           TEXT,            -- GREEN, RED, NEUTRAL
+    trend_score     INTEGER,         -- -100 to 100
+    insight_text    TEXT,
+    loaded_at       TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (player_id, league_id)
+);
+
+-- ──────────────────────────────────────────────────────────
+-- NEWS & INJURY RADAR — RSS Feed Aggregator
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS news_feed (
+    id              BIGSERIAL PRIMARY KEY,
+    title           TEXT NOT NULL,
+    link            TEXT UNIQUE NOT NULL,
+    summary         TEXT,
+    published_at    TIMESTAMPTZ,
+    source          TEXT,
+    league_id       TEXT DEFAULT 'EPL',
+    loaded_at       TIMESTAMPTZ DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS live_incidents (
     id                BIGSERIAL  PRIMARY KEY,
     event_id          BIGINT     NOT NULL,

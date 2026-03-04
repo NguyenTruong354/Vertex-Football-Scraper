@@ -856,6 +856,9 @@ class PostMatchWorker:
             self.log, dry_run=self.dry_run, shutdown_event=self._shutdown,
         )
 
+        # Generate 30-second match story via AI
+        self._generate_match_story(match)
+
         # Update standings from SofaScore API (no Chrome needed!)
         if self.browser:
             tournament_id = TOURNAMENT_IDS.get(league)
@@ -881,6 +884,55 @@ class PostMatchWorker:
             self.notifier.send("error",
                                f"[{league}] Post-match errors: {home} vs {away}")
         return ok
+
+    def _generate_match_story(self, match: dict) -> None:
+        """Generate a 30-second AI match story and save to DB."""
+        try:
+            import match_story
+            from db.config_db import get_connection
+            event_id = match.get("event_id")
+            if not event_id:
+                return
+
+            # Read live_snapshots for stats/incidents
+            statistics = {}
+            incidents = []
+            try:
+                conn = get_connection()
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT statistics_json, incidents_json, home_score, away_score "
+                    "FROM live_snapshots WHERE event_id = %s",
+                    (event_id,)
+                )
+                row = cur.fetchone()
+                cur.close()
+                conn.close()
+                if row:
+                    statistics = row[0] if isinstance(row[0], dict) else json.loads(row[0] or "{}")
+                    incidents = row[1] if isinstance(row[1], list) else json.loads(row[1] or "[]")
+                    # Use DB scores if available (more accurate final score)
+                    match["home_score"] = row[2] or match.get("home_score", 0)
+                    match["away_score"] = row[3] or match.get("away_score", 0)
+            except Exception as exc:
+                self.log.warning("Could not read live_snapshots for story: %s", exc)
+
+            ok = match_story.generate_and_save(
+                event_id=event_id,
+                league=match["league"],
+                home_team=match["home_team"],
+                away_team=match["away_team"],
+                home_score=match.get("home_score", 0),
+                away_score=match.get("away_score", 0),
+                statistics=statistics,
+                incidents=incidents,
+            )
+            if ok:
+                self.notifier.send("info",
+                    f"📝 [{match['league']}] Match story generated: "
+                    f"{match['home_team']} vs {match['away_team']}")
+        except Exception as exc:
+            self.log.warning("Match story generation failed: %s", exc)
 
     async def _update_standings_from_sofascore(self, league: str, tournament_id: int) -> None:
         """Fetch latest standings from SofaScore API and upsert into DB."""
@@ -1039,6 +1091,9 @@ class DailyMaintenance:
                 self.log, dry_run=self.dry_run, shutdown_event=self._shutdown,
             )
 
+        # AI: Nightly player performance trend analysis
+        self._analyze_player_trends()
+
         # Cleanup live data
         self._cleanup_live_data()
         # Refresh views
@@ -1051,6 +1106,24 @@ class DailyMaintenance:
         else:
             self.notifier.send("error", "Daily maintenance had errors")
         return ok
+
+    def _analyze_player_trends(self) -> None:
+        """Run nightly AI player performance trend analysis for all leagues."""
+        if self.dry_run:
+            self.log.info("[DRY-RUN] Would analyze player trends")
+            return
+        try:
+            import player_trend
+            total = 0
+            for league in self.leagues:
+                if self._shutdown and self._shutdown.is_set():
+                    return
+                count = player_trend.run_and_save(league)
+                total += count
+            self.log.info("✓ Player trends: %d players analyzed", total)
+            self.notifier.send("info", f"📈 Player trend analysis complete: {total} players")
+        except Exception as exc:
+            self.log.warning("Player trend analysis failed: %s", exc)
 
     def _cleanup_live_data(self) -> None:
         if self.dry_run:
@@ -1117,6 +1190,7 @@ class MasterScheduler:
                                            shutdown_event=self._shutdown)
         self.daily = DailyMaintenance(self.leagues, self.log, self.notifier,
                                        dry_run=dry_run, shutdown_event=self._shutdown)
+        self.last_news_fetch: datetime | None = None
 
     def _install_signals(self) -> None:
         def handler(*_):
@@ -1198,11 +1272,12 @@ class MasterScheduler:
         upcoming = await self.schedule.get_upcoming()
 
         if not upcoming and self.pool.is_empty:
-            # Nothing to do — sleep until next check
-            next_check = now + timedelta(hours=1)
-            self.log.info("💤 No matches — sleeping 1h until %s UTC",
+            # Nothing to do — sleep until next check (max 30 mins so news works)
+            next_check = now + timedelta(minutes=30)
+            self.log.info("💤 No matches — sleeping 30m until %s UTC",
                           next_check.strftime("%H:%M"))
-            if not self._sleep_interruptible(3600):
+            self._check_news(now)
+            if not self._sleep_interruptible(1800):
                 return
             return
 
@@ -1246,13 +1321,34 @@ class MasterScheduler:
                 self.log.info("💤 Next match in %s — sleeping until %s UTC",
                               self._fmt_duration(delta),
                               wake_time.strftime("%H:%M"))
-                if not self._sleep_interruptible(min(delta, 3600)):
+                self._check_news(now)
+                # Max sleep 1800 to ensure news radar runs
+                if not self._sleep_interruptible(min(delta, 1800)):
+                    return
+            else:
+                self._check_news(now)
+                # Guard against CPU spin-loops if a match fails to enter the pool
+                if not self._sleep_interruptible(60):
                     return
             return
 
+        self._check_news(datetime.now(timezone.utc))
         # Brief pause before next cycle
         if not self._sleep_interruptible(60):
             return
+
+    def _check_news(self, now: datetime) -> None:
+        """Run the RSS news and injury radar every 30 minutes."""
+        if self.last_news_fetch is None or (now - self.last_news_fetch).total_seconds() >= 1800:
+            if self.dry_run:
+                self.log.info("[DRY-RUN] Would fetch RSS news")
+            else:
+                try:
+                    import news_radar
+                    news_radar.run_and_save()
+                except Exception as exc:
+                    self.log.error("News radar error: %s", exc)
+            self.last_news_fetch = now
 
 
 # ════════════════════════════════════════════════════════════
