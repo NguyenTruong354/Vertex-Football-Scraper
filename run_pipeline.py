@@ -106,6 +106,24 @@ def load_db(league: str) -> bool:
     return _run(cmd, ROOT, f"DB Load [{league}]")
 
 
+def populate_tm_crossref(league: str) -> bool:
+    cmd = [PYTHON, "tools/fill_tm_crossref.py"]
+    # Currently fill_tm_crossref runs for all rows, but we pass league for logging context if needed later
+    return _run(cmd, ROOT, f"TM Crossref [{league}]")
+
+
+def refresh_materialized_views(league: str) -> bool:
+    cmd = [
+        PYTHON, "-c",
+        "from db.config_db import get_connection; conn = get_connection(); "
+        "cur = conn.cursor(); "
+        "cur.execute('REFRESH MATERIALIZED VIEW CONCURRENTLY mv_player_profiles;'); "
+        "cur.execute('REFRESH MATERIALIZED VIEW CONCURRENTLY mv_team_profiles;'); "
+        "conn.commit(); cur.close(); conn.close();"
+    ]
+    return _run(cmd, ROOT, f"Refresh MVs [{league}]")
+
+
 # ────────────────────────────────────────────────────────────
 # League support matrix
 # ────────────────────────────────────────────────────────────
@@ -186,6 +204,11 @@ def run_pipeline(args: argparse.Namespace) -> None:
         if not args.scrape_only:
             ok = load_db(league)
             results[league]["db_load"] = "OK" if ok else "FAIL"
+            
+            if ok:
+                # ── Post-load data processing ─────────────────────
+                populate_tm_crossref(league)
+                refresh_materialized_views(league)
 
     # ── Summary ──────────────────────────────────────────────
     elapsed = time.perf_counter() - t_global
