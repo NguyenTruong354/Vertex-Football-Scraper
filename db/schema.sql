@@ -479,7 +479,7 @@ CREATE INDEX IF NOT EXISTS idx_player_possession_team ON player_possession_stats
 -- ============================================================
 
 -- ──────────────────────────────────────────────────────────
--- 11. SS_EVENTS (danh sách trận đấu SofaScore)
+-- 12. SS_EVENTS (danh sách trận đấu SofaScore)
 -- ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS ss_events (
     event_id        BIGINT  NOT NULL,
@@ -504,7 +504,7 @@ CREATE TABLE IF NOT EXISTS ss_events (
 CREATE INDEX IF NOT EXISTS idx_sse_date ON ss_events (match_date);
 
 -- ──────────────────────────────────────────────────────────
--- 12. PLAYER AVG POSITIONS (SofaScore)
+-- 13. PLAYER AVG POSITIONS (SofaScore)
 -- ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS player_avg_positions (
     event_id        BIGINT  NOT NULL,
@@ -529,7 +529,7 @@ CREATE TABLE IF NOT EXISTS player_avg_positions (
 CREATE INDEX IF NOT EXISTS idx_pap_event ON player_avg_positions (event_id, league_id);
 
 -- ──────────────────────────────────────────────────────────
--- 13. HEATMAPS (SofaScore — summary per player per match)
+-- 14. HEATMAPS (SofaScore — summary per player per match)
 -- ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS heatmaps (
     event_id            BIGINT  NOT NULL,
@@ -557,7 +557,7 @@ ALTER TABLE heatmaps ALTER COLUMN heatmap_points SET STORAGE EXTENDED;
 CREATE INDEX IF NOT EXISTS idx_hm_event ON heatmaps (event_id, league_id);
 
 -- ──────────────────────────────────────────────────────────
--- 13b. MATCH LINEUPS (SofaScore — starting XI + subs + formation)
+-- 15. MATCH LINEUPS (SofaScore — starting XI + subs + formation)
 --      3-phase fetch: -60min (publish), -15min (refresh), post-match (stats)
 --      No avg_x/avg_y → JOIN player_avg_positions when drawing pitch
 -- ──────────────────────────────────────────────────────────
@@ -587,7 +587,7 @@ CREATE INDEX IF NOT EXISTS idx_lineups_event ON match_lineups (event_id, league_
 -- ============================================================
 
 -- ──────────────────────────────────────────────────────────
--- 14. TEAM METADATA (Transfermarkt)
+-- 17. TEAM METADATA (Transfermarkt)
 -- ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS team_metadata (
     team_name               TEXT,
@@ -613,7 +613,7 @@ CREATE TABLE IF NOT EXISTS team_metadata (
 );
 
 -- ──────────────────────────────────────────────────────────
--- 15. MARKET VALUES (Transfermarkt)
+-- 18. MARKET VALUES (Transfermarkt)
 -- ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS market_values (
     player_name             TEXT,
