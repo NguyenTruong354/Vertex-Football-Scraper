@@ -286,14 +286,15 @@ CREATE INDEX IF NOT EXISTS idx_pss_team    ON player_season_stats (team_id, leag
 --        ON cx.fbref_player_id = p.player_id AND cx.league_id = p.league_id
 -- ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS player_crossref (
-    understat_player_id  BIGINT  NOT NULL,
+    understat_player_id  BIGINT,
     fbref_player_id      TEXT    NOT NULL,
     tm_player_id         TEXT,
     canonical_name       TEXT,
     league_id            TEXT    NOT NULL DEFAULT 'EPL',
     matched_by           TEXT    DEFAULT 'name_exact',
     loaded_at            TIMESTAMPTZ DEFAULT NOW(),
-    PRIMARY KEY (understat_player_id, fbref_player_id, league_id)
+    PRIMARY KEY (fbref_player_id, league_id),
+    UNIQUE (understat_player_id, fbref_player_id, league_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_crossref_us    ON player_crossref (understat_player_id, league_id);
@@ -382,6 +383,7 @@ CREATE TABLE IF NOT EXISTS gk_stats (
     loaded_at                     TIMESTAMPTZ DEFAULT NOW(),
     PRIMARY KEY (player_id, team_id, league_id)
 );
+
 
 -- ============================================================
 -- NHÓM F: SOFASCORE TABLES

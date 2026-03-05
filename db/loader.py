@@ -219,6 +219,7 @@ def load_gk_stats(conn, league_id: str = "EPL") -> int:
     return count
 
 
+
 # ────────────────────────────────────────────────────────────
 # SofaScore — ss_events, player_avg_positions, heatmaps
 # ────────────────────────────────────────────────────────────
