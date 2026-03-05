@@ -424,16 +424,13 @@ def parse_squad_page(
     result: dict[str, Any] = {
         "profiles": [],
         "player_stats": [],
-        "defensive_stats": [],
-        "possession_stats": [],
+        "player_stats": [],
         "gk_stats": [],
     }
 
     # Resolve table IDs (dynamic hoặc legacy)
     std_table_id = league_cfg.squad_standard_table_id if league_cfg else cfg.SQUAD_STANDARD_TABLE_ID
     shoot_table_id = league_cfg.squad_shooting_table_id if league_cfg else cfg.SQUAD_SHOOTING_TABLE_ID
-    defense_table_id = league_cfg.squad_defense_table_id if league_cfg else cfg.SQUAD_DEFENSE_TABLE_ID
-    possession_table_id = league_cfg.squad_possession_table_id if league_cfg else cfg.SQUAD_POSSESSION_TABLE_ID
     gk_table_id = league_cfg.squad_gk_table_id if league_cfg else cfg.SQUAD_KEEPER_TABLE_ID
     season = league_cfg.season if league_cfg else cfg.FBREF_SEASON
 
@@ -492,36 +489,6 @@ def parse_squad_page(
 
         result["player_stats"].append(stats)
 
-    # ── Defensive stats table ──
-    def_rows, _ = _parse_table_rows(soup, table_id=defense_table_id)
-    for row in def_rows:
-        player_name = row.get("player", "")
-        if not player_name or player_name.lower() == "squad total":
-            continue
-        d = dict(row)
-        d["player_id"] = d.pop("_player_id", None)
-        d["team_name"] = team_name
-        d["team_id"] = team_id
-        d["season"] = season
-        for k in ("_player_url", "_team_id", "_team_url"):
-            d.pop(k, None)
-        result["defensive_stats"].append(d)
-
-    # ── Possession stats table ──
-    poss_rows, _ = _parse_table_rows(soup, table_id=possession_table_id)
-    for row in poss_rows:
-        player_name = row.get("player", "")
-        if not player_name or player_name.lower() == "squad total":
-            continue
-        p = dict(row)
-        p["player_id"] = p.pop("_player_id", None)
-        p["team_name"] = team_name
-        p["team_id"] = team_id
-        p["season"] = season
-        for k in ("_player_url", "_team_id", "_team_url"):
-            p.pop(k, None)
-        result["possession_stats"].append(p)
-
     # ── GK stats table ──
     gk_rows, _ = _parse_table_rows(soup, table_id=gk_table_id)
     for row in gk_rows:
@@ -542,10 +509,115 @@ def parse_squad_page(
         team_name,
         len(result["profiles"]),
         len(shoot_lookup),
-        len(result["defensive_stats"]),
-        len(result["possession_stats"]),
         len(result["gk_stats"]),
     )
+    return result
+
+
+# ────────────────────────────────────────────────────────────
+# STEP 2.5: Parse League-wide Defensive and Possession
+# ────────────────────────────────────────────────────────────
+
+def parse_league_defense_page(
+    html: str,
+    *,
+    league_cfg: FBrefLeagueConfig | None = None,
+) -> list[dict]:
+    """Parse league-wide defensive stats page."""
+    soup = BeautifulSoup(html, "html.parser")
+    # Trên trang League-wide, bảng cầu thủ thường có id="stats_defense" (không có comp_id)
+    table_id = "stats_defense"
+    
+    rows, _ = _parse_table_rows(soup, table_id=table_id)
+    if not rows:
+        comments = soup.find_all(string=lambda t: isinstance(t, Comment))
+        for comment in comments:
+            if "table" in str(comment).lower():
+                comment_soup = BeautifulSoup(str(comment), "html.parser")
+                rows, _ = _parse_table_rows(comment_soup, table_id=table_id)
+                if rows:
+                    break
+
+    season = league_cfg.season if league_cfg else cfg.FBREF_SEASON
+    
+    result = []
+    for row in rows:
+        player_name = row.get("player", "")
+        if not player_name or player_name.lower() == "squad total":
+            continue
+            
+        # Only add players who actually played
+        mins = str(row.get("minutes_90s", "")).replace(",", "")
+        try:
+            val = float(mins) if mins else 0.0
+        except ValueError:
+            val = 0.0
+        if val <= 0:
+            continue
+            
+        d = dict(row)
+        d["player_id"] = d.pop("_player_id", None)
+        # League-wide table usually has a 'squad' column 
+        squad_name = row.get("team", "") or row.get("squad", "")
+        d["team_name"] = squad_name
+        d["team_id"] = d.pop("_team_id", None)
+        d["season"] = season
+        
+        for k in ("_player_url", "_team_url"):
+            d.pop(k, None)
+            
+        result.append(d)
+        
+    return result
+
+def parse_league_possession_page(
+    html: str,
+    *,
+    league_cfg: FBrefLeagueConfig | None = None,
+) -> list[dict]:
+    """Parse league-wide possession stats page."""
+    soup = BeautifulSoup(html, "html.parser")
+    # Trên trang League-wide, bảng cầu thủ thường có id="stats_possession" (không có comp_id)
+    table_id = "stats_possession"
+    
+    rows, _ = _parse_table_rows(soup, table_id=table_id)
+    if not rows:
+        comments = soup.find_all(string=lambda t: isinstance(t, Comment))
+        for comment in comments:
+            if "table" in str(comment).lower():
+                comment_soup = BeautifulSoup(str(comment), "html.parser")
+                rows, _ = _parse_table_rows(comment_soup, table_id=table_id)
+                if rows:
+                    break
+
+    season = league_cfg.season if league_cfg else cfg.FBREF_SEASON
+    
+    result = []
+    for row in rows:
+        player_name = row.get("player", "")
+        if not player_name or player_name.lower() == "squad total":
+            continue
+            
+        mins = str(row.get("minutes_90s", "")).replace(",", "")
+        try:
+            val = float(mins) if mins else 0.0
+        except ValueError:
+            val = 0.0
+        if val <= 0:
+            continue
+            
+        p = dict(row)
+        p["player_id"] = p.pop("_player_id", None)
+        squad_name = row.get("team", "") or row.get("squad", "")
+        p["team_name"] = squad_name
+        p["team_id"] = p.pop("_team_id", None)
+        p["season"] = season
+        
+        for k in ("_player_url", "_team_url"):
+            p.pop(k, None)
+            
+        result.append(p)
+        
     return result
 
 
@@ -924,6 +996,36 @@ async def main(
         else:
             logger.warning("⚠ Không tải được fixture page, bỏ qua.")
 
+        if not standings_only:
+            # ── STEP 2.5: League-wide Defensive & Possession ──
+            logger.info("━━ STEP 2.5: Scrape League-wide Defensive & Possession ━━")
+            
+            # Defense
+            def_html = await browser.fetch(league_cfg.league_defense_url)
+            if def_html:
+                def_data = parse_league_defense_page(def_html, league_cfg=league_cfg)
+                all_defensive = safe_parse_list(
+                    PlayerDefensiveStats,
+                    def_data,
+                    context_label="league_defense",
+                )
+                logger.info("✓ Defensive: %d players validated", len(all_defensive))
+            else:
+                logger.warning("⚠ Không tải được league defense page.")
+
+            # Possession
+            poss_html = await browser.fetch(league_cfg.league_possession_url)
+            if poss_html:
+                poss_data = parse_league_possession_page(poss_html, league_cfg=league_cfg)
+                all_possession = safe_parse_list(
+                    PlayerPossessionStats,
+                    poss_data,
+                    context_label="league_possession",
+                )
+                logger.info("✓ Possession: %d players validated", len(all_possession))
+            else:
+                logger.warning("⚠ Không tải được league possession page.")
+
         if standings_only:
             logger.info("--standings-only: bỏ qua squad pages + match reports.")
         else:
@@ -970,22 +1072,6 @@ async def main(
                 )
                 all_player_stats.extend(valid_stats)
 
-                # Validate defensive stats
-                valid_def = safe_parse_list(
-                    PlayerDefensiveStats,
-                    squad_data["defensive_stats"],
-                    context_label=f"def_{team['name']}",
-                )
-                all_defensive.extend(valid_def)
-
-                # Validate possession stats
-                valid_poss = safe_parse_list(
-                    PlayerPossessionStats,
-                    squad_data["possession_stats"],
-                    context_label=f"poss_{team['name']}",
-                )
-                all_possession.extend(valid_poss)
-
                 # Validate GK stats
                 valid_gk = safe_parse_list(
                     PlayerGKStats,
@@ -995,9 +1081,9 @@ async def main(
                 all_gk.extend(valid_gk)
 
                 logger.info(
-                    "  ✓ %s: %d profiles, %d stats, %d def, %d poss, %d gk",
+                    "  ✓ %s: %d profiles, %d stats, %d gk",
                     team["name"], len(valid_profiles), len(valid_stats),
-                    len(valid_def), len(valid_poss), len(valid_gk),
+                    len(valid_gk),
                 )
 
             # ── STEP 4: Match Reports → Passing Data ──

@@ -385,6 +385,95 @@ CREATE TABLE IF NOT EXISTS gk_stats (
 );
 
 
+-- ──────────────────────────────────────────────────────────
+-- 10. PLAYER DEFENSIVE STATS
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS player_defensive_stats (
+    player_id               TEXT,
+    player_name             TEXT NOT NULL,
+    team_id                 TEXT,
+    team_name               TEXT,
+    league_id               TEXT NOT NULL DEFAULT 'EPL',
+    season                  TEXT NOT NULL,
+    
+    nationality             TEXT,
+    position                TEXT,
+    age                     TEXT,
+    minutes_90s             NUMERIC,
+    tackles                 INTEGER DEFAULT 0,
+    tackles_won             INTEGER DEFAULT 0,
+    tackles_def_3rd         INTEGER DEFAULT 0,
+    tackles_mid_3rd         INTEGER DEFAULT 0,
+    tackles_att_3rd         INTEGER DEFAULT 0,
+    challenge_tackles       INTEGER DEFAULT 0,
+    challenges              INTEGER DEFAULT 0,
+    challenge_tackles_pct   NUMERIC,
+    blocks                  INTEGER DEFAULT 0,
+    blocked_shots           INTEGER DEFAULT 0,
+    blocked_passes          INTEGER DEFAULT 0,
+    interceptions           INTEGER DEFAULT 0,
+    tackles_interceptions   INTEGER DEFAULT 0,
+    clearances              INTEGER DEFAULT 0,
+    errors                  INTEGER DEFAULT 0,
+    pressures               INTEGER DEFAULT 0,
+    pressure_regains        INTEGER DEFAULT 0,
+    pressure_regain_pct     NUMERIC,
+    pressures_def_3rd       INTEGER DEFAULT 0,
+    pressures_mid_3rd       INTEGER DEFAULT 0,
+    pressures_att_3rd       INTEGER DEFAULT 0,
+
+    loaded_at               TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (player_id, league_id, season)
+);
+
+CREATE INDEX IF NOT EXISTS idx_player_defensive_team ON player_defensive_stats (team_id);
+
+
+-- ──────────────────────────────────────────────────────────
+-- 11. PLAYER POSSESSION STATS
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS player_possession_stats (
+    player_id               TEXT,
+    player_name             TEXT NOT NULL,
+    team_id                 TEXT,
+    team_name               TEXT,
+    league_id               TEXT NOT NULL DEFAULT 'EPL',
+    season                  TEXT NOT NULL,
+    
+    nationality             TEXT,
+    position                TEXT,
+    age                     TEXT,
+    minutes_90s             NUMERIC,
+    touches                 INTEGER DEFAULT 0,
+    touches_def_pen_area    INTEGER DEFAULT 0,
+    touches_def_3rd         INTEGER DEFAULT 0,
+    touches_mid_3rd         INTEGER DEFAULT 0,
+    touches_att_3rd         INTEGER DEFAULT 0,
+    touches_att_pen_area    INTEGER DEFAULT 0,
+    touches_live_ball       INTEGER DEFAULT 0,
+    take_ons                INTEGER DEFAULT 0,
+    take_ons_won            INTEGER DEFAULT 0,
+    take_ons_won_pct        NUMERIC,
+    take_ons_tackled        INTEGER DEFAULT 0,
+    take_ons_tackled_pct    NUMERIC,
+    carries                 INTEGER DEFAULT 0,
+    carries_distance        NUMERIC,
+    carries_progressive_distance NUMERIC,
+    progressive_carries     INTEGER DEFAULT 0,
+    carries_into_final_third INTEGER DEFAULT 0,
+    carries_into_penalty_area INTEGER DEFAULT 0,
+    miscontrols             INTEGER DEFAULT 0,
+    dispossessed            INTEGER DEFAULT 0,
+    passes_received         INTEGER DEFAULT 0,
+    progressive_passes_received INTEGER DEFAULT 0,
+
+    loaded_at               TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (player_id, league_id, season)
+);
+
+CREATE INDEX IF NOT EXISTS idx_player_possession_team ON player_possession_stats (team_id);
+
+
 -- ============================================================
 -- NHÓM F: SOFASCORE TABLES
 -- ============================================================

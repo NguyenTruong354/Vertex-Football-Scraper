@@ -86,6 +86,10 @@ class FBrefLeagueConfig:
     fixture_url: str
     fixture_table_id: str
 
+    # League-wide Stats Pages
+    league_defense_url: str
+    league_possession_url: str
+
     # Output
     output_dir: Path
     standings_csv: str
@@ -139,6 +143,9 @@ def get_fbref_config(league_id: str = "EPL") -> FBrefLeagueConfig:
         # Fixture
         fixture_url=f"https://fbref.com/en/comps/{comp_id}/schedule/{lg.fbref_slug}-Scores-and-Fixtures",
         fixture_table_id=f"sched_{lg.fbref_season}_{comp_id}_1",
+        # League-wide Stats
+        league_defense_url=f"https://fbref.com/en/comps/{comp_id}/defense/{lg.fbref_slug}-Stats",
+        league_possession_url=f"https://fbref.com/en/comps/{comp_id}/possession/{lg.fbref_slug}-Stats",
         # Output
         output_dir=output_dir,
         standings_csv=f"dataset_{prefix}_standings.csv",

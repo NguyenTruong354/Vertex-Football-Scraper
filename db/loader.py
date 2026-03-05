@@ -191,6 +191,28 @@ def load_player_season_stats(conn, league_id: str = "EPL") -> int:
     return count
 
 
+def load_defensive_stats(conn, league_id: str = "EPL") -> int:
+    path = _csv_path(league_id, "defensive_stats")
+    if not path.exists():
+        logger.warning("  File không tồn tại: %s", path)
+        return 0
+    df = pd.read_csv(path, on_bad_lines="skip")
+    count = _upsert(conn, "player_defensive_stats", df, ["player_id", "league_id", "season"], league_id=league_id)
+    logger.info("  defensive_stats: %d rows upserted ← %s", count, path.name)
+    return count
+
+
+def load_possession_stats(conn, league_id: str = "EPL") -> int:
+    path = _csv_path(league_id, "possession_stats")
+    if not path.exists():
+        logger.warning("  File không tồn tại: %s", path)
+        return 0
+    df = pd.read_csv(path, on_bad_lines="skip")
+    count = _upsert(conn, "player_possession_stats", df, ["player_id", "league_id", "season"], league_id=league_id)
+    logger.info("  possession_stats: %d rows upserted ← %s", count, path.name)
+    return count
+
+
 # ────────────────────────────────────────────────────────────
 # FBref — fixtures, gk_stats
 # ────────────────────────────────────────────────────────────
@@ -392,6 +414,8 @@ LOADERS: dict[str, callable] = {
     "squad_rosters":         load_squad_rosters,
     "squad_stats":           load_squad_stats,
     "player_season_stats":   load_player_season_stats,
+    "defensive_stats":       load_defensive_stats,
+    "possession_stats":      load_possession_stats,
     "fixtures":              load_fixtures,
     "gk_stats":              load_gk_stats,
     # ── Nhóm D: SofaScore ────────────────────────────────
