@@ -1,5 +1,5 @@
 # Database Tables — Vertex Football Scraper
-> Cập nhật: 01/03/2026 | PostgreSQL 18.2 | 17 bảng + indexes + FK constraints
+> Cập nhật: 06/03/2026 | PostgreSQL 18.2 | 20+ bảng + indexes + FK constraints + Materialized Views
 
 ---
 
@@ -9,20 +9,22 @@
 NHÓM A: PARENT TABLES           NHÓM E: FBREF EXTRA
   match_stats  ←── shots          fixtures
   standings    ←── squad_rosters  gk_stats
-               ←── squad_stats
-               ←── player_season_stats   NHÓM F: SOFASCORE
-                                           ss_events
-NHÓM B: UNDERSTAT CHILDREN                player_avg_positions
-  shots                                   heatmaps
-  player_match_stats
-                                 NHÓM G: TRANSFERMARKT
-NHÓM C: FBREF CHILDREN            team_metadata
-  squad_rosters                   market_values
-  squad_stats
-  player_season_stats            NHÓM H: LIVE TRACKING
-                                   live_snapshots
-NHÓM D: CROSS-SOURCE               live_incidents
-  player_crossref
+               ←── squad_stats    player_defensive_stats
+               ←── player_season_stats   player_possession_stats
+
+NHOM B: UNDERSTAT CHILDREN      NHÓM F: SOFASCORE
+  shots                           ss_events
+  player_match_stats              player_avg_positions
+                                  heatmaps
+NHÓM C: FBREF CHILDREN            match_lineups
+  squad_rosters
+  squad_stats                   NHÓM G: TRANSFERMARKT
+  player_season_stats             team_metadata
+                                  market_values
+NHÓM D: CROSS-SOURCE
+  player_crossref               NHÓM H: LIVE TRACKING
+                                  live_snapshots
+                                  live_incidents
 ```
 
 ---
@@ -204,7 +206,7 @@ FK: (team_id, league_id) → standings ON DELETE CASCADE
 
 ---
 
-### 8. `player_crossref` — Ánh xạ Understat ↔ FBref ID
+### 8. `player_crossref` — Ánh xạ Understat ↔ FBref ↔ Transfermarkt
 
 ```sql
 PRIMARY KEY (understat_player_id, fbref_player_id, league_id)
@@ -215,8 +217,9 @@ PRIMARY KEY (understat_player_id, fbref_player_id, league_id)
 
 | Cột | Kiểu | Ghi chú |
 |-----|------|---------|
-| `understat_player_id` | BIGINT NOT NULL | VD: 8260 |
-| `fbref_player_id` | TEXT NOT NULL | VD: `a23b4c5d/Bukayo-Saka` |
+| `understat_player_id` | BIGINT | |
+| `fbref_player_id` | TEXT | |
+| `tm_player_id` | TEXT | **Transfermarkt ID (Mới)** |
 | `canonical_name` | TEXT | |
 | `league_id` | TEXT NOT NULL | |
 | `matched_by` | TEXT | `name_exact` / `name_fuzzy` / `manual` |
@@ -259,6 +262,30 @@ PRIMARY KEY (player_id, team_id, league_id)
 ```
 
 40+ cột thống kê GK: games, saves, clean_sheets, PSxG, passes, crosses, def_actions…
+
+---
+
+### 10. `player_defensive_stats` [NEW]
+*Bảng thống kê phòng ngự chi tiết từ FBref.*
+
+| Cột | Kiểu |
+|-----|------|
+| `player_id` / `player_name` | TEXT |
+| `team_id` / `team_name` | TEXT |
+| `nationality` / `position` / `age` | TEXT |
+| `minutes_90s` | NUMERIC |
+| `tackles` / `interceptions` / `pressures` | INTEGER |
+
+---
+
+### 11. `player_possession_stats` [NEW]
+*Bảng thống kê kiểm soát bóng chi tiết từ FBref.*
+
+| Cột | Kiểu |
+|-----|------|
+| `player_id` / `player_name` | TEXT |
+| `team_id` / `team_name` | TEXT |
+| `touches` / `take_ons` / `progressive_carries` | INTEGER |
 
 ---
 
@@ -365,6 +392,19 @@ PRIMARY KEY (player_id, team_id, league_id)
 
 ---
 
+### 15. `match_lineups` [NEW]
+*Đội hình ra sân từ SofaScore, hỗ trợ 3 giai đoạn cập nhật.*
+
+| Cột | Kiểu |
+|-----|------|
+| `event_id` / `player_id` | BIGINT |
+| `team_side` | TEXT ('home'/'away') |
+| `formation` | TEXT (e.g., '4-3-3') |
+| `is_substitute` | BOOLEAN |
+| `rating` | REAL |
+
+---
+
 ### 16. `live_snapshots` — Live match state (Live Tracker)
 
 ```sql
@@ -426,6 +466,24 @@ Mỗi sự kiện là 1 row. Upsert theo unique index để tránh trùng.
 | `fk_pss_team` | `player_season_stats (team_id, league_id)` | `standings (team_id, league_id)` |
 
 > Tất cả FK đều `DEFERRABLE INITIALLY DEFERRED` — chỉ check khi COMMIT, an toàn khi bulk load.
+
+---
+
+## Analytics Materialized Views
+
+Nhằm tối ưu hóa tốc độ hiển thị cho Frontend (như Spring Boot API), hệ thống sử dụng **Materialized Views** để cache các phép JOIN phức tạp:
+
+### `mv_player_profiles`
+Kết hợp `player_season_stats` (FBref) với `market_values` (Transfermarkt) để lấy ảnh cầu thủ (`player_image_url`) dựa trên ID mapping chính xác nhất.
+
+### `mv_team_profiles`
+Kết hợp `standings` với `team_metadata` để lấy logo đội bóng (`logo_url`).
+
+---
+
+## Upsert Strategy & Maintenance
+Tất cả bảng đều sử dụng `ON CONFLICT DO UPDATE`. 
+Riêng Materialized Views được làm mới hàng ngày thông qua `REFRESH MATERIALIZED VIEW CONCURRENTLY` trong `scheduler_master.py`.
 
 ---
 

@@ -31,14 +31,22 @@
 --   5. squad_rosters        — player profiles per team (FBref)
 --   6. squad_stats          — team summary stats (FBref)
 --   7. player_season_stats  — player season totals (FBref)
---   8. player_crossref      — ánh xạ Understat ↔ FBref player IDs
+--   8. player_crossref      — ánh xạ Understat ↔ FBref ↔ Transfermarkt IDs
 --   9. fixtures             — match schedule (FBref)
 --  10. gk_stats             — goalkeeper stats (FBref)
---  11. ss_events            — match events (SofaScore)
---  12. player_avg_positions — average positions (SofaScore)
---  13. heatmaps             — heatmap summaries (SofaScore)
---  14. team_metadata        — team info (Transfermarkt)
---  15. market_values        — player market values (Transfermarkt)
+--  11. player_defensive_stats — defensive actions (FBref)
+--  12. player_possession_stats — touches, carries, take-ons (FBref)
+--  13. ss_events            — match events list (SofaScore)
+--  14. player_avg_positions — average positions (SofaScore)
+--  15. heatmaps             — heatmap summaries (SofaScore)
+--  16. match_lineups        — match lineups (SofaScore)
+--  17. team_metadata        — team info (Transfermarkt)
+--  18. market_values        — player market values (Transfermarkt)
+--  19. live_snapshots       — 24/7 live match polling (Shared Browser)
+--  20. match_summaries      — AI-generated match stories
+--  21. player_insights       — AI-generated performance trends
+--  22. news_feed            — RSS news aggregator
+--  23. live_incidents      — live match incidents (goals, cards...)
 -- ============================================================
 
 -- ============================================================
@@ -267,7 +275,7 @@ CREATE INDEX IF NOT EXISTS idx_pss_team    ON player_season_stats (team_id, leag
 -- ============================================================
 
 -- ──────────────────────────────────────────────────────────
--- 8. PLAYER CROSSREF — ánh xạ Understat player_id ↔ FBref player_id
+-- 8. PLAYER CROSSREF — ánh xạ Understat ↔ FBref ↔ Transfermarkt IDs
 --
 --    Vấn đề: Understat dùng INTEGER id (VD: 8260),
 --            FBref dùng TEXT slug (VD: "a23b4c5d/Bukayo-Saka").
@@ -386,7 +394,7 @@ CREATE TABLE IF NOT EXISTS gk_stats (
 
 
 -- ──────────────────────────────────────────────────────────
--- 10. PLAYER DEFENSIVE STATS
+-- 11. PLAYER DEFENSIVE STATS (FBref)
 -- ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS player_defensive_stats (
     player_id               TEXT,
@@ -430,7 +438,7 @@ CREATE INDEX IF NOT EXISTS idx_player_defensive_team ON player_defensive_stats (
 
 
 -- ──────────────────────────────────────────────────────────
--- 11. PLAYER POSSESSION STATS
+-- 12. PLAYER POSSESSION STATS (FBref)
 -- ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS player_possession_stats (
     player_id               TEXT,
@@ -479,7 +487,7 @@ CREATE INDEX IF NOT EXISTS idx_player_possession_team ON player_possession_stats
 -- ============================================================
 
 -- ──────────────────────────────────────────────────────────
--- 12. SS_EVENTS (danh sách trận đấu SofaScore)
+-- 13. SS_EVENTS (danh sách trận đấu SofaScore)
 -- ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS ss_events (
     event_id        BIGINT  NOT NULL,
@@ -504,7 +512,7 @@ CREATE TABLE IF NOT EXISTS ss_events (
 CREATE INDEX IF NOT EXISTS idx_sse_date ON ss_events (match_date);
 
 -- ──────────────────────────────────────────────────────────
--- 13. PLAYER AVG POSITIONS (SofaScore)
+-- 14. PLAYER AVG POSITIONS (SofaScore)
 -- ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS player_avg_positions (
     event_id        BIGINT  NOT NULL,
@@ -529,7 +537,7 @@ CREATE TABLE IF NOT EXISTS player_avg_positions (
 CREATE INDEX IF NOT EXISTS idx_pap_event ON player_avg_positions (event_id, league_id);
 
 -- ──────────────────────────────────────────────────────────
--- 14. HEATMAPS (SofaScore — summary per player per match)
+-- 15. HEATMAPS (SofaScore — summary per player per match)
 -- ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS heatmaps (
     event_id            BIGINT  NOT NULL,
@@ -557,7 +565,7 @@ ALTER TABLE heatmaps ALTER COLUMN heatmap_points SET STORAGE EXTENDED;
 CREATE INDEX IF NOT EXISTS idx_hm_event ON heatmaps (event_id, league_id);
 
 -- ──────────────────────────────────────────────────────────
--- 15. MATCH LINEUPS (SofaScore — starting XI + subs + formation)
+-- 16. MATCH LINEUPS (SofaScore — starting XI + subs + formation)
 --      3-phase fetch: -60min (publish), -15min (refresh), post-match (stats)
 --      No avg_x/avg_y → JOIN player_avg_positions when drawing pitch
 -- ──────────────────────────────────────────────────────────
@@ -693,9 +701,12 @@ DO $$ BEGIN
 END $$;
 
 -- ============================================================
--- NHÓM G: LIVE MATCH TRACKING
+-- NHÓM H: LIVE TRACKING & AI
 -- ============================================================
 
+-- ──────────────────────────────────────────────────────────
+-- 19. LIVE SNAPSHOTS — Current match state (SofaScore)
+-- ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS live_snapshots (
     event_id          BIGINT   NOT NULL PRIMARY KEY,
     home_team         TEXT,
@@ -712,8 +723,7 @@ CREATE TABLE IF NOT EXISTS live_snapshots (
 );
 
 -- ──────────────────────────────────────────────────────────
--- MATCH SUMMARIES — AI-generated post-match narrative (30-second story)
--- Generated via Gemini / Groq after final whistle
+-- 20. MATCH SUMMARIES — AI-generated post-match narrative (30-second story)
 -- ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS match_summaries (
     event_id        BIGINT   NOT NULL PRIMARY KEY,
@@ -727,8 +737,7 @@ CREATE TABLE IF NOT EXISTS match_summaries (
 );
 
 -- ──────────────────────────────────────────────────────────
--- PLAYER INSIGHTS — AI-generated nightly performance trends
--- trend: GREEN (rising), RED (falling), NEUTRAL (stable)
+-- 21. PLAYER INSIGHTS — AI-generated nightly performance trends
 -- ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS player_insights (
     player_id       BIGINT   NOT NULL,
@@ -742,7 +751,7 @@ CREATE TABLE IF NOT EXISTS player_insights (
 );
 
 -- ──────────────────────────────────────────────────────────
--- NEWS & INJURY RADAR — RSS Feed Aggregator
+-- 22. NEWS & INJURY RADAR — RSS Feed Aggregator
 -- ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS news_feed (
     id              BIGSERIAL PRIMARY KEY,
@@ -755,6 +764,9 @@ CREATE TABLE IF NOT EXISTS news_feed (
     loaded_at       TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- ──────────────────────────────────────────────────────────
+-- 23. LIVE INCIDENTS — goals, cards, subs
+-- ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS live_incidents (
     id                BIGSERIAL  PRIMARY KEY,
     event_id          BIGINT     NOT NULL,
@@ -836,7 +848,7 @@ ALTER DATABASE defaultdb SET work_mem             = '8MB';
 -- ============================================================
 
 -- ──────────────────────────────────────────────────────────
--- mv_player_profiles: kết hợp 2 tầng matching để lấy ảnh từ Transfermarkt
+-- 24. mv_player_profiles: kết hợp 2 tầng matching để lấy ảnh từ Transfermarkt
 -- ──────────────────────────────────────────────────────────
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_player_profiles AS
 SELECT DISTINCT ON (r.player_id, r.league_id)
@@ -864,7 +876,7 @@ ORDER BY r.player_id, r.league_id, mv1.market_value_numeric DESC NULLS LAST, mv2
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_player_profiles_id ON mv_player_profiles(fbref_player_id, league_id);
 
 -- ──────────────────────────────────────────────────────────
--- mv_team_profiles: kết hợp bảng xếp hạng với Transfermarkt để lấy logo
+-- 25. mv_team_profiles: kết hợp bảng xếp hạng với Transfermarkt để lấy logo
 -- ──────────────────────────────────────────────────────────
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_team_profiles AS
 SELECT DISTINCT ON (t.team_id, t.league_id)

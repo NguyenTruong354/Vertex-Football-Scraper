@@ -1,74 +1,102 @@
 # Usage Guide — Vertex Football Scraper
-> Cập nhật: 01/03/2026 | 4 scrapers + PostgreSQL + Live Tracker
+> Hướng dẫn cài đặt, cấu hình và vận hành hệ thống cào dữ liệu bóng đá 24/7.
 
 ---
 
-## Cấu trúc thư mục
+## 📂 Cấu trúc dự án (Mới)
 
-```
-Vertex_Football_Scraper2/
-│
-├── league_registry.py          ← ⭐ Single source of truth cho giải đấu
-│
-├── understat/                  ← Pipeline 1: Understat (xG)
-│   ├── config.py               — Cấu hình API, headers, rate limit
-│   ├── schemas.py              — Pydantic v2 models
-│   ├── extractor.py            — Parse JSON từ API response
-│   └── async_scraper.py        ← Script chạy chính
-│
-├── fbref/                      ← Pipeline 2: FBref (full stats)
-│   ├── config_fbref.py         — Cấu hình URLs, table IDs
-│   ├── schemas_fbref.py        — Pydantic v2 models
-│   └── fbref_scraper.py        ← Script chạy chính
-│
-├── sofascore/                  ← Pipeline 3: SofaScore (events, heatmaps)
-│   ├── config_sofascore.py     — Tournament/season IDs
-│   ├── schemas_sofascore.py    — Pydantic v2 models
-│   └── sofascore_client.py     ← Script chạy chính
-│
-├── transfermarkt/              ← Pipeline 4: Transfermarkt (market values)
-│   ├── config_tm.py            — TM config
-│   ├── schemas_tm.py           — Pydantic v2 models
-│   └── tm_scraper.py           ← Script chạy chính
-│
-├── db/                         ← Database layer
-│   ├── schema.sql              — DDL: 17 bảng + indexes + FK
-│   ├── config_db.py            — Connection (psycopg2 + dotenv)
-│   ├── loader.py               — CSV → PostgreSQL (upsert)
-│   ├── queries.py              — Query helpers
-│   └── setup_db.py             — Khởi tạo DB ban đầu
-│
-├── live_match.py               ← ⭐ Live match tracker
-│
-├── run_pipeline.py             ← Orchestrator: chạy tất cả 4 pipelines
-├── run_daemon.py               ← 24/7 daemon với 3-tier scheduling
-│
-├── output/                     ← CSV output phân theo nguồn / giải
-│   ├── understat/epl/          — dataset_epl_xg.csv, …
-│   ├── fbref/epl/              — dataset_epl_standings.csv, …
-│   ├── sofascore/epl/          — dataset_epl_ss_events.csv, …
-│   └── transfermarkt/epl/      — dataset_epl_team_metadata.csv, …
-│
-├── logs/                       ← Log files, daemon state
-├── docs/                       ← Tài liệu
-├── autorun.bat                 ← Windows: chạy pipeline 1 lần
-├── daemon.bat                  ← Windows: chạy daemon 24/7
-├── requirements.txt
-├── .env                        ← Credentials (không commit)
-└── .venv/
+```text
+/
+├── scheduler_master.py   # [CHÍNH] Điều phối viên 24/7 (Multi-league)
+├── run_pipeline.py       # Chạy pipeline thủ công cho từng giải
+├── live_match.py         # Module polling live data (SofaScore)
+├── async_scraper.py      # Module cào Understat (Async)
+├── news_radar.py         # Tự động quét tin tức & chấn thương (RSS)
+├── db/
+│   ├── schema.sql        # Định nghĩa 20+ bảng & Materialized Views
+│   ├── loader.py         # Logic chuẩn hóa & đẩy CSV vào PostgreSQL
+│   └── utils.py          # Tiện ích DB (fuzzy match, safe_float)
+├── fbref/
+│   ├── fbref_scraper.py  # Scraper stats chính (Defensive, Possession, GK...)
+│   └── config_fbref.py   # Mapping URL giải đấu FBref
+├── sofascore/
+│   ├── sofascore_client.py # Client lấy heatmaps, avg positions, lineups
+│   └── config_sofascore.py # Mapping Tournament IDs
+├── transfermarkt/
+│   ├── tm_scraper.py     # Lấy market values & player/team photos
+│   └── config_tm.py      # Mapping URL Transfermarkt
+├── output/               # Chứa file CSV theo league/source
+└── logs/                 # Log vận hành chi tiết
 ```
 
 ---
 
-## Yêu cầu hệ thống
+## ⚡ Bắt đầu nhanh (Quick Start)
 
-| Yêu cầu | Chi tiết |
-|---------|----------|
-| Python | 3.11+ (đã test 3.11.9) |
-| Chrome browser | Mới nhất (cho FBref, SofaScore, Transfermarkt, Live) |
-| PostgreSQL | 15+ (đã test 18.2) |
-| RAM | ≥ 4 GB (Chrome dùng ~500 MB) |
-| Disk | ~200 MB output CSV + venv |
+### 1. Cài đặt môi trường
+(Giữ nguyên)
+
+### 2. Cấu hình Database & Webhook
+Tạo file `.env` tại thư mục gốc:
+```bash
+POSTGRES_HOST=your_host
+POSTGRES_PORT=5432
+POSTGRES_DB=vertex_football
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=your_password
+
+# Discord Webhooks (Optional)
+DISCORD_WEBHOOK=...        # Thông báo chung / Bảo trì
+DISCORD_WEBHOOK_LIVE=...   # Thông báo bàn thắng / VAR live
+DISCORD_WEBHOOK_NEWS=...   # Thông báo tin tức / Chấn thương
+```
+
+---
+
+## 🚀 Cách vận hành
+
+### A. Chạy Master Scheduler (Khuyên dùng)
+Đây là chế độ vận hành "Set & Forget", tự động quản lý toàn bộ logic cào dữ liệu, live tracking và bảo trì cho tất cả các giải đấu.
+
+```bash
+# Chạy cho cả 5 giải (EPL, LALIGA, BUNDESLIGA, SERIEA, LIGUE1)
+python scheduler_master.py
+
+# Chỉ chạy cho 1 hoặc vài giải cụ thể
+python scheduler_master.py --leagues EPL LALIGA
+```
+**Cơ chế của Master:**
+1. **Daily Maintenance (06:00 UTC):** Cào FBref, Transfermarkt, refresh Materialized Views, dọn dẹp data cũ.
+2. **Upcoming Check:** Quét lịch thi đấu SofaScore để lên lịch Live Tracking.
+3. **Lineup Fetch:** Lấy đội hình 60p và 15p trước giờ bóng lăn.
+4. **Live Polling:** Poll xG, sút, bàn thắng mỗi 60s khi có trận đấu.
+5. **Post-Match:** Cào Understat, Heatmaps ngay sau khi kết thúc.
+
+### B. Chạy Pipeline thủ công
+(Giữ nguyên)
+
+---
+
+## 🛠 Features nâng cao
+
+### 1. Cross-Source Fuzzy Matching
+Hệ thống tự động ánh xạ cầu thủ giữa Understat (ID số) và FBref (ID slug) thông qua tên. Nếu cần map thủ công hoặc cập nhật hàng loạt Transfermarkt ID:
+```bash
+python -m db.loader --league EPL --refresh-crossref
+```
+
+### 2. Materialized Views Refresh
+Để cập nhật các bảng Profile (ảnh, logo) cho Frontend:
+```bash
+# Thường đã được scheduler_master chạy hàng ngày
+# Có thể chạy tay trong psql:
+# REFRESH MATERIALIZED VIEW mv_player_profiles;
+```
+
+---
+
+## 🛡 Xử lý lỗi (Troubleshooting)
+(Giữ nguyên)
 | OS | Windows / macOS / Linux |
 
 ---

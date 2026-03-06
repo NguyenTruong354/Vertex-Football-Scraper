@@ -89,62 +89,63 @@ CSV Output           PostgreSQL           Celery + Redis        Kubernetes
 
 ### 3.3 Monitoring & Alerting
 - [ ] Grafana + Prometheus dashboard
-  - Tasks/giờ, success rate, scrape latency
-  - DB size alert, Cloudflare block rate
-- [ ] Telegram bot alert khi task failure > 5%
-- [ ] `health_check.py` — kiểm tra toàn bộ pipeline < 30s
+# Roadmap — Vertex Football Scraper
+> Cập nhật: 06/03/2026 | Phiên bản: 1.5.0
 
-### 3.4 FastAPI Backend
-- [ ] `api/` folder với FastAPI
-  - `GET /leagues` — danh sách giải
-  - `GET /standings/{league_id}` — BXH hiện tại
-  - `GET /players/{player_id}/stats` — thống kê cầu thủ
-  - `GET /matches/{match_id}` — thông tin trận
-  - `GET /live` — danh sách trận đang diễn ra
-  - `GET /live/{event_id}` — live data 1 trận
-  - `GET /admin/status` — pipeline health
-- [ ] API key authentication cho admin endpoints
-- [ ] Rate limiting — 100 req/phút per IP
-- [ ] Swagger docs tự động
-
-### 3.5 Caching Layer
-- [ ] Redis cache: standings (1h), fixtures (6h), player profiles (24h)
-- [ ] Cache invalidation khi có dữ liệu mới
+Hệ thống đang tiến gần tới trạng thái hoàn thiện (Full-stack ready). Các module core đã ổn định, tập trung vào tối ưu hóa performance và mở rộng analytics.
 
 ---
 
-## 🔲 PHASE 4 — Global Scale
+## 🚩 Lộ trình phát triển
 
-> 50+ giải, cloud-native, ML pipeline.
+### ✅ Phase 1: Core Scrapers (Completed)
+- [x] **Understat:** Async xG pipeline.
+- [x] **FBref:** Standings & Squad stats.
+- [x] **SofaScore API:** Events polling.
+- [x] **Transfermarkt:** Market values.
 
-### 4.1 Mở rộng nguồn dữ liệu
-- [ ] **StatsBomb Open Data** — event data chi tiết (pass coordinates)
-- [ ] Thêm 20+ giải: Championship, MLS, J-League, A-League…
+### ✅ Phase 2: Database Infrastructure (Completed)
+- [x] **Schema Design:** 20+ tables với FK & Indexes.
+- [x] **Loader Logic:** CSV to PostgreSQL với UPSERT support.
+- [x] **PostgreSQL 18.2:** Quy trình setup chuẩn hóa.
 
-### 4.2 Distributed Scraping
-- [ ] Docker container cho mỗi browser worker
-- [ ] Docker Compose cho local development
-- [ ] Kubernetes cho production (HPA theo queue length)
+### ✅ Phase 3: Automation & Live Tracking (Completed)
+- [x] **Scheduler Master:** Điều phối viên 24/7 (PID management, single browser).
+- [x] **Live Polling:** Polling xG/Incidents thời gian thực.
+- [x] **Post-Match Worker:** Tự động hóa Heatmaps & Standings update sau trận.
+- [x] **Lineup Fetching:** 3-phase matching (60m, 15m, post-match).
 
-### 4.3 Data Lake Architecture
-```
-Raw Layer (MinIO/S3)       → raw/{source}/{league}/{season}/{id}.json
-Staging Layer (PostgreSQL) → Cleaned, validated, deduplicated
-Analytics Layer (DuckDB)   → Materialized aggregates, pre-computed metrics
-```
-
-### 4.4 Machine Learning Pipeline
-- [ ] **xG Model tự train** từ shot data (features: x, y, angle, distance, situation)
-- [ ] **Match outcome prediction** (team xG form, H2H, lineup)
-- [ ] **Player performance scoring** — composite score by position
+### 🚧 Phase 4: Data Enrichment & AI (In-Progress)
+- [x] **FBref Deep Stats:** Defensive & Possession stats (League-wide).
+- [x] **News Radar:** Tự động quét RSS tin tức & chấn thương (Discord notification).
+- [x] **AI Match Story:** Tự động tóm tắt diễn biến trận đấu bằng AI.
+- [x] **Materialized Views:** Tối ưu hóa query ảnh cầu thủ/logo đội.
+- [/] **Player Trend Analysis:** Phân tích phong độ cầu thủ hàng tuần (Nightly task).
 
 ---
 
-## Metrics
+## 🚀 Sắp tới (Next Steps)
 
-| Phase | Status | Giải | Sources | DB | Live |
-|-------|--------|------|---------|----|----|
-| Phase 1 | ✅ Done | EPL only | 2 (US+FB) | ❌ CSV | ❌ |
-| Phase 2 | ✅ Done | 9 leagues | 4 sources | ✅ 17 tables | ✅ |
-| Phase 3 | 🔲 Next | 9 leagues | 4 sources | ✅ | ✅ API |
-| Phase 4 | 🔲 Future | 50+ | 6+ | ✅ Data Lake | ✅ |
+### Phase 5: Advanced Analytics & Frontend Ready
+- [ ] **Match Passing Stats:** Phân tích mạng lưới chuyền bóng (Passing network).
+  - *Ghi chú: Đang tạm hoãn do độ phức tạp cao trong việc parse match report pages.*
+- [ ] **Player Crossref refinement:** Tự động hóa việc map Transfermarkt ID cho toàn bộ database.
+- [ ] **REST API:** Xây dựng Spring Boot/Python API để phục vụ Frontend.
+
+### Phase 6: Scaling & Reliability
+- [ ] **Dockerization:** Containerize toàn bộ scheduler & DB.
+- [ ] **Alert System:** Dashboard theo dõi sức khỏe scraper (Uptime, error rate).
+- [ ] **Proxy Rotation:** Hỗ trợ proxy để scale lên 20+ giải đấu đồng thời.
+
+---
+
+## 📈 Chỉ số hiện tại
+| Chỉ số | Giá trị |
+|--------|---------|
+| Số giải đấu | 5 (Big Five) |
+| Tổng số bảng | 22 |
+| Tần suất poll | 60 - 90s |
+| Độ trễ xG | < 120s |
+| Thời gian backup | Hàng ngày 06:00 UTC |
+| Coverage | 95% SofaScore Match Details |
+| AI Story | ~30s sau khi trận đấu kết thúc |
