@@ -129,6 +129,7 @@ class SSLeagueConfig:
     output_dir: Path
     heatmaps_csv: str
     player_positions_csv: str
+    match_passing_csv: str
 
 
 def get_ss_config(league_id: str = "EPL") -> SSLeagueConfig:
@@ -170,4 +171,5 @@ def get_ss_config(league_id: str = "EPL") -> SSLeagueConfig:
         output_dir=output_dir,
         heatmaps_csv=f"dataset_{prefix}_heatmaps.csv",
         player_positions_csv=f"dataset_{prefix}_player_avg_positions.csv",
+        match_passing_csv=f"dataset_{prefix}_match_passing.csv",
     )

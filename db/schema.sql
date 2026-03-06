@@ -36,6 +36,7 @@
 --  10. gk_stats             — goalkeeper stats (FBref)
 --  11. player_defensive_stats — defensive actions (FBref)
 --  12. player_possession_stats — touches, carries, take-ons (FBref)
+--  12b. match_passing_stats   — per-match passing data (FBref)
 --  13. ss_events            — match events list (SofaScore)
 --  14. player_avg_positions — average positions (SofaScore)
 --  15. heatmaps             — heatmap summaries (SofaScore)
@@ -480,6 +481,62 @@ CREATE TABLE IF NOT EXISTS player_possession_stats (
 );
 
 CREATE INDEX IF NOT EXISTS idx_player_possession_team ON player_possession_stats (team_id);
+
+
+-- ──────────────────────────────────────────────────────────
+-- 12b. MATCH PASSING STATS (SofaScore — per-player per-match passing)
+--      Source: SofaScore lineups API (/event/{id}/lineups)
+--      PK: (event_id, player_id, league_id)
+--      Incremental: chỉ cào match mới, skip match đã có trong CSV
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS match_passing_stats (
+    event_id                    BIGINT  NOT NULL,
+    match_date                  TEXT,
+    home_team                   TEXT,
+    away_team                   TEXT,
+
+    player_id                   BIGINT  NOT NULL,
+    player_name                 TEXT    NOT NULL,
+    team_name                   TEXT,
+    position                    TEXT,
+    minutes_played              INTEGER DEFAULT 0,
+
+    -- Total passes
+    total_pass                  INTEGER DEFAULT 0,
+    accurate_pass               INTEGER DEFAULT 0,
+
+    -- Long balls
+    total_long_balls            INTEGER DEFAULT 0,
+    accurate_long_balls         INTEGER DEFAULT 0,
+
+    -- Crosses
+    total_cross                 INTEGER DEFAULT 0,
+    accurate_cross              INTEGER DEFAULT 0,
+
+    -- Key passes
+    key_pass                    INTEGER DEFAULT 0,
+
+    -- Pass distribution
+    total_own_half_passes       INTEGER DEFAULT 0,
+    accurate_own_half_passes    INTEGER DEFAULT 0,
+    total_opp_half_passes       INTEGER DEFAULT 0,
+    accurate_opp_half_passes    INTEGER DEFAULT 0,
+
+    -- Other
+    touches                     INTEGER DEFAULT 0,
+    expected_assists            NUMERIC,
+    goal_assist                 INTEGER DEFAULT 0,
+    possession_lost_ctrl        INTEGER DEFAULT 0,
+
+    league_id                   TEXT    NOT NULL DEFAULT 'EPL',
+    season                      TEXT,
+    loaded_at                   TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (event_id, player_id, league_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mps_event  ON match_passing_stats (event_id, league_id);
+CREATE INDEX IF NOT EXISTS idx_mps_player ON match_passing_stats (player_id, league_id);
+CREATE INDEX IF NOT EXISTS idx_mps_date   ON match_passing_stats (match_date);
 
 
 -- ============================================================

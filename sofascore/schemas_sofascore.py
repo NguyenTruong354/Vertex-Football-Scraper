@@ -148,6 +148,64 @@ class MatchEvent(BaseModel):
 
 
 # ────────────────────────────────────────────────────────────
+# 5. PLAYER MATCH PASSING STATS
+# ────────────────────────────────────────────────────────────
+
+class PlayerMatchPassing(BaseModel):
+    """
+    Passing stats cho một cầu thủ trong một trận đấu.
+
+    Từ SofaScore lineups API: /event/{event_id}/lineups
+    → statistics dict chứa totalPass, accuratePass, keyPass, ...
+    """
+    model_config = _BASE_CONFIG
+
+    # ── Match context ──
+    event_id: int = Field(..., description="SofaScore event ID")
+    match_date: Optional[str] = Field(None, description="YYYY-MM-DD")
+    home_team: Optional[str] = Field(None)
+    away_team: Optional[str] = Field(None)
+
+    # ── Player ──
+    player_id: int = Field(..., description="SofaScore player ID")
+    player_name: str = Field(...)
+    team_name: Optional[str] = Field(None)
+    position: Optional[str] = Field(None, description="D, M, F, G")
+    minutes_played: int = Field(default=0)
+
+    # ── Total passes ──
+    total_pass: int = Field(default=0)
+    accurate_pass: int = Field(default=0)
+
+    # ── Long balls ──
+    total_long_balls: int = Field(default=0)
+    accurate_long_balls: int = Field(default=0)
+
+    # ── Crosses ──
+    total_cross: int = Field(default=0)
+    accurate_cross: int = Field(default=0)
+
+    # ── Key passes ──
+    key_pass: int = Field(default=0)
+
+    # ── Pass distribution ──
+    total_own_half_passes: int = Field(default=0)
+    accurate_own_half_passes: int = Field(default=0)
+    total_opp_half_passes: int = Field(default=0)
+    accurate_opp_half_passes: int = Field(default=0)
+
+    # ── Other ──
+    touches: int = Field(default=0)
+    expected_assists: Optional[float] = Field(None, description="xA")
+    goal_assist: int = Field(default=0)
+    possession_lost_ctrl: int = Field(default=0)
+
+    # ── League context ──
+    league_id: Optional[str] = Field(None)
+    season: Optional[str] = Field(None)
+
+
+# ────────────────────────────────────────────────────────────
 # HELPER: Safe parse list
 # ────────────────────────────────────────────────────────────
 def safe_parse_list(

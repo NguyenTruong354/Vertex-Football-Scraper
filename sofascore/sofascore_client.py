@@ -50,6 +50,7 @@ from schemas_sofascore import (
     MatchEvent,
     PlayerAvgPosition,
     PlayerHeatmap,
+    PlayerMatchPassing,
     safe_parse_list,
 )
 
@@ -388,6 +389,22 @@ async def fetch_match_lineups(
                 "minutes_played": stats.get("minutesPlayed"),
                 "rating": stats.get("rating"),
                 "substitute": p.get("substitute", False),
+                # Passing stats (from statistics dict)
+                "total_pass": stats.get("totalPass", 0),
+                "accurate_pass": stats.get("accuratePass", 0),
+                "total_long_balls": stats.get("totalLongBalls", 0),
+                "accurate_long_balls": stats.get("accurateLongBalls", 0),
+                "total_cross": stats.get("totalCross", 0),
+                "accurate_cross": stats.get("accurateCross", 0),
+                "key_pass": stats.get("keyPass", 0),
+                "total_own_half_passes": stats.get("totalOwnHalfPasses", 0),
+                "accurate_own_half_passes": stats.get("accurateOwnHalfPasses", 0),
+                "total_opp_half_passes": stats.get("totalOppositionHalfPasses", 0),
+                "accurate_opp_half_passes": stats.get("accurateOppositionHalfPasses", 0),
+                "touches": stats.get("touches", 0),
+                "expected_assists": stats.get("expectedAssists"),
+                "goal_assist": stats.get("goalAssist", 0),
+                "possession_lost_ctrl": stats.get("possessionLostCtrl", 0),
             }
             result[side].append(player_dict)
 
@@ -433,6 +450,65 @@ def build_lineup_rows(
                 "rating": p.get("rating"),
                 "formation": formation,
                 "status": "confirmed",
+                "league_id": league_id,
+                "season": season,
+            })
+    return rows
+
+
+def build_passing_rows(
+    lineups: dict,
+    event_meta: dict,
+    league_id: str,
+    season: str,
+) -> list[dict]:
+    """
+    Flatten lineups → list[dict] passing stats ready for CSV/DB.
+
+    Args:
+        lineups:    Return value of fetch_match_lineups()
+        event_meta: Dict with event_id, home_team, away_team, match_date
+        league_id:  e.g. "EPL"
+        season:     e.g. "2024-2025"
+    """
+    rows: list[dict] = []
+    team_names = {
+        "home": event_meta.get("home_team", ""),
+        "away": event_meta.get("away_team", ""),
+    }
+    for side in ("home", "away"):
+        team_name = team_names[side]
+        for p in lineups.get(side, []):
+            if not p.get("player_id"):
+                continue
+            # Skip players who didn't play (unused subs have minutesPlayed=None)
+            if not p.get("minutes_played"):
+                continue
+            rows.append({
+                "event_id": event_meta["event_id"],
+                "match_date": event_meta.get("match_date"),
+                "home_team": event_meta.get("home_team"),
+                "away_team": event_meta.get("away_team"),
+                "player_id": p["player_id"],
+                "player_name": p.get("player_name"),
+                "team_name": team_name,
+                "position": p.get("position"),
+                "minutes_played": p.get("minutes_played", 0),
+                "total_pass": p.get("total_pass", 0),
+                "accurate_pass": p.get("accurate_pass", 0),
+                "total_long_balls": p.get("total_long_balls", 0),
+                "accurate_long_balls": p.get("accurate_long_balls", 0),
+                "total_cross": p.get("total_cross", 0),
+                "accurate_cross": p.get("accurate_cross", 0),
+                "key_pass": p.get("key_pass", 0),
+                "total_own_half_passes": p.get("total_own_half_passes", 0),
+                "accurate_own_half_passes": p.get("accurate_own_half_passes", 0),
+                "total_opp_half_passes": p.get("total_opp_half_passes", 0),
+                "accurate_opp_half_passes": p.get("accurate_opp_half_passes", 0),
+                "touches": p.get("touches", 0),
+                "expected_assists": p.get("expected_assists"),
+                "goal_assist": p.get("goal_assist", 0),
+                "possession_lost_ctrl": p.get("possession_lost_ctrl", 0),
                 "league_id": league_id,
                 "season": season,
             })
@@ -485,6 +561,7 @@ def export_sofascore_data(
     events: list[MatchEvent],
     *,
     lineup_rows: list[dict] | None = None,
+    passing_rows: list[dict] | None = None,
     league_cfg: SSLeagueConfig,
     append: bool = False,
 ) -> list[str]:
@@ -546,6 +623,16 @@ def export_sofascore_data(
         if str(path) not in exported:
             exported.append(str(path))
 
+    # ── Match passing stats ──
+    if passing_rows:
+        df = pd.DataFrame(passing_rows)
+        path = output_dir / league_cfg.match_passing_csv
+        write_header = not path.exists() or not append
+        df.to_csv(path, mode=mode, header=write_header, index=False, encoding="utf-8-sig")
+        logger.info("Exported match passing → %s (%d rows)", path, len(df))
+        if str(path) not in exported:
+            exported.append(str(path))
+
     return exported
 
 
@@ -583,6 +670,7 @@ async def main(
     all_heatmaps: list[dict] = []
     all_avg_positions: list[dict] = []
     all_lineup_rows: list[dict] = []
+    all_passing_rows: list[dict] = []
     all_valid_events: list = []
     all_valid_heatmaps: list = []
     all_valid_positions: list = []
@@ -631,6 +719,10 @@ async def main(
             # Build lineup rows for DB (Phase 3 — post-match)
             lineup_rows = build_lineup_rows(lineups, event, league_id, league_cfg.season)
             all_lineup_rows.extend(lineup_rows)
+
+            # Build passing stats rows from lineups data (no extra API call)
+            passing_rows = build_passing_rows(lineups, event, league_id, league_cfg.season)
+            all_passing_rows.extend(passing_rows)
 
             match_heatmaps: list[dict] = []
             match_avg_positions: list[dict] = []
@@ -723,6 +815,7 @@ async def main(
             export_sofascore_data(
                 valid_heatmaps, valid_positions, valid_events,
                 lineup_rows=lineup_rows,
+                passing_rows=passing_rows,
                 league_cfg=league_cfg,
                 append=True
             )
@@ -736,6 +829,7 @@ async def main(
     logger.info("  Heatmaps       : %d", len(all_heatmaps))
     logger.info("  Avg positions  : %d", len(all_avg_positions))
     logger.info("  Lineups        : %d", len(all_lineup_rows))
+    logger.info("  Passing stats  : %d", len(all_passing_rows))
     logger.info("  Thời gian      : %.1f giây", elapsed)
     logger.info("=" * 60)
 
@@ -744,6 +838,7 @@ async def main(
         "heatmaps": all_valid_heatmaps,
         "avg_positions": all_valid_positions,
         "lineup_rows": all_lineup_rows,
+        "passing_rows": all_passing_rows,
     }
 
 
