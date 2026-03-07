@@ -400,23 +400,41 @@ def rebuild_crossref(conn, league_id: str = "EPL") -> int:
         logger.warning("  crossref: không match được cầu thủ nào (tên không khớp)")
         return 0
 
-    # Bước 4: Upsert vào player_crossref
+    # Bước 4: Deduplicate theo PK (fbref_player_id, league_id)
+    # để tránh chèn trùng key khi nhiều understat_id map cùng 1 FBref player.
+    dedup_by_fb: dict[tuple[str, str], tuple] = {}
+    duplicate_pairs = 0
+    for row in matched:
+        fb_id = row[1]
+        key = (fb_id, league_id)
+        if key in dedup_by_fb:
+            duplicate_pairs += 1
+            continue
+        dedup_by_fb[key] = row
+    matched_dedup = list(dedup_by_fb.values())
+
+    # Bước 5: Upsert vào player_crossref
     sql = """
         INSERT INTO player_crossref
             (understat_player_id, fbref_player_id, canonical_name, league_id, matched_by)
         VALUES (%s, %s, %s, %s, %s)
-        ON CONFLICT (understat_player_id, fbref_player_id, league_id)
+        ON CONFLICT (fbref_player_id, league_id)
         DO UPDATE SET
+            understat_player_id = EXCLUDED.understat_player_id,
             canonical_name = EXCLUDED.canonical_name,
             matched_by     = EXCLUDED.matched_by,
             loaded_at      = NOW()
     """
     with conn.cursor() as cur:
-        psycopg2.extras.execute_batch(cur, sql, matched, page_size=500)
+        psycopg2.extras.execute_batch(cur, sql, matched_dedup, page_size=500)
     conn.commit()
 
-    logger.info("  crossref: %d players matched (Understat→FBref) ← name_exact", len(matched))
-    return len(matched)
+    logger.info(
+        "  crossref: %d players matched (Understat→FBref) ← name_exact%s",
+        len(matched_dedup),
+        f" | dedup_fbref={duplicate_pairs}" if duplicate_pairs else "",
+    )
+    return len(matched_dedup)
 
 
 # ────────────────────────────────────────────────────────────

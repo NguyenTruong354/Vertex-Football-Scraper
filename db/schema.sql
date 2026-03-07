@@ -282,7 +282,8 @@ CREATE TABLE IF NOT EXISTS player_season_stats (
     red_cards             INTEGER,
     league_id             TEXT NOT NULL DEFAULT 'EPL',
     loaded_at             TIMESTAMPTZ DEFAULT NOW(),
-    PRIMARY KEY (player_id, team_id, season, league_id)
+    PRIMARY KEY (player_id, team_id, season, league_id),
+    CONSTRAINT chk_season_format CHECK (season ~ '^\d{4}-\d{4}$')
 );
 
 CREATE INDEX IF NOT EXISTS idx_pss_team    ON player_season_stats (team_id, league_id);
@@ -324,6 +325,11 @@ CREATE TABLE IF NOT EXISTS player_crossref (
 
 CREATE INDEX IF NOT EXISTS idx_crossref_us    ON player_crossref (understat_player_id, league_id);
 CREATE INDEX IF NOT EXISTS idx_crossref_fb    ON player_crossref (fbref_player_id, league_id);
+
+-- Prevent many-FBref → 1-Understat mapping (allow NULL understat_player_id)
+CREATE UNIQUE INDEX IF NOT EXISTS uq_crossref_understat_one
+    ON player_crossref (understat_player_id, league_id)
+    WHERE understat_player_id IS NOT NULL;
 
 -- ============================================================
 -- NHÓM E: FBREF EXTRA TABLES
@@ -923,7 +929,11 @@ CREATE TABLE IF NOT EXISTS live_incidents (
 CREATE INDEX IF NOT EXISTS idx_live_snap_status ON live_snapshots (status);
 CREATE INDEX IF NOT EXISTS idx_live_inc_event   ON live_incidents (event_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_live_inc
-    ON live_incidents (event_id, incident_type, minute, COALESCE(player_name, ''), is_home);
+    ON live_incidents (
+        event_id, incident_type, minute,
+        COALESCE(added_time, -1),
+        COALESCE(player_name, ''), is_home
+    );
 
 -- ──────────────────────────────────────────────────────────
 -- 29. LIVE MATCH STATE — lightweight live state (1 row/event)
@@ -986,17 +996,22 @@ LANGUAGE plpgsql AS $$
 DECLARE
     v_snap INT;
     v_inc  INT;
+    v_active_events BIGINT[];
 BEGIN
+    -- Snapshot active events first to avoid race between 2 DELETEs
+    SELECT ARRAY_AGG(event_id) INTO v_active_events
+    FROM live_snapshots WHERE status = 'inprogress';
+
     DELETE FROM live_incidents
     WHERE loaded_at < NOW() - make_interval(days => keep_days)
-      AND event_id NOT IN (
-          SELECT event_id FROM live_snapshots WHERE status = 'inprogress'
-      );
+      AND event_id != ALL(COALESCE(v_active_events, '{}'));
     GET DIAGNOSTICS v_inc = ROW_COUNT;
+
     DELETE FROM live_snapshots
     WHERE status = 'finished'
       AND loaded_at < NOW() - make_interval(days => keep_days);
     GET DIAGNOSTICS v_snap = ROW_COUNT;
+
     RETURN QUERY SELECT v_snap, v_inc;
 END;
 $$;
@@ -1042,56 +1057,9 @@ ALTER DATABASE defaultdb SET work_mem             = '8MB';
 -- ============================================================
 
 -- ──────────────────────────────────────────────────────────
--- 24. mv_player_profiles: kết hợp 2 tầng matching để lấy ảnh từ Transfermarkt
--- ──────────────────────────────────────────────────────────
-CREATE MATERIALIZED VIEW IF NOT EXISTS mv_player_profiles AS
-SELECT DISTINCT ON (r.player_id, r.league_id)
-    r.player_id AS fbref_player_id,
-    r.player_name,
-    r.team_id AS fbref_team_id,
-    r.league_id,
-    r.position,
-    r.nationality,
-    -- 2-Layer Match cho Ảnh và Giá trị
-    COALESCE(mv1.player_image_url, mv2.player_image_url) AS player_image_url,
-    COALESCE(mv1.market_value_numeric, mv2.market_value_numeric) AS market_value_numeric
-FROM squad_rosters r
--- Tầng 1: Match qua ID (Crossref)
-LEFT JOIN player_crossref c 
-    ON c.fbref_player_id = r.player_id AND c.league_id = r.league_id
-LEFT JOIN market_values mv1 
-    ON mv1.player_id = c.tm_player_id AND mv1.league_id = r.league_id
--- Tầng 2: Fallback qua tên (Normalized)
-LEFT JOIN market_values mv2
-    ON mv2.league_id = r.league_id
-    AND lower(regexp_replace(mv2.player_name, '\s+', '', 'g')) = lower(regexp_replace(r.player_name, '\s+', '', 'g'))
-ORDER BY r.player_id, r.league_id, mv1.market_value_numeric DESC NULLS LAST, mv2.market_value_numeric DESC NULLS LAST;
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_player_profiles_id ON mv_player_profiles(fbref_player_id, league_id);
-
--- ──────────────────────────────────────────────────────────
--- 25. mv_team_profiles: kết hợp bảng xếp hạng với Transfermarkt để lấy logo
--- ──────────────────────────────────────────────────────────
-CREATE MATERIALIZED VIEW IF NOT EXISTS mv_team_profiles AS
-SELECT DISTINCT ON (t.team_id, t.league_id)
-    t.team_id AS fbref_team_id,
-    t.team_name,
-    t.league_id,
-    tm.logo_url,
-    tm.stadium_name,
-    tm.manager_name
-FROM standings t
-LEFT JOIN team_metadata tm 
-    ON tm.league_id = t.league_id
-    AND lower(regexp_replace(tm.team_name, '\s+', '', 'g')) = lower(regexp_replace(t.team_name, '\s+', '', 'g'))
-ORDER BY t.team_id, t.league_id;
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_team_profiles_id ON mv_team_profiles(fbref_team_id, league_id);
-
--- ──────────────────────────────────────────────────────────
--- 25b. mv_tm_player_candidates: pre-normalized TM candidates for v2 matching
---      Mandatory prerequisite for mv_player_profiles_v2.
---      Refresh order: team_canonical → mv_tm_player_candidates → mv_player_profiles_v2
+-- 24a. mv_tm_player_candidates: pre-normalized TM candidates for player matching
+--      Mandatory prerequisite for mv_player_profiles.
+--      Refresh order: team_canonical → mv_tm_player_candidates → mv_player_profiles
 -- ──────────────────────────────────────────────────────────
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_tm_player_candidates AS
 SELECT
@@ -1111,15 +1079,15 @@ CREATE INDEX IF NOT EXISTS idx_mv_tm_cand_name_league
     ON mv_tm_player_candidates (player_name_norm, league_id);
 
 -- ──────────────────────────────────────────────────────────
--- 25c. mv_player_profiles_v2: 3-priority matching with confidence metadata
---      Priority 1: crossref exact (1.00)
---      Priority 2: canonical team-constrained name (0.90)
---      Priority 3: name-only unique in league (0.60, guarded)
---      Unmatched: 0.00
---      Known limitation: mid-season transfer lag may cause team inconsistency
---      for name_only_unique rows — review after each transfer window.
+-- 24. mv_player_profiles: 3-priority matching with confidence metadata
+--     Priority 1: crossref exact (1.00)
+--     Priority 2: canonical team-constrained name (0.90)
+--     Priority 3: name-only unique in league (0.60, guarded)
+--     Unmatched: 0.00
+--     Known limitation: mid-season transfer lag may cause team inconsistency
+--     for name_only_unique rows — review after each transfer window.
 -- ──────────────────────────────────────────────────────────
-CREATE MATERIALIZED VIEW IF NOT EXISTS mv_player_profiles_v2 AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_player_profiles AS
 WITH roster AS (
     SELECT DISTINCT ON (r.player_id, r.league_id)
         r.player_id,
@@ -1220,13 +1188,13 @@ SELECT
 FROM roster ro
 LEFT JOIN best b ON b.player_id = ro.player_id AND b.league_id = ro.league_id;
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_player_profiles_v2_id
-    ON mv_player_profiles_v2 (fbref_player_id, league_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_player_profiles_id
+    ON mv_player_profiles (fbref_player_id, league_id);
 
 -- ──────────────────────────────────────────────────────────
--- 25d. mv_team_profiles_v2: canonical mapping preferred, name fallback secondary
+-- 25. mv_team_profiles: canonical mapping preferred, name fallback secondary
 -- ──────────────────────────────────────────────────────────
-CREATE MATERIALIZED VIEW IF NOT EXISTS mv_team_profiles_v2 AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_team_profiles AS
 SELECT DISTINCT ON (t.team_id, t.league_id)
     t.team_id   AS fbref_team_id,
     t.team_name,
@@ -1257,8 +1225,8 @@ LEFT JOIN team_metadata tm2
       = lower(regexp_replace(t.team_name,  '\s+', '', 'g'))
 ORDER BY t.team_id, t.league_id;
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_team_profiles_v2_id
-    ON mv_team_profiles_v2 (fbref_team_id, league_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_team_profiles_id
+    ON mv_team_profiles (fbref_team_id, league_id);
 
 
 -- ──────────────────────────────────────────────────────────
@@ -1387,11 +1355,17 @@ LEFT JOIN player_possession_stats po
    AND po.league_id  = b.league_id
    AND po.season     = b.season
 
--- GK stats (season-safe, no team_id needed — validated no fanout)
-LEFT JOIN gk_stats gk
-    ON gk.player_id  = b.player_id
-   AND gk.league_id  = b.league_id
-   AND gk.season     = b.season
+-- GK stats: LATERAL pick primary stint (most games) to prevent fanout
+-- when a GK transfers mid-season and has 2 rows for same (player,league,season)
+LEFT JOIN LATERAL (
+    SELECT gk2.gk_save_pct, gk2.gk_clean_sheets
+    FROM gk_stats gk2
+    WHERE gk2.player_id = b.player_id
+      AND gk2.league_id = b.league_id
+      AND gk2.season    = b.season
+    ORDER BY gk2.gk_games DESC NULLS LAST
+    LIMIT 1
+) gk ON TRUE
 
 -- Profile (image + market value)
 LEFT JOIN mv_player_profiles pp
@@ -1497,7 +1471,9 @@ CREATE TABLE IF NOT EXISTS match_crossref (
     CONSTRAINT fk_mcr_away_team
         FOREIGN KEY (league_id, away_fbref_team_id)
         REFERENCES team_registry (league_id, fbref_team_id)
-        ON DELETE RESTRICT
+        ON DELETE RESTRICT,
+    CONSTRAINT chk_rescheduled_has_original
+        CHECK (is_rescheduled = FALSE OR original_date IS NOT NULL)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_mcr_understat

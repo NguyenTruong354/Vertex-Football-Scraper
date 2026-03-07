@@ -1354,10 +1354,9 @@ class DailyMaintenance:
             from db.config_db import get_connection
             conn = get_connection()
             cur = conn.cursor()
-            for mv in ("mv_player_season_xg", "mv_match_summary",
-                       "mv_tm_player_candidates",
-                       "mv_player_profiles", "mv_player_profiles_v2",
-                       "mv_team_profiles", "mv_team_profiles_v2",
+            for mv in ("mv_tm_player_candidates",
+                       "mv_player_profiles",
+                       "mv_team_profiles",
                        "mv_player_complete_stats"):
                 try:
                     cur.execute(f"REFRESH MATERIALIZED VIEW CONCURRENTLY {mv}")

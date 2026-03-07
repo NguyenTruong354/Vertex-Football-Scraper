@@ -1,6 +1,6 @@
 LIVE PIPELINE PLAN (scheduler_master)
-Version: v2
-Date: 2026-03-07
+Version: v2.1
+Date: 2026-03-08
 Decision: KEEP current anti-ban core, add targeted upgrades only.
 
 1) Executive Decision
@@ -47,6 +47,9 @@ Update (safe incremental):
 State NORMAL
 - Use current behavior.
 - Tier A/B/C run by configured intervals.
+- Hard timeout guard (new):
+  - Any non-NORMAL state (THROTTLED_429 / DEGRADED_403) must auto-expire after max 20 minutes.
+  - On timeout, force one session recycle + fallback pacing (Tier A 90s, Tier B 300s, Tier C paused 10m), then re-evaluate.
 
 State THROTTLED_429 (trigger)
 - Enter when consecutive_429 >= 3 in a rolling window.
@@ -55,7 +58,11 @@ State THROTTLED_429 (trigger)
   - Slow Tier B to >= 240s.
   - Pause Tier C periodic pulls; allow event-driven only with 120s cooldown.
   - Global sleep padding +20% over normal pacing.
-- Exit when 5 consecutive successful 200 responses on mixed endpoints.
+- Exit when ALL are true in a 10-minute rolling window:
+  - >= 5 successful 200 responses total,
+  - includes at least 1 Tier A success (/event or /incidents),
+  - includes at least 1 non-Tier-A success (/statistics or /lineups),
+  - no new burst of 429 (no streak >= 2 in the last 2 minutes).
 
 State DEGRADED_403 (trigger)
 - Enter when consecutive_403 >= 2 or any sustained 403 over 3 minutes.
@@ -99,7 +106,7 @@ Tier C: /lineups (passing + advanced snapshots)
 - Pre-match: Tier A every 120s.
 - Inprogress standard: Tier A every 60s.
 - High-volatility windows:
-  - 0-15 min: Tier A every 45s
+  - 0-15 min: Tier A every 45s only if NOT in THROTTLED_429/DEGRADED_403 and req/min budget is healthy
   - 70-90+ min: Tier A every 30-45s (if not throttled)
 - Halftime detection:
   - enter HT when status.description in ("Halftime", "HT")
@@ -107,6 +114,10 @@ Tier C: /lineups (passing + advanced snapshots)
   - do not infer only by minute=46
 
 7) Post-Match Flush Safety (must have)
+Storage contract (required before Step 4):
+- Add column: live_match_state.flush_incomplete BOOLEAN NOT NULL DEFAULT FALSE.
+- Compensation worker query anchor: WHERE flush_incomplete = TRUE.
+
 On finished transition:
 1. Final pull sequence:
 - /event
@@ -118,11 +129,13 @@ On finished transition:
 3. Final writes:
 - live_snapshots final
 - live_incidents final
+- live_match_state final (status/result + postmatch markers)
 - match_passing_stats upsert
 - match_player_advanced_stats upsert (when enabled)
 4. Fallback on failure:
 - set postmatch_flush_incomplete=true
 - keep postmatch_ready=false
+- set live_match_state.flush_incomplete=true
 - daily/post-match worker must run compensation fetch
 
 8) Observability (new, required)
@@ -135,9 +148,14 @@ Emit every 60s:
 - state_machine_status (NORMAL/THROTTLED_429/DEGRADED_403)
 
 Alerts:
-- req_per_min_total > 45 for 3 consecutive cycles
+- req_per_min_total > threshold_for_env for 3 consecutive cycles
 - queue_lag_seconds > 60 for 3 consecutive cycles
 - DEGRADED_403 active > 10 minutes
+
+Threshold calibration rule:
+- During Step 6 dry-run, capture baseline req_per_min_total p50/p95.
+- Set threshold_for_env = min(45, p95 + 10%).
+- Freeze threshold before Step 7 rollout.
 
 9) Capacity Policy by active matches
 <= 5 matches
@@ -155,22 +173,25 @@ Alerts:
 10) Implementation Steps (incremental, low risk)
 Step 1
 - Add runtime state machine enums + timers in scheduler_master.
+- Add hard timeout + forced recovery path for non-NORMAL states.
+- Add explicit exit-condition evaluator for "mixed endpoints".
 Step 2
 - Add metric counters and periodic metric log line.
 Step 3
 - Add Tier C trigger cooldown map.
 Step 4
 - Add post-match flush incomplete flags and compensation hook.
+- Ensure live_match_state.flush_incomplete is written in flush/fallback paths.
 Step 5
 - Add capacity policy thresholds by active match count.
 Step 6
-- Dry-run 24h (no schema changes), then 1-league live test.
+- Dry-run 24h, collect req/min baseline, calibrate threshold_for_env, then 1-league live test.
 Step 7
 - Rollout all leagues.
 
 11) Acceptance Criteria
 - No increase in 403/429 incident rate after rollout.
-- req_per_min_total stays <= 45 most cycles; no sustained breach > 3 cycles.
+- req_per_min_total stays <= threshold_for_env most cycles; no sustained breach > 3 cycles.
 - queue_lag_seconds <= 60 for >= 95% cycles.
 - Tier A freshness maintained (core live data updates within 60-90s depending state).
 - postmatch_flush_incomplete <= 1% matches/day and all compensated by daily run.

@@ -1,10 +1,10 @@
 Done.
 
 MV NAME-MATCHING IMPROVEMENT PLAN (Tang 3)
-Version: v1.2
+Version: v1.3
 Date: 2026-03-07
 Owner: Data Pipeline
-Status: Implemented (Phase B shadow mode — v2 MVs live alongside old MVs)
+Status: Implemented (v2 promoted to default — old MVs removed)
 
 Implementation Record (2026-03-07):
 - Baked in feedback: mv_tm_player_candidates mandatory (not optional);
@@ -15,7 +15,7 @@ Implementation Record (2026-03-07):
     Ambiguous name groups: 1
     team_canonical: 96 rows (60 with tm_team_id)
     player_crossref: 1022 rows (952 with tm_player_id)
-- Phase B deployed:
+- Phase B deployed (shadow mode):
     mv_tm_player_candidates: 1611 rows (from market_values)
     mv_player_profiles_v2:   1351 rows (952 crossref_tm_id, 399 unmatched)
     mv_team_profiles_v2:      136 rows (60 canonical_tm_id, 17 name_fallback, 59 unmatched)
@@ -25,11 +25,18 @@ Implementation Record (2026-03-07):
     Image gained/lost: 0/0
     Market value >50% change: 0
     No suspicious changes detected
+- Phase D/E cutover (2026-03-07):
+    Swapped v2 logic into mv_player_profiles and mv_team_profiles (original names)
+    Dropped mv_player_profiles_v2, mv_team_profiles_v2 from DB and schema.sql
+    mv_tm_player_candidates retained as permanent helper MV
+    mv_player_complete_stats now uses v2-powered mv_player_profiles
+    Refresh order cleaned: mv_tm_player_candidates → mv_player_profiles → mv_team_profiles → mv_player_complete_stats
+    Removed legacy stale MVs (mv_player_season_xg, mv_match_summary) from scheduler
+    Post-cutover validation: all row counts match, zero regression
 - Code changes:
-    db/schema.sql: added 3 new MVs (25b, 25c, 25d) with indexes
-    run_pipeline.py: strict refresh order (helper → v2 → legacy → downstream)
-    scheduler_master.py: added v2 MVs to refresh list in dependency order
-- Remaining Phase D/E: swap v2 as default when downstream consumers ready
+    db/schema.sql: v2 logic promoted to mv_player_profiles (24) and mv_team_profiles (25)
+    run_pipeline.py: refresh order cleaned (4 MVs)
+    scheduler_master.py: refresh list cleaned (4 MVs, legacy removed)
 
 Review Update (2026-03-07):
 - This v1.1 addresses blocking/medium feedback:

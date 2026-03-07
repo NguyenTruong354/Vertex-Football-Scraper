@@ -1,0 +1,102 @@
+Phân Tích Lỗi & Bug Tiềm Ẩn trong Schema
+(Updated 2026-03-08 — reviewed & patched)
+
+🔴 Critical Bugs (Có thể gây lỗi runtime)
+1. ❌ INVALID (PG17) — Partitioned table + Foreign Key
+   Phân tích gốc: PostgreSQL không cho phép FK trên partitioned table (shots).
+   Thực tế: PG 12+ hỗ trợ FK ON partitioned table. PG17 (server hiện tại)
+   đã tạo thành công fk_shots_match. Verified: constraint EXISTS trong DB.
+   → KHÔNG CẦN FIX.
+
+2. ❌ INVALID (PG17) — Updated_at trigger trên shots (partitioned)
+   Phân tích gốc: CREATE TRIGGER ON partitioned table sẽ fail trên PG < 16.
+   Thực tế: PG 13+ tự động propagate trigger xuống partitions. PG17 (server hiện tại)
+   đã tạo thành công trg_shots_updated trên shots + shots_legacy + shots_2024 +
+   shots_2025 + shots_2026. Verified: trigger EXISTS trên tất cả partitions.
+   → KHÔNG CẦN FIX.
+
+3. ✅ FIXED — mv_player_complete_stats — Season type mismatch (TEXT vs INTEGER)
+   Vấn đề: SPLIT_PART brittle nếu season format thay đổi → silent data loss.
+   Fix applied: Added CHECK constraint chk_season_format on player_season_stats:
+     CHECK (season ~ '^\d{4}-\d{4}$')
+   Verified: constraint EXISTS, rejects bad format '2024/25', accepts '2024-2025'.
+
+4. ✅ FIXED — gk_stats PRIMARY KEY thiếu team_id trong LEFT JOIN của MV
+   Vấn đề: GK chuyển team mid-season → 2 rows → JOIN fanout → duplicate MV rows.
+   Hiện tại: 0 duplicate groups trong DB (chưa xảy ra).
+   Fix applied: Changed LEFT JOIN gk_stats → LEFT JOIN LATERAL with
+     ORDER BY gk_games DESC NULLS LAST LIMIT 1 (pick primary stint).
+   MV rebuilt: 1355 rows, LATERAL keyword verified in pg_matviews definition.
+
+🟠 Logic Bugs (Dữ liệu sai, khó phát hiện)
+5. ✅ FIXED — player_crossref UNIQUE constraint chồng chéo với PRIMARY KEY
+   Vấn đề: Thiếu constraint ngăn nhiều FBref → 1 Understat mapping.
+   Hiện tại: 0 duplicate understat groups.
+   Fix applied: Added partial unique index uq_crossref_understat_one:
+     ON player_crossref (understat_player_id, league_id)
+     WHERE understat_player_id IS NOT NULL
+   Cũng đã fix loader.py ON CONFLICT target (phiên trước).
+
+6. ✅ FIXED — live_incidents UNIQUE index dùng COALESCE — thiếu added_time
+   Vấn đề: Nếu added_time khác nhau (VD: VAR delay), index không detect duplicate.
+   Fix applied: Rebuilt uq_live_inc với COALESCE(added_time, -1) trong index:
+     ON live_incidents (event_id, incident_type, minute,
+         COALESCE(added_time, -1), COALESCE(player_name, ''), is_home)
+   Verified: index EXISTS, has added_time=True.
+
+7. ✅ FIXED — cleanup_live_data function — race condition
+   Vấn đề: Giữa 2 DELETE, match có thể đổi status → incidents bị xóa sai.
+   Fix applied: Snapshot active event_ids vào ARRAY trước cả 2 DELETE:
+     SELECT ARRAY_AGG(event_id) INTO v_active_events
+     Tất cả decisions dựa trên cùng 1 snapshot → không bị race.
+   Verified: function EXISTS, has race-safe snapshot=True.
+
+8. ✅ FIXED — match_crossref — original_date không có constraint với match_date
+   Vấn đề: is_rescheduled = TRUE nhưng original_date = NULL không bị catch.
+   Hiện tại: 0 violations trong DB.
+   Fix applied: Added CHECK constraint chk_rescheduled_has_original:
+     CHECK (is_rescheduled = FALSE OR original_date IS NOT NULL)
+   Verified: constraint EXISTS trong DB.
+
+🟡 Performance Issues
+9. mv_player_complete_stats — REFRESH rất chậm, thiếu incremental strategy
+MV này JOIN 7 bảng lớn + 2 aggregation CTEs. REFRESH MATERIALIZED VIEW CONCURRENTLY cần unique index (đã có), nhưng với dataset lớn sẽ lock cả bảng trong vài phút.
+Fix:
+sql-- Tách thành 2 tầng MV:
+-- Tầng 1: mv_shot_agg (refresh hourly, nhẹ)
+-- Tầng 2: mv_player_complete_stats (refresh daily, JOIN từ tầng 1)
+```
+
+### 10. `shots` partitioned — index `idx_shots_match_cov` cần được tạo trên **mỗi partition**
+PostgreSQL tự động tạo index cho partitioned table, nhưng `INCLUDE` columns trên partitioned index **không được hỗ trợ đầy đủ** trên PostgreSQL < 14.
+
+---
+
+## 🔵 Design Concerns (Nên refactor)
+
+| # | Vấn đề | Khuyến nghị |
+|---|---------|-------------|
+| 11 | `player_season_stats.season` = TEXT, `shots.season` = INTEGER — 2 type cho cùng 1 concept | Chuẩn hóa về 1 kiểu, dùng generated column để convert |
+| 12 | `standings` không có `updated_at` trigger trong DO block nhưng có `ADD COLUMN` | Trigger được tạo trong loop — cần verify `standings` có trong array |
+| 13 | `ai_insight_jobs.updated_at` vừa là ALTER ADD COLUMN vừa là trigger — nhưng cũng có trong `updated_at` list ban đầu | Duplicate `ADD COLUMN` — không lỗi nhưng verbose |
+| 14 | `news_feed.id BIGSERIAL` làm PK nhưng `link` có UNIQUE — query thường by link, nên đổi PK | Dùng `link` làm PK hoặc cluster index |
+| 15 | `heatmap_points JSONB` với `SET STORAGE EXTENDED` — với JSONB lớn nên dùng `EXTERNAL` để tránh decompression overhead khi chỉ cần đọc 1 field | Benchmark trước khi đổi |
+
+---
+
+## Tóm Tắt Ưu Tiên Fix
+```
+🔴 Đã review (PG17):
+   → #1 FK trên partitioned table: ❌ INVALID (PG12+ hỗ trợ)
+   → #2 Trigger trên partitioned table: ❌ INVALID (PG13+ propagate)
+
+🟠 Đã fix (deployed 2026-03-08):
+   → #3 Season CHECK constraint: ✅ chk_season_format on player_season_stats
+   → #4 GK LATERAL join: ✅ mv_player_complete_stats rebuilt
+   → #5 Partial unique index: ✅ uq_crossref_understat_one on player_crossref
+   → #6 live_incidents unique index: ✅ uq_live_inc với added_time
+   → #7 cleanup_live_data race: ✅ snapshot-based để tránh race
+   → #8 Rescheduled CHECK: ✅ chk_rescheduled_has_original on match_crossref
+
+🟡 Chưa fix (design refactor):
+   → #9 MV refresh strategy (tách 2 tầng) — cần nhiều file thay đổi
