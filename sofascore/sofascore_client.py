@@ -50,6 +50,7 @@ from schemas_sofascore import (
     MatchEvent,
     PlayerAvgPosition,
     PlayerHeatmap,
+    PlayerMatchAdvanced,
     PlayerMatchPassing,
     safe_parse_list,
 )
@@ -405,6 +406,21 @@ async def fetch_match_lineups(
                 "expected_assists": stats.get("expectedAssists"),
                 "goal_assist": stats.get("goalAssist", 0),
                 "possession_lost_ctrl": stats.get("possessionLostCtrl", 0),
+                # Advanced stats (v1.1 — same lineups payload)
+                "expected_goals_on_target": stats.get("expectedGoalsOnTarget"),
+                "big_chance_created": stats.get("bigChanceCreated", 0),
+                "big_chance_missed": stats.get("bigChanceMissed", 0),
+                "duel_won": stats.get("duelWon", 0),
+                "duel_lost": stats.get("duelLost", 0),
+                "aerial_won": stats.get("aerialWon", 0),
+                "aerial_lost": stats.get("aerialLost", 0),
+                "interception_won": stats.get("interceptionWon", 0),
+                "total_tackle": stats.get("totalTackle", 0),
+                "ball_recovery": stats.get("ballRecovery", 0),
+                "total_clearance": stats.get("totalClearance", 0),
+                "goals_prevented": stats.get("goalsPrevented"),
+                "saves": stats.get("saves", 0),
+                "saved_shots_from_inside_the_box": stats.get("savedShotsFromInsideTheBox", 0),
             }
             result[side].append(player_dict)
 
@@ -516,6 +532,63 @@ def build_passing_rows(
 
 
 # ────────────────────────────────────────────────────────────
+def build_advanced_rows(
+    lineups: dict,
+    event_meta: dict,
+    league_id: str,
+    season: str,
+) -> list[dict]:
+    """
+    Flatten lineups → list[dict] advanced stats ready for CSV/DB.
+
+    Extracts: xGOT, duels, aerials, tackles, recoveries,
+              clearances, goalkeeping stats from same lineups payload.
+    Filters: only players with minutes_played > 0.
+    """
+    rows: list[dict] = []
+    team_names = {
+        "home": event_meta.get("home_team", ""),
+        "away": event_meta.get("away_team", ""),
+    }
+    for side in ("home", "away"):
+        team_name = team_names[side]
+        for p in lineups.get(side, []):
+            if not p.get("player_id"):
+                continue
+            # Skip players who didn't play
+            if not p.get("minutes_played"):
+                continue
+            rows.append({
+                "event_id": event_meta["event_id"],
+                "match_date": event_meta.get("match_date"),
+                "home_team": event_meta.get("home_team"),
+                "away_team": event_meta.get("away_team"),
+                "player_id": p["player_id"],
+                "player_name": p.get("player_name"),
+                "team_name": team_name,
+                "position": p.get("position"),
+                "minutes_played": p.get("minutes_played", 0),
+                "expected_goals_on_target": p.get("expected_goals_on_target"),
+                "big_chance_created": p.get("big_chance_created", 0),
+                "big_chance_missed": p.get("big_chance_missed", 0),
+                "duel_won": p.get("duel_won", 0),
+                "duel_lost": p.get("duel_lost", 0),
+                "aerial_won": p.get("aerial_won", 0),
+                "aerial_lost": p.get("aerial_lost", 0),
+                "interception_won": p.get("interception_won", 0),
+                "total_tackle": p.get("total_tackle", 0),
+                "ball_recovery": p.get("ball_recovery", 0),
+                "total_clearance": p.get("total_clearance", 0),
+                "goals_prevented": p.get("goals_prevented"),
+                "saves": p.get("saves", 0),
+                "saved_shots_from_inside_the_box": p.get("saved_shots_from_inside_the_box", 0),
+                "league_id": league_id,
+                "season": season,
+            })
+    return rows
+
+
+# ────────────────────────────────────────────────────────────
 # STEP 3: Get Player Heatmap
 # ────────────────────────────────────────────────────────────
 
@@ -562,6 +635,7 @@ def export_sofascore_data(
     *,
     lineup_rows: list[dict] | None = None,
     passing_rows: list[dict] | None = None,
+    advanced_rows: list[dict] | None = None,
     league_cfg: SSLeagueConfig,
     append: bool = False,
 ) -> list[str]:
@@ -633,6 +707,16 @@ def export_sofascore_data(
         if str(path) not in exported:
             exported.append(str(path))
 
+    # ── Match advanced stats ──
+    if advanced_rows:
+        df = pd.DataFrame(advanced_rows)
+        path = output_dir / league_cfg.match_advanced_csv
+        write_header = not path.exists() or not append
+        df.to_csv(path, mode=mode, header=write_header, index=False, encoding="utf-8-sig")
+        logger.info("Exported match advanced → %s (%d rows)", path, len(df))
+        if str(path) not in exported:
+            exported.append(str(path))
+
     return exported
 
 
@@ -671,6 +755,7 @@ async def main(
     all_avg_positions: list[dict] = []
     all_lineup_rows: list[dict] = []
     all_passing_rows: list[dict] = []
+    all_advanced_rows: list[dict] = []
     all_valid_events: list = []
     all_valid_heatmaps: list = []
     all_valid_positions: list = []
@@ -723,6 +808,10 @@ async def main(
             # Build passing stats rows from lineups data (no extra API call)
             passing_rows = build_passing_rows(lineups, event, league_id, league_cfg.season)
             all_passing_rows.extend(passing_rows)
+
+            # Build advanced stats rows from same lineups data (no extra API call)
+            advanced_rows = build_advanced_rows(lineups, event, league_id, league_cfg.season)
+            all_advanced_rows.extend(advanced_rows)
 
             match_heatmaps: list[dict] = []
             match_avg_positions: list[dict] = []
@@ -816,6 +905,7 @@ async def main(
                 valid_heatmaps, valid_positions, valid_events,
                 lineup_rows=lineup_rows,
                 passing_rows=passing_rows,
+                advanced_rows=advanced_rows,
                 league_cfg=league_cfg,
                 append=True
             )
@@ -830,6 +920,7 @@ async def main(
     logger.info("  Avg positions  : %d", len(all_avg_positions))
     logger.info("  Lineups        : %d", len(all_lineup_rows))
     logger.info("  Passing stats  : %d", len(all_passing_rows))
+    logger.info("  Advanced stats : %d", len(all_advanced_rows))
     logger.info("  Thời gian      : %.1f giây", elapsed)
     logger.info("=" * 60)
 
@@ -839,6 +930,7 @@ async def main(
         "avg_positions": all_valid_positions,
         "lineup_rows": all_lineup_rows,
         "passing_rows": all_passing_rows,
+        "advanced_rows": all_advanced_rows,
     }
 
 

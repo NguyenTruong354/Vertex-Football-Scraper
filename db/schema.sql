@@ -37,6 +37,7 @@
 --  11. player_defensive_stats — defensive actions (FBref)
 --  12. player_possession_stats — touches, carries, take-ons (FBref)
 --  12b. match_passing_stats   — per-match passing data (SofaScore)
+--  12c. match_player_advanced_stats — per-match advanced stats (SofaScore)
 --  13. ss_events            — match events list (SofaScore)
 --  14. player_avg_positions — average positions (SofaScore)
 --  15. heatmaps             — heatmap summaries (SofaScore)
@@ -537,6 +538,59 @@ CREATE TABLE IF NOT EXISTS match_passing_stats (
 CREATE INDEX IF NOT EXISTS idx_mps_event  ON match_passing_stats (event_id, league_id);
 CREATE INDEX IF NOT EXISTS idx_mps_player ON match_passing_stats (player_id, league_id);
 CREATE INDEX IF NOT EXISTS idx_mps_date   ON match_passing_stats (match_date);
+
+
+-- ──────────────────────────────────────────────────────────
+-- 12c. MATCH PLAYER ADVANCED STATS (SofaScore — per-player per-match)
+--      Source: SofaScore lineups API (/event/{id}/lineups)
+--      PK: (event_id, player_id, league_id)
+--      Metrics: xGOT, duels, aerials, tackles, recoveries, clearances, GK saves
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS match_player_advanced_stats (
+    event_id                        BIGINT  NOT NULL,
+    match_date                      TEXT,
+    home_team                       TEXT,
+    away_team                       TEXT,
+
+    player_id                       BIGINT  NOT NULL,
+    player_name                     TEXT    NOT NULL,
+    team_name                       TEXT,
+    position                        TEXT,
+    minutes_played                  INTEGER DEFAULT 0,
+
+    -- Shooting
+    expected_goals_on_target        NUMERIC,
+
+    -- Chances
+    big_chance_created              INTEGER DEFAULT 0,
+    big_chance_missed               INTEGER DEFAULT 0,
+
+    -- Duels
+    duel_won                        INTEGER DEFAULT 0,
+    duel_lost                       INTEGER DEFAULT 0,
+    aerial_won                      INTEGER DEFAULT 0,
+    aerial_lost                     INTEGER DEFAULT 0,
+
+    -- Defensive
+    interception_won                INTEGER DEFAULT 0,
+    total_tackle                    INTEGER DEFAULT 0,
+    ball_recovery                   INTEGER DEFAULT 0,
+    total_clearance                 INTEGER DEFAULT 0,
+
+    -- Goalkeeping
+    goals_prevented                 NUMERIC,
+    saves                           INTEGER DEFAULT 0,
+    saved_shots_from_inside_the_box INTEGER DEFAULT 0,
+
+    league_id                       TEXT    NOT NULL DEFAULT 'EPL',
+    season                          TEXT,
+    loaded_at                       TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (event_id, player_id, league_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mpas_event  ON match_player_advanced_stats (event_id, league_id);
+CREATE INDEX IF NOT EXISTS idx_mpas_player ON match_player_advanced_stats (player_id, league_id);
+CREATE INDEX IF NOT EXISTS idx_mpas_date   ON match_player_advanced_stats (match_date);
 
 
 -- ============================================================

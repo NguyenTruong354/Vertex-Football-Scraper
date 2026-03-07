@@ -206,6 +206,61 @@ class PlayerMatchPassing(BaseModel):
 
 
 # ────────────────────────────────────────────────────────────
+# 6. PLAYER MATCH ADVANCED STATS
+# ────────────────────────────────────────────────────────────
+
+class PlayerMatchAdvanced(BaseModel):
+    """
+    Advanced match-level stats cho một cầu thủ.
+
+    Từ SofaScore lineups API: /event/{event_id}/lineups
+    → statistics dict chứa expectedGoalsOnTarget, duelWon, saves, ...
+    """
+    model_config = _BASE_CONFIG
+
+    # ── Match context ──
+    event_id: int = Field(..., description="SofaScore event ID")
+    match_date: Optional[str] = Field(None, description="YYYY-MM-DD")
+    home_team: Optional[str] = Field(None)
+    away_team: Optional[str] = Field(None)
+
+    # ── Player ──
+    player_id: int = Field(..., description="SofaScore player ID")
+    player_name: str = Field(...)
+    team_name: Optional[str] = Field(None)
+    position: Optional[str] = Field(None, description="D, M, F, G")
+    minutes_played: int = Field(default=0)
+
+    # ── Shooting ──
+    expected_goals_on_target: Optional[float] = Field(None, description="xGOT")
+
+    # ── Chances ──
+    big_chance_created: int = Field(default=0)
+    big_chance_missed: int = Field(default=0)
+
+    # ── Duels ──
+    duel_won: int = Field(default=0)
+    duel_lost: int = Field(default=0)
+    aerial_won: int = Field(default=0)
+    aerial_lost: int = Field(default=0)
+
+    # ── Defensive ──
+    interception_won: int = Field(default=0)
+    total_tackle: int = Field(default=0)
+    ball_recovery: int = Field(default=0)
+    total_clearance: int = Field(default=0)
+
+    # ── Goalkeeping ──
+    goals_prevented: Optional[float] = Field(None)
+    saves: int = Field(default=0)
+    saved_shots_from_inside_the_box: int = Field(default=0)
+
+    # ── League context ──
+    league_id: Optional[str] = Field(None)
+    season: Optional[str] = Field(None)
+
+
+# ────────────────────────────────────────────────────────────
 # HELPER: Safe parse list
 # ────────────────────────────────────────────────────────────
 def safe_parse_list(

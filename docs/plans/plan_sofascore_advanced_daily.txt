@@ -1,0 +1,184 @@
+SOFASCORE ADVANCED MATCH STATS PLAN (daily pipeline)
+Version: v1.1
+Date: 2026-03-07
+Owner: Data Pipeline
+
+0) Goal
+- Add high-value SofaScore player match-level advanced metrics into daily pipeline.
+- Keep system lightweight (reuse existing lineups call), idempotent, and safe to rollback.
+
+1) Decision Summary
+- YES: put this into daily SofaScore pipeline.
+- Guardrails:
+	- No new API endpoint beyond existing /event/{id}/lineups flow.
+	- Upsert by stable PK to prevent duplicates.
+	- Rollout in 2 phases (shadow -> official).
+
+2) Scope v1 (approved metrics only)
+Include:
+- expectedGoalsOnTarget
+- bigChanceCreated
+- bigChanceMissed
+- duelWon
+- duelLost
+- aerialWon
+- aerialLost
+- interceptionWon
+- totalTackle
+- ballRecovery
+- totalClearance
+- goalsPrevented
+- saves
+- savedShotsFromInsideTheBox
+
+Out of scope v1:
+- New experimental metrics not listed above.
+- Realtime/live writes for this table.
+
+3) Data Model
+New table:
+- match_player_advanced_stats
+
+Primary key:
+- (event_id, player_id, league_id)
+
+Context columns:
+- event_id, league_id, player_id
+- match_date, season
+- home_team, away_team
+- team_name
+- position
+- minutes_played
+
+Metric columns:
+- expected_goals_on_target
+- big_chance_created
+- big_chance_missed
+- duel_won
+- duel_lost
+- aerial_won
+- aerial_lost
+- interception_won
+- total_tackle
+- ball_recovery
+- total_clearance
+- goals_prevented
+- saves
+- saved_shots_from_inside_the_box
+
+Recommended indexes:
+- (event_id, league_id)
+- (player_id, league_id)
+- (match_date)
+
+4) Extraction Design (no extra API calls)
+Source:
+- Reuse existing lineups payload from /event/{id}/lineups.
+
+Implementation approach:
+- Extend current parse step in sofascore client.
+- Build advanced_rows in same pass as passing_rows.
+- Filter rows with minutes_played > 0 (exclude bench players that never played).
+- Keep missing fields as NULL (do not fail whole match).
+
+Edge-case note:
+- Player entered then sent off very early may appear as minutes_played = 1 or = 0 depending API semantics.
+- Validation must confirm real API behavior before finalizing strict filter semantics.
+
+5) CSV Export Design
+New file:
+- output/sofascore/<league>/dataset_<league>_match_advanced_stats.csv
+
+Write mode:
+- Incremental append only for newly processed events.
+- Write header only once.
+
+Dedup and rerun policy (clarified):
+- Do NOT read full CSV for global drop_duplicates on each run (too expensive for large files).
+- Keep a lightweight processed-event tracker (event_id per league) and skip rewriting events already exported.
+- For current batch only, allow in-memory dedup on (event_id, player_id, league_id) before append.
+- Manual rerun behavior:
+	- Default: skip event if already marked processed.
+	- Optional force mode (future flag): rewrite by removing that event slice first or rely on DB upsert while CSV keeps audit history.
+
+6) Loader and Upsert
+Add loader function:
+- load_match_player_advanced_stats() in db/loader.py
+
+Conflict strategy:
+- _upsert(..., conflict_cols=["event_id", "player_id", "league_id"])
+
+Register into LOADERS:
+- Can run standalone table load or in all-load path.
+
+7) Daily Execution Policy
+Recommended policy for stability:
+- Daily pipeline writes advanced stats only for finished matches.
+- If match is not finished, skip advanced write for that event.
+
+Why:
+- Avoid partial and fluctuating values.
+- Keep daily data consistent for analytics use.
+
+8) Validation Plan (single match first)
+Step A: scrape 1 match and export advanced CSV.
+Step B: expected rows around active players only (~28-32 typical).
+Step C: verify sample fields (xGOT, duelWon, saves), and test edge-case:
+- player subbed in then red-carded quickly (or very low minutes).
+- confirm actual API return for minutes_played in this case (0 vs 1).
+- decide final filter rule from observed payload behavior, then document it.
+Step D: load to DB and run sanity query:
+
+SQL sanity query:
+SELECT
+	COUNT(*) AS total_rows,
+	COUNT(DISTINCT (event_id, player_id, league_id)) AS distinct_rows
+FROM match_player_advanced_stats
+WHERE event_id = <sample_event_id>;
+
+Pass criteria:
+- total_rows == distinct_rows.
+
+9) Rollout Plan
+Phase 1: Shadow run (2-3 daily cycles)
+- Enable scrape + CSV + DB load.
+- Do not consume this table in downstream reports yet.
+- Monitor row count and duplicate sanity each run.
+
+Phase 2: Official run
+- Add into main daily scheduler path.
+- Keep same guardrails and sanity checks.
+
+10) Monitoring and Alerts
+Minimum run logs:
+- advanced_rows_written
+- advanced_rows_upserted
+- distinct_key_count
+- skipped_non_finished_matches
+- skipped_already_processed_events
+- missing_metric_field_count (optional)
+
+Warn conditions:
+- Upsert failure for table.
+- total_rows != distinct_rows in post-load check.
+
+11) Rollback Plan
+If issue appears:
+- Disable this loader key in daily sequence.
+- Keep scrape code path but no DB write (optional).
+- No impact on existing passing pipeline/table.
+
+12) Definition of Done
+- New table exists with PK and indexes.
+- Advanced CSV generated for test match.
+- Loader upsert works and is idempotent.
+- Duplicate sanity check passes on rerun.
+- No additional lineups endpoint calls introduced.
+- Shadow run stable for 2-3 cycles.
+
+13) Approval Checklist (for review)
+- Approve metric scope v1 unchanged.
+- Approve finished-match-only write rule.
+- Approve 2-phase rollout (shadow -> official).
+- Approve NULL-on-missing-field behavior.
+
