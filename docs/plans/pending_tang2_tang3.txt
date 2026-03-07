@@ -22,11 +22,12 @@ Done.
 5) ai_insight_jobs + ai_insight_feedback
 - Can thiet ke AI pipeline truoc khi trien khai.
 
-6) Partition shots theo season
-- Cho khi data du lon moi can kich hoat.
+6) Partition shots theo season  ✅ Done (2026-03-07)
+- Plan: docs/plans/plan_partition_shots_by_season.txt
 
 7) Name-matching trong MV
 - Cai thien sau khi co team_canonical.
+- Plan: docs/plans/plan_mv_name_matching_after_team_canonical.txt
 
 Ghi chu:
 - Nhung phan Tang 2-3 nen tao plan rieng tung cai truoc khi implement.

@@ -119,7 +119,7 @@ def load_shots(conn, league_id: str = "EPL") -> int:
         logger.warning("  File không tồn tại: %s", path)
         return 0
     df = pd.read_csv(path, on_bad_lines="skip")
-    count = _upsert(conn, "shots", df, ["id", "league_id"], league_id=league_id)
+    count = _upsert(conn, "shots", df, ["season", "league_id", "id"], league_id=league_id)
     logger.info("  shots: %d rows upserted ← %s", count, path.name)
     return count
 

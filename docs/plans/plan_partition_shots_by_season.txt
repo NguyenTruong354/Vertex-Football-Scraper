@@ -1,0 +1,183 @@
+Done.
+
+SHOTS PARTITION BY SEASON PLAN (Tang 3)
+Version: v1.2
+Date: 2026-03-07
+Owner: Data Pipeline
+Status: Implemented
+
+Implementation Record (2026-03-07):
+- Pre-Phase A: FK check PASS (0 inbound FK), ON CONFLICT audit (1 site: db/loader.py)
+- Phase A: shots_p + 4 partitions (2024/2025/2026/default) + 2 covering indexes created
+- Phase B: Backfill 31361 rows, reconcile PASS (5 leagues, row/xg/player/match parity)
+- Phase C: loader conflict_cols updated to ["season", "league_id", "id"]
+- Phase D: Cutover rename shots→shots_legacy, shots_p→shots. Verified relkind=p
+- Phase E: shots_default dropped (0 rows). 3 partitions remain (2024/2025/2026)
+- schema.sql updated with partitioned DDL
+- shots_legacy retained 30 days (cutover date: 2026-03-07, drop after 2026-04-06)
+- Note: Dual-write (Phase C in plan) was skipped — data only has season 2025,
+  single-shot cutover is safe at this scale (31K rows)
+
+0) Goal
+- Partition table `shots` by season to keep query latency stable when data grows.
+- Keep current API/loader behavior compatible during migration.
+- Activate only when data volume reaches threshold (defer by default).
+
+1) Current State (as-is)
+- `shots` is a single heap table with PK `(id, league_id)`.
+- Main indexes:
+  - `idx_shots_match_cov` on `(match_id, league_id)` include columns.
+  - `idx_shots_player_cov` on `(player_id, season, league_id)` include columns.
+- Season is INTEGER (`2024`, `2025`, ...).
+- Table currently still manageable; partition is not urgent yet.
+
+2) Why Partition (when ready)
+- Data is append-heavy and grows every season.
+- Common filters include `season` and `league_id`.
+- Seasonal retention/archival is easier with detached partitions.
+- VACUUM/ANALYZE and index maintenance become more predictable.
+
+3) Activation Gate (must-meet)
+- Start migration only if at least one gate is met for 2 consecutive weekly checks:
+  1) `shots` total rows >= 2,000,000
+  2) newest season rows >= 500,000
+  3) p95 query latency for xG endpoints regresses >= 35% vs baseline
+  4) autovacuum lag or bloat alert on `shots` exceeds SLO
+- If none is met: keep current design and re-check monthly.
+
+3.1 Pre-Phase A checklist (mandatory, blocking)
+- Inbound FK review result must be explicit before creating `shots_p`:
+  - Current assumption: `shots` has no inbound FK.
+  - Mandatory verification SQL:
+    ```sql
+    SELECT conname, conrelid::regclass AS referencing_table
+    FROM pg_constraint
+    WHERE confrelid = 'shots'::regclass;
+    ```
+  - Expected result: 0 rows.
+  - If any row returned: migration is BLOCKED until each FK is migrated/resolved.
+- Audit all `INSERT ... ON CONFLICT` targeting `shots` in codebase:
+  - Old conflict target `(id, league_id)` is invalid for new partitioned PK.
+  - New conflict target must be `(season, league_id, id)`.
+- Stage test is mandatory before production:
+  - Run loader with new conflict target against partitioned `shots_p`.
+  - Zero insert/upsert errors required to pass gate.
+
+4) Target Design
+4.1 Parent table
+- New parent: `shots_p` partitioned by `RANGE (season)`.
+- Keep same business columns and defaults.
+
+4.2 Key/constraint rule (critical)
+- PostgreSQL requires partition key in unique/primary constraints.
+- New PK must include `season`.
+- Proposed PK: `(season, league_id, id)`.
+- Impact note:
+  - Existing FK `shots(match_id, league_id) -> match_stats(match_id, league_id)` is unaffected.
+  - Any future inbound reference to `shots.id` must include `season` (or use full key) to remain valid.
+
+4.3 Partition layout
+- One partition per season (year):
+  - `shots_2023` FOR VALUES FROM (2023) TO (2024)
+  - `shots_2024` FOR VALUES FROM (2024) TO (2025)
+  - `shots_2025` FOR VALUES FROM (2025) TO (2026)
+- Create next-season partition proactively in pre-season runbook.
+- Add `DEFAULT` partition temporarily during migration to catch unexpected rows.
+
+4.4 Index strategy
+- Create local indexes on each partition with same leading keys as today:
+  - `(match_id, league_id)` include selected columns
+  - `(player_id, season, league_id)` include selected columns
+- Optional BRIN on `season` only if sequential scans remain heavy.
+
+5) Migration Strategy (no downtime)
+Phase A: Prepare shadow table
+- Create `shots_p` parent + seasonal partitions + indexes.
+- Keep `shots` as source of truth.
+- Exit criteria:
+  - Pre-Phase A checklist in section 3.1 all PASS.
+
+Phase B: Backfill by season batches
+- Copy old data season-by-season in deterministic chunks.
+- Reconcile row counts and aggregate sentinels per `(season, league_id)` using explicit SQL:
+  ```sql
+  SELECT
+      season,
+      league_id,
+      COUNT(*)                  AS row_count,
+      COALESCE(SUM(xg), 0)      AS sum_xg,
+      COUNT(DISTINCT player_id) AS distinct_players,
+      COUNT(DISTINCT match_id)  AS distinct_matches
+  FROM shots
+  GROUP BY season, league_id
+  ORDER BY season, league_id;
+  ```
+  - Run same query on `shots_p`.
+  - Any mismatch on any column => re-backfill affected `(season, league_id)`.
+
+Phase C: Dual-write window
+- Update loader write path to insert into both `shots` and `shots_p`.
+- Run for 3-7 days and compare drift automatically.
+- Mandatory condition before enabling dual-write:
+  - All loader SQL already switched to `ON CONFLICT (season, league_id, id)` for `shots_p` path.
+
+Phase D: Cutover
+- Chosen strategy (fixed): maintenance-window rename, not query-by-query redirect.
+- Steps:
+  1) Pause write jobs briefly.
+  2) `ALTER TABLE shots RENAME TO shots_legacy;`
+  3) `ALTER TABLE shots_p RENAME TO shots;`
+  4) Resume jobs and run smoke checks.
+- Keep rollback path: rename back to `shots_legacy` if incident occurs.
+
+Phase E: Cleanup
+- Stop dual-write.
+- Cleanup policy (fixed):
+  - Keep `shots_legacy` for 30 days after cutover.
+  - If no Sev-1/Sev-2 incident tied to partition migration in 30 days:
+    `DROP TABLE shots_legacy;`
+  - No separate archive required because `shots` (new partitioned parent) already contains full data.
+
+6) Pipeline/Code Impact
+- `understat/async_scraper.py` and DB loader upsert statements must target partitioned table.
+- All `ON CONFLICT` clauses for `shots` path must be updated to `(season, league_id, id)` before dual-write.
+- Schema bootstrap in `db/schema.sql` must create parent/partitions idempotently.
+- Daily maintenance can include partition pre-create for next season.
+
+7) Validation Checklist
+- Row parity: `shots` vs `shots_p` exact by `(season, league_id)`.
+- PK uniqueness: no duplicates for `(season, league_id, id)`.
+- Query parity for representative endpoints (xG summary, player shots, match shots).
+- p95 latency non-regression after cutover.
+- No write errors in dual-write window.
+
+8) Risks & Mitigations
+Risk A: PK/ON CONFLICT mismatch breaks writes.
+- Mitigation: test loader against staging with production-like data first.
+
+Risk B: Missing partition for new season blocks inserts.
+- Mitigation: monthly guard job + pre-season partition creation.
+
+Risk C: Long backfill impacts DB performance.
+- Mitigation: throttle batch copy, off-peak schedule, monitor lock/wait metrics.
+
+9) Delivery Breakdown
+Milestone 1: Readiness
+- Add weekly gate check SQL + baseline latency snapshot.
+- Complete and record section 3.1 checks (FK + ON CONFLICT audit) as go/no-go evidence.
+
+Milestone 2: Schema + shadow backfill
+- Create partitioned structure and complete historical copy.
+
+Milestone 3: Dual-write + cutover
+- Enable dual-write, validate drift, switch reads.
+
+Milestone 4: Cleanup
+- Retire legacy table and finalize runbook.
+
+10) Definition of Done
+- Activation gate met and approved.
+- Partitioned `shots` in production with stable writes.
+- Data parity validated.
+- Read latency stable or improved.
+- Runbook for next-season partition creation documented.

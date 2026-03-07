@@ -114,8 +114,9 @@ CREATE TABLE IF NOT EXISTS standings (
 -- ============================================================
 
 -- ──────────────────────────────────────────────────────────
--- 3. SHOTS (xG data từ Understat)
---    FK: (match_id, league_id) → match_stats
+-- 3. SHOTS (xG data từ Understat)  — RANGE-partitioned by season
+--    PK: (season, league_id, id)
+--    Partitions: shots_2024, shots_2025, shots_2026 (add more as needed)
 --    INDEX: match_id, player_id (2 cột query nhiều nhất khi xem trang trận đấu)
 -- ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS shots (
@@ -129,7 +130,7 @@ CREATE TABLE IF NOT EXISTS shots (
     h_goals          INTEGER,
     a_goals          INTEGER,
     date             TEXT,
-    season           INTEGER,
+    season           INTEGER      NOT NULL,
     minute           INTEGER,
     result           TEXT,   -- Goal, SavedShot, MissedShots, BlockedShot, OwnGoal
     situation        TEXT,   -- OpenPlay, SetPiece, FromCorner, DirectFreekick, Penalty
@@ -141,8 +142,15 @@ CREATE TABLE IF NOT EXISTS shots (
     h_a              TEXT,   -- h (home) or a (away)
     league_id        TEXT    NOT NULL DEFAULT 'EPL',
     loaded_at        TIMESTAMPTZ DEFAULT NOW(),
-    PRIMARY KEY (id, league_id)
-);
+    PRIMARY KEY (season, league_id, id)
+) PARTITION BY RANGE (season);
+
+CREATE TABLE IF NOT EXISTS shots_2024 PARTITION OF shots
+    FOR VALUES FROM (2024) TO (2025);
+CREATE TABLE IF NOT EXISTS shots_2025 PARTITION OF shots
+    FOR VALUES FROM (2025) TO (2026);
+CREATE TABLE IF NOT EXISTS shots_2026 PARTITION OF shots
+    FOR VALUES FROM (2026) TO (2027);
 
 -- Index match_id + league_id: query "tất cả shot của trận X"
 -- Index player_id: query "tất cả shot của cầu thủ Y"
