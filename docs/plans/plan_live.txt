@@ -1,5 +1,5 @@
 LIVE PIPELINE PLAN (scheduler_master)
-Version: v2.1
+Version: v2.2
 Date: 2026-03-08
 Decision: KEEP current anti-ban core, add targeted upgrades only.
 
@@ -48,8 +48,14 @@ State NORMAL
 - Use current behavior.
 - Tier A/B/C run by configured intervals.
 - Hard timeout guard (new):
-  - Any non-NORMAL state (THROTTLED_429 / DEGRADED_403) must auto-expire after max 20 minutes.
-  - On timeout, force one session recycle + fallback pacing (Tier A 90s, Tier B 300s, Tier C paused 10m), then re-evaluate.
+  - THROTTLED_429: auto-expire after max 20 minutes → try re-enter NORMAL.
+  - DEGRADED_403: auto-expire after max 45 minutes → enter FALLBACK (not NORMAL).
+  - FALLBACK state (intermediate, 10 minutes):
+    - Tier A 120s, Tier B paused, Tier C paused.
+    - Force session recycle at entry.
+    - After 10 min or 5 consecutive 200 on Tier A → re-evaluate to NORMAL.
+    - If any 403 during FALLBACK → immediately re-enter DEGRADED_403.
+  - Prevents stuck states and 403 re-trigger loops.
 
 State THROTTLED_429 (trigger)
 - Enter when consecutive_429 >= 3 in a rolling window.
@@ -115,7 +121,10 @@ Tier C: /lineups (passing + advanced snapshots)
 
 7) Post-Match Flush Safety (must have)
 Storage contract (required before Step 4):
-- Add column: live_match_state.flush_incomplete BOOLEAN NOT NULL DEFAULT FALSE.
+- DDL migration (must run before Step 4 code deploy):
+    ALTER TABLE live_match_state
+    ADD COLUMN IF NOT EXISTS flush_incomplete BOOLEAN NOT NULL DEFAULT FALSE;
+  This is added to schema.sql section 29 (live_match_state) for new installs.
 - Compensation worker query anchor: WHERE flush_incomplete = TRUE.
 
 On finished transition:

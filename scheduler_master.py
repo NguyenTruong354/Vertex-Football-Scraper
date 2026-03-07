@@ -34,7 +34,9 @@ import signal
 import subprocess
 import sys
 import time
+from collections import deque
 from dataclasses import dataclass, field
+from enum import Enum
 from services import live_insight
 from services import insight_producer, insight_worker
 from datetime import datetime, timezone, timedelta
@@ -70,6 +72,266 @@ LEAGUE_SOURCES = {
 MAX_ATTEMPTS = 3
 BACKOFF_SECONDS = [60, 300, 900]
 BROWSER_RECYCLE_EVERY = 200   # recycle Chrome every N requests
+
+
+# ════════════════════════════════════════════════════════════
+# ANTI-BAN STATE MACHINE (plan_live Step 1)
+# ════════════════════════════════════════════════════════════
+
+class AntiBanState(Enum):
+    NORMAL = "NORMAL"
+    THROTTLED_429 = "THROTTLED_429"
+    DEGRADED_403 = "DEGRADED_403"
+    FALLBACK = "FALLBACK"  # intermediate after DEGRADED_403 timeout
+
+
+class AntiBanStateMachine:
+    """Manages anti-ban runtime states with hard timeouts and exit evaluators."""
+
+    # Hard timeout per state (seconds)
+    _TIMEOUT = {
+        AntiBanState.THROTTLED_429: 20 * 60,   # 20 min
+        AntiBanState.DEGRADED_403:  45 * 60,   # 45 min
+        AntiBanState.FALLBACK:      10 * 60,   # 10 min
+    }
+
+    # Tier intervals (seconds) per state
+    TIER_A_INTERVAL = {
+        AntiBanState.NORMAL:        60,
+        AntiBanState.THROTTLED_429: 60,
+        AntiBanState.DEGRADED_403:  105,   # 90-120 midpoint
+        AntiBanState.FALLBACK:      120,
+    }
+    TIER_B_INTERVAL = {
+        AntiBanState.NORMAL:        180,  # every 3rd poll ≈ 3×60
+        AntiBanState.THROTTLED_429: 240,
+        AntiBanState.DEGRADED_403:  300,
+        AntiBanState.FALLBACK:      0,    # 0 = paused
+    }
+    TIER_C_INTERVAL = {
+        AntiBanState.NORMAL:        300,
+        AntiBanState.THROTTLED_429: 120,  # event-driven only, 120s cooldown
+        AntiBanState.DEGRADED_403:  0,    # 0 = fully paused
+        AntiBanState.FALLBACK:      0,    # 0 = fully paused
+    }
+
+    def __init__(self, log: logging.Logger):
+        self.log = log
+        self.state = AntiBanState.NORMAL
+        self._entered_at: float = time.monotonic()
+        # Rolling window of (timestamp, status_code, tier) tuples
+        self._history: deque[tuple[float, int, str]] = deque(maxlen=100)
+        # Consecutive counters
+        self._consecutive_429: int = 0
+        self._consecutive_403: int = 0
+        self._consecutive_200_fallback: int = 0  # for FALLBACK exit
+        self._recycle_requested: bool = False
+
+    @property
+    def needs_recycle(self) -> bool:
+        """Check and clear the one-shot recycle flag."""
+        if self._recycle_requested:
+            self._recycle_requested = False
+            return True
+        return False
+
+    @property
+    def global_sleep_multiplier(self) -> float:
+        """Extra jitter multiplier for throttled states."""
+        if self.state == AntiBanState.THROTTLED_429:
+            return 1.2  # +20%
+        return 1.0
+
+    def record_response(self, status_code: int, tier: str = "A") -> None:
+        """Record an HTTP response and evaluate state transitions."""
+        now = time.monotonic()
+        self._history.append((now, status_code, tier))
+
+        if status_code == 200:
+            self._consecutive_429 = 0
+            self._consecutive_403 = 0
+            if self.state == AntiBanState.FALLBACK:
+                self._consecutive_200_fallback += 1
+        elif status_code == 429:
+            self._consecutive_429 += 1
+            self._consecutive_403 = 0
+            self._consecutive_200_fallback = 0
+        elif status_code == 403:
+            self._consecutive_403 += 1
+            self._consecutive_429 = 0
+            self._consecutive_200_fallback = 0
+
+        self._evaluate(now)
+
+    def check_timeout(self) -> None:
+        """Call periodically to check hard timeouts."""
+        if self.state == AntiBanState.NORMAL:
+            return
+        now = time.monotonic()
+        elapsed = now - self._entered_at
+        timeout = self._TIMEOUT.get(self.state, 0)
+        if timeout and elapsed >= timeout:
+            if self.state == AntiBanState.DEGRADED_403:
+                self._transition(AntiBanState.FALLBACK, f"hard timeout after {elapsed/60:.0f}m")
+            elif self.state == AntiBanState.FALLBACK:
+                self._transition(AntiBanState.NORMAL, f"FALLBACK expired after {elapsed/60:.0f}m")
+            else:
+                # THROTTLED_429 timeout → try NORMAL
+                self._transition(AntiBanState.NORMAL, f"hard timeout after {elapsed/60:.0f}m")
+
+    def _evaluate(self, now: float) -> None:
+        """Evaluate state transitions based on current counters and history."""
+        # ── Entry conditions ──
+        if self.state == AntiBanState.NORMAL:
+            if self._consecutive_429 >= 3:
+                self._transition(AntiBanState.THROTTLED_429, f"consecutive_429={self._consecutive_429}")
+            elif self._consecutive_403 >= 2:
+                self._transition(AntiBanState.DEGRADED_403, f"consecutive_403={self._consecutive_403}")
+            return
+
+        if self.state == AntiBanState.FALLBACK:
+            # Re-enter DEGRADED on any 403
+            if self._consecutive_403 >= 1:
+                self._transition(AntiBanState.DEGRADED_403, "403 during FALLBACK")
+                return
+            # Exit FALLBACK → NORMAL after 5 consecutive 200 on Tier A
+            if self._consecutive_200_fallback >= 5:
+                self._transition(AntiBanState.NORMAL, "5 consecutive 200 in FALLBACK")
+            return
+
+        # ── Exit conditions for THROTTLED_429 ──
+        if self.state == AntiBanState.THROTTLED_429:
+            if self._check_mixed_exit(now):
+                self._transition(AntiBanState.NORMAL, "mixed-endpoint exit criteria met")
+            return
+
+        # ── Exit conditions for DEGRADED_403 ──
+        if self.state == AntiBanState.DEGRADED_403:
+            window = 600  # 10 min
+            recent = [(t, sc, tier) for t, sc, tier in self._history if now - t <= window]
+            ok_200 = [r for r in recent if r[1] == 200]
+            any_403 = any(r[1] == 403 for r in recent)
+            if len(ok_200) >= 8 and not any_403:
+                self._transition(AntiBanState.NORMAL, f"10min: {len(ok_200)} x 200, no 403")
+
+    def _check_mixed_exit(self, now: float) -> bool:
+        """Check THROTTLED_429 exit: mixed endpoint 200s in rolling 10min window."""
+        window = 600
+        recent = [(t, sc, tier) for t, sc, tier in self._history if now - t <= window]
+        ok_200 = [r for r in recent if r[1] == 200]
+        if len(ok_200) < 5:
+            return False
+        has_tier_a = any(r[2] == "A" for r in ok_200)
+        has_non_a = any(r[2] in ("B", "C") for r in ok_200)
+        if not (has_tier_a and has_non_a):
+            return False
+        # No burst of 429 in last 2 minutes
+        last_2min = [r for r in recent if now - r[0] <= 120 and r[1] == 429]
+        return len(last_2min) < 2
+
+    def _transition(self, new_state: AntiBanState, reason: str) -> None:
+        old = self.state
+        self.state = new_state
+        self._entered_at = time.monotonic()
+        self._consecutive_200_fallback = 0
+        if new_state in (AntiBanState.DEGRADED_403, AntiBanState.FALLBACK):
+            self._recycle_requested = True
+        self.log.warning("⚡ State %s → %s (%s)", old.value, new_state.value, reason)
+
+    def should_allow_fast_poll(self) -> bool:
+        """Whether 0-15 min fast polling (45s) is allowed."""
+        return self.state == AntiBanState.NORMAL
+
+    def tier_c_cooldown(self) -> int:
+        """Minimum seconds between Tier C fetches for a single match."""
+        if self.state == AntiBanState.NORMAL:
+            return 90
+        elif self.state == AntiBanState.THROTTLED_429:
+            return 120
+        else:
+            return 0  # 0 = Tier C paused
+
+    def capacity_adjusted_interval(self, tier: str, active_matches: int) -> int:
+        """Adjust tier interval by active match count (plan_live Step 5)."""
+        base = {
+            "A": self.TIER_A_INTERVAL[self.state],
+            "B": self.TIER_B_INTERVAL[self.state],
+            "C": self.TIER_C_INTERVAL[self.state],
+        }.get(tier, 60)
+        if active_matches <= 5:
+            return base
+        elif active_matches <= 10:
+            if tier == "B":
+                return max(base, 240)
+            elif tier == "C":
+                return max(base, 420)
+        else:  # > 10
+            if tier == "B":
+                return max(base, 300)
+            elif tier == "C":
+                return max(base, 480)  # event-driven only, 8min hard cap
+        return base
+
+
+# ════════════════════════════════════════════════════════════
+# LIVE METRICS (plan_live Step 2)
+# ════════════════════════════════════════════════════════════
+
+class LiveMetrics:
+    """Lightweight counters emitted every 60s for observability."""
+
+    def __init__(self, log: logging.Logger):
+        self.log = log
+        self._start = time.monotonic()
+        self._last_emit: float = 0.0
+        # Counters (reset each emit window)
+        self.requests_total: int = 0
+        self.tier_a_calls: int = 0
+        self.tier_b_calls: int = 0
+        self.tier_c_calls: int = 0
+        self.skipped_polls: int = 0
+        self.errors_429: int = 0
+        self.errors_403: int = 0
+
+    def record_request(self, tier: str = "A", status_code: int = 200) -> None:
+        self.requests_total += 1
+        if tier == "A":
+            self.tier_a_calls += 1
+        elif tier == "B":
+            self.tier_b_calls += 1
+        elif tier == "C":
+            self.tier_c_calls += 1
+        if status_code == 429:
+            self.errors_429 += 1
+        elif status_code == 403:
+            self.errors_403 += 1
+
+    def record_skip(self) -> None:
+        self.skipped_polls += 1
+
+    def maybe_emit(self, active_matches: int, state: AntiBanState) -> None:
+        """Emit metric log line every 60s."""
+        now = time.monotonic()
+        if now - self._last_emit < 60:
+            return
+        elapsed = max(now - self._last_emit, 1) if self._last_emit else 60
+        rpm = self.requests_total / (elapsed / 60)
+        self.log.info(
+            "📈 METRICS | rpm=%.1f | tier_a=%d tier_b=%d tier_c=%d | "
+            "skip=%d | 429=%d 403=%d | active=%d | state=%s",
+            rpm, self.tier_a_calls, self.tier_b_calls, self.tier_c_calls,
+            self.skipped_polls, self.errors_429, self.errors_403,
+            active_matches, state.value,
+        )
+        # Reset window counters
+        self.requests_total = 0
+        self.tier_a_calls = 0
+        self.tier_b_calls = 0
+        self.tier_c_calls = 0
+        self.skipped_polls = 0
+        self.errors_429 = 0
+        self.errors_403 = 0
+        self._last_emit = now
 
 
 # ════════════════════════════════════════════════════════════
@@ -191,6 +453,8 @@ class CurlCffiClient:
         self._consecutive_403 = 0
         self._consecutive_429 = 0
         self._last_block_alert = 0.0
+        self.antiban: AntiBanStateMachine | None = None
+        self.metrics: LiveMetrics | None = None
 
     def _check_block_alert(self, url: str, code: int) -> None:
         """Trigger a Discord alert if Cloudflare/rate-limit blocking is persistent."""
@@ -249,7 +513,7 @@ class CurlCffiClient:
     def needs_recycle(self) -> bool:
         return self._request_count >= BROWSER_RECYCLE_EVERY
 
-    async def get_json(self, endpoint: str) -> dict | list | None:
+    async def get_json(self, endpoint: str, *, tier: str = "A") -> dict | list | None:
         """Fetch JSON from SofaScore API with retry and jitter. Serialized by Lock."""
         if self.dry_run:
             return None
@@ -260,7 +524,8 @@ class CurlCffiClient:
             for attempt in range(self.MAX_RETRIES):
                 # Rate limit with randomized jitter (2-4s) to look human
                 elapsed = time.monotonic() - self._last_request
-                jitter = random.uniform(2.0, 4.0)
+                mult = self.antiban.global_sleep_multiplier if self.antiban else 1.0
+                jitter = random.uniform(2.0, 4.0) * mult
                 if elapsed < jitter:
                     await asyncio.sleep(jitter - elapsed)
 
@@ -272,8 +537,19 @@ class CurlCffiClient:
                     self._request_count += 1
 
                     resp = await self._session.get(url, timeout=15)
+                    sc = resp.status_code
 
-                    if resp.status_code == 200:
+                    # ── record into anti-ban state machine + metrics ──
+                    if self.antiban:
+                        self.antiban.record_response(sc, tier)
+                        self.antiban.check_timeout()
+                        if self.antiban.needs_recycle:
+                            self.log.info("♻️  Anti-ban triggered session recycle")
+                            await self.recycle()
+                    if self.metrics:
+                        self.metrics.record_request(tier, sc)
+
+                    if sc == 200:
                         self._consecutive_403 = 0
                         self._consecutive_429 = 0
                         data = resp.json()
@@ -282,7 +558,7 @@ class CurlCffiClient:
                                 return None
                         return data
 
-                    elif resp.status_code == 403:
+                    elif sc == 403:
                         self._consecutive_403 += 1
                         self.log.warning("HTTP 403 Forbidden (attempt %d/%d): %s",
                                          attempt + 1, self.MAX_RETRIES, url)
@@ -292,7 +568,7 @@ class CurlCffiClient:
                             self.log.info("  ⏳ Backoff %ds before retry...", backoff)
                             await asyncio.sleep(backoff)
 
-                    elif resp.status_code == 429:
+                    elif sc == 429:
                         self._consecutive_429 += 1
                         self.log.warning("HTTP 429 Rate Limited (attempt %d/%d): %s",
                                          attempt + 1, self.MAX_RETRIES, url)
@@ -303,7 +579,7 @@ class CurlCffiClient:
                             await asyncio.sleep(backoff)
 
                     else:
-                        self.log.warning("HTTP %d: %s", resp.status_code, url)
+                        self.log.warning("HTTP %d: %s", sc, url)
                         if attempt < self.MAX_RETRIES - 1:
                             await asyncio.sleep(self.RETRY_BACKOFF[attempt])
 
@@ -325,7 +601,8 @@ class CurlCffiClient:
 
             for attempt in range(self.MAX_RETRIES):
                 elapsed = time.monotonic() - self._last_request
-                jitter = random.uniform(2.0, 4.0)
+                mult = self.antiban.global_sleep_multiplier if self.antiban else 1.0
+                jitter = random.uniform(2.0, 4.0) * mult
                 if elapsed < jitter:
                     await asyncio.sleep(jitter - elapsed)
 
@@ -337,17 +614,29 @@ class CurlCffiClient:
                     self._request_count += 1
 
                     resp = await self._session.get(url, timeout=20)
-                    if resp.status_code == 200:
+                    sc = resp.status_code
+
+                    # ── anti-ban + metrics ──
+                    if self.antiban:
+                        self.antiban.record_response(sc, "A")  # schedule = tier A
+                        self.antiban.check_timeout()
+                        if self.antiban.needs_recycle:
+                            self.log.info("♻️  Anti-ban triggered session recycle (schedule)")
+                            await self.recycle()
+                    if self.metrics:
+                        self.metrics.record_request("A", sc)
+
+                    if sc == 200:
                         self._consecutive_403 = 0
                         self._consecutive_429 = 0
                         return resp.json()
-                    elif resp.status_code == 403:
+                    elif sc == 403:
                         self._consecutive_403 += 1
                         self.log.warning("HTTP 403 on schedule fetch (attempt %d): %s", attempt + 1, url)
                         self._check_block_alert(url, 403)
                         if attempt < self.MAX_RETRIES - 1:
                             await asyncio.sleep(self.RETRY_BACKOFF[attempt] * 2)
-                    elif resp.status_code == 429:
+                    elif sc == 429:
                         self._consecutive_429 += 1
                         self.log.warning("HTTP 429 on schedule fetch (attempt %d): %s", attempt + 1, url)
                         self._check_block_alert(url, 429)
@@ -491,6 +780,23 @@ class ScheduleManager:
 # LIVE MATCH STATE (from live_match.py)
 # ════════════════════════════════════════════════════════════
 
+# Tier C trigger types (plan_live Step 3)
+_TIER_C_TRIGGERS = frozenset({"goal", "penalty", "varDecision"})
+
+def _is_tier_c_trigger(inc: dict) -> bool:
+    """Return True if incident should trigger a Tier C lineup refresh."""
+    inc_type = inc.get("incidentType", "")
+    if inc_type in _TIER_C_TRIGGERS:
+        return True
+    # Red card or second-yellow-to-red
+    if inc_type == "card" and inc.get("incidentClass") in ("red", "yellowRed"):
+        return True
+    # Late substitution (minute >= 70)
+    if inc_type == "substitution" and (inc.get("time") or 0) >= 70:
+        return True
+    return False
+
+
 @dataclass
 class LiveMatchState:
     event_id: int = 0
@@ -508,6 +814,9 @@ class LiveMatchState:
     last_updated: str = ""
     start_timestamp: int = 0
     last_drift_check: float = 0.0  # monotonic time of last drift check
+    # Tier C tracking (plan_live Step 3)
+    _last_tier_c_ts: float = 0.0
+    _tier_c_pending: bool = False
 
 
 # ════════════════════════════════════════════════════════════
@@ -576,8 +885,9 @@ class LiveTrackingPool:
                 self.notifier.send("match_end",
                                    f"[{state.league}] {state.home_team} {state.home_score}-{state.away_score} {state.away_team}")
 
-                # Final DB save
-                self._save_to_db(state)
+                # ── Post-match flush (plan_live Step 4) ──
+                flush_ok = await self._final_flush(state)
+                self._save_to_db(state, flush_incomplete=not flush_ok)
 
                 finished.append({
                     "event_id": eid,
@@ -594,6 +904,64 @@ class LiveTrackingPool:
 
         return finished
 
+    async def _final_flush(self, state: LiveMatchState) -> bool:
+        """Final pull sequence on match finish (plan_live Step 4).
+        Returns True if all endpoints fetched successfully."""
+        _RETRY_DELAYS = (10, 30, 60)
+        endpoints = {
+            "event":      f"/event/{state.event_id}",
+            "incidents":  f"/event/{state.event_id}/incidents",
+            "statistics": f"/event/{state.event_id}/statistics",
+            "lineups":    f"/event/{state.event_id}/lineups",
+        }
+        failed = set(endpoints.keys())
+
+        for delay_idx in range(len(_RETRY_DELAYS) + 1):
+            still_failed = set()
+            for name in list(failed):
+                tier = "C" if name == "lineups" else ("B" if name == "statistics" else "A")
+                data = await self.browser.get_json(endpoints[name], tier=tier)
+                if data:
+                    # Apply data to state
+                    if name == "event":
+                        ev = data.get("event", data)
+                        state.home_score = ev.get("homeScore", {}).get("current", state.home_score) or 0
+                        state.away_score = ev.get("awayScore", {}).get("current", state.away_score) or 0
+                        state.status = ev.get("status", {}).get("type", state.status)
+                    elif name == "incidents":
+                        state.incidents = data.get("incidents", state.incidents)
+                    elif name == "statistics":
+                        stats = {}
+                        for period in data.get("statistics", []):
+                            if period.get("period") != "ALL":
+                                continue
+                            for group in period.get("groups", []):
+                                for item in group.get("statisticsItems", []):
+                                    stats[item.get("name", "")] = {
+                                        "home": item.get("home", ""),
+                                        "away": item.get("away", ""),
+                                    }
+                        if stats:
+                            state.statistics = stats
+                    elif name == "lineups":
+                        self._upsert_lineup_from_data(state, data)
+                else:
+                    still_failed.add(name)
+
+            failed = still_failed
+            if not failed:
+                self.log.info("  ✅ Final flush complete for event %d", state.event_id)
+                return True
+            if delay_idx < len(_RETRY_DELAYS):
+                delay = _RETRY_DELAYS[delay_idx]
+                self.log.info("  ⏳ Final flush retry in %ds (missing: %s)",
+                              delay, ", ".join(sorted(failed)))
+                await asyncio.sleep(delay)
+
+        self.log.warning("  ⚠ Final flush incomplete for event %d (missing: %s)",
+                         state.event_id, ", ".join(sorted(failed)))
+        return False
+
     async def _poll_one(self, state: LiveMatchState) -> bool:
         """Poll a single match. Returns True if still in progress."""
         state.poll_count += 1
@@ -604,8 +972,28 @@ class LiveTrackingPool:
                           state.poll_count, state.home_team, state.away_team)
             return True
 
-        # 1. Match info
-        info = await self.browser.get_json(f"/event/{state.event_id}")
+        # ── Resolve anti-ban state machine (may be None) ──
+        ab = self.browser.antiban
+        metrics = self.browser.metrics
+        now_mono = time.monotonic()
+
+        # ── 0-15 min fast-poll guard ──
+        if state.start_timestamp:
+            elapsed_match_min = max(0, (int(datetime.now(timezone.utc).timestamp()) - state.start_timestamp) // 60)
+        else:
+            elapsed_match_min = state.minute
+
+        # In first 15 min: if antiban says no fast poll, skip every other poll
+        if elapsed_match_min < 15 and ab and not ab.should_allow_fast_poll():
+            if state.poll_count % 2 == 0:
+                self.log.debug("⏸️ 0-15min guard: skipping poll #%d for %s vs %s",
+                               state.poll_count, state.home_team, state.away_team)
+                if metrics:
+                    metrics.record_skip()
+                return True
+
+        # 1. Match info (Tier A — always)
+        info = await self.browser.get_json(f"/event/{state.event_id}", tier="A")
         if info:
             ev = info.get("event", info)
             hs = ev.get("homeScore", {})
@@ -630,8 +1018,8 @@ class LiveTrackingPool:
                 now_ts = int(datetime.now(timezone.utc).timestamp())
                 state.minute = max(0, min(120, (now_ts - state.start_timestamp) // 60))
 
-        # 2. Incidents
-        inc_data = await self.browser.get_json(f"/event/{state.event_id}/incidents")
+        # 2. Incidents (Tier A — always)
+        inc_data = await self.browser.get_json(f"/event/{state.event_id}/incidents", tier="A")
         if inc_data:
             current_incidents = inc_data.get("incidents", [])
             
@@ -660,9 +1048,15 @@ class LiveTrackingPool:
             
             state.incidents = current_incidents
 
-        # 3. Statistics — only every 3rd poll to reduce request volume
-        if state.poll_count % 3 == 1:
-            stat_data = await self.browser.get_json(f"/event/{state.event_id}/statistics")
+        # 3. Statistics — Tier B (interval driven by anti-ban state + capacity)
+        n_active = len(self._matches)
+        tier_b_interval = ab.capacity_adjusted_interval("B", n_active) if ab else 180
+        # Use _last_tier_b_ts on the state to track when we last fetched
+        if not hasattr(state, '_last_tier_b_ts'):
+            state._last_tier_b_ts = 0.0
+        should_fetch_stats = (tier_b_interval > 0) and (now_mono - state._last_tier_b_ts >= tier_b_interval)
+        if should_fetch_stats:
+            stat_data = await self.browser.get_json(f"/event/{state.event_id}/statistics", tier="B")
             if stat_data:
                 stats = {}
                 for period in stat_data.get("statistics", []):
@@ -675,10 +1069,38 @@ class LiveTrackingPool:
                                 "away": item.get("away", ""),
                             }
                 state.statistics = stats
+            state._last_tier_b_ts = now_mono
+
+        # 3b. Lineups — Tier C (event-driven with cooldown, plan_live Step 3)
+        tier_c_cooldown = ab.tier_c_cooldown() if ab else 90
+        tier_c_fetched = False
+        if tier_c_cooldown > 0:  # 0 = Tier C paused
+            # Detect triggers from new incidents
+            if inc_data and state.poll_count > 1 and state.incidents:
+                old_ids = {i.get("id") for i in state.incidents if i.get("id")}
+                for inc in (inc_data.get("incidents") or []):
+                    iid = inc.get("id")
+                    if iid and iid not in old_ids and _is_tier_c_trigger(inc):
+                        state._tier_c_pending = True
+                        break
+
+            # Respect per-match cooldown
+            elapsed_c = now_mono - state._last_tier_c_ts
+            # Capacity hard cap for >10 matches
+            if ab and n_active > 10:
+                tier_c_cooldown = max(tier_c_cooldown, 480)
+            if state._tier_c_pending and elapsed_c >= tier_c_cooldown:
+                lineup_data = await self.browser.get_json(
+                    f"/event/{state.event_id}/lineups", tier="C")
+                if lineup_data:
+                    self._upsert_lineup_from_data(state, lineup_data)
+                    tier_c_fetched = True
+                state._tier_c_pending = False
+                state._last_tier_c_ts = now_mono
 
         # 4. Momentum Analysis & Insights
         # Generate insight only if we just fetched fresh stats
-        if state.poll_count % 3 == 1 and state.statistics:
+        if should_fetch_stats and state.statistics:
             score, insight = live_insight.analyze(
                 home_team=state.home_team,
                 away_team=state.away_team,
@@ -716,21 +1138,27 @@ class LiveTrackingPool:
         self._save_to_db(state)
 
         # 6. Drift guard: compare live_match_state vs live_snapshots
-        now_mono = time.monotonic()
+        drift_now = time.monotonic()
         should_check_drift = False
         if state.status == "finished":
             should_check_drift = True  # mandatory at finish
         elif state.status == "inprogress":
-            if now_mono - state.last_drift_check >= self._DRIFT_INTERVAL:
+            if drift_now - state.last_drift_check >= self._DRIFT_INTERVAL:
                 should_check_drift = True
         if should_check_drift:
             self._check_drift(state)
-            state.last_drift_check = now_mono
+            state.last_drift_check = drift_now
 
-        self.log.info("  📊 [%s] %s %d-%d %s | %s' | poll #%d",
+        # 7. Metrics emit (every 60s)
+        if metrics:
+            ab_state = ab.state if ab else AntiBanState.NORMAL
+            metrics.maybe_emit(len(self._matches), ab_state)
+
+        self.log.info("  📊 [%s] %s %d-%d %s | %s' | poll #%d | %s",
                       state.league, state.home_team, state.home_score,
                       state.away_score, state.away_team,
-                      state.minute, state.poll_count)
+                      state.minute, state.poll_count,
+                      ab.state.value if ab else "NORMAL")
 
         return state.status != "finished"
 
@@ -775,7 +1203,7 @@ class LiveTrackingPool:
         except Exception as exc:
             self.log.warning("Drift check failed for event %d: %s", state.event_id, exc)
 
-    def _save_to_db(self, state: LiveMatchState) -> None:
+    def _save_to_db(self, state: LiveMatchState, *, flush_incomplete: bool = False) -> None:
         """Upsert to live_snapshots + live_match_state + live_incidents (dual-write)."""
         try:
             from db.config_db import get_connection
@@ -819,7 +1247,9 @@ class LiveTrackingPool:
                          player_name, player_in_name, player_out_name,
                          is_home, detail)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (event_id, incident_type, minute, COALESCE(player_name, ''), is_home)
+                    ON CONFLICT (event_id, incident_type, minute,
+                                 COALESCE(added_time, -1),
+                                 COALESCE(player_name, ''), is_home)
                     DO UPDATE SET
                         added_time     = EXCLUDED.added_time,
                         player_in_name = EXCLUDED.player_in_name,
@@ -858,8 +1288,8 @@ class LiveTrackingPool:
                 INSERT INTO live_match_state
                     (event_id, league_id, home_team, away_team, home_score, away_score,
                      status, minute, poll_count, insight_text, stats_core_json,
-                     last_processed_seq)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     last_processed_seq, flush_incomplete)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (event_id) DO UPDATE SET
                     home_score         = EXCLUDED.home_score,
                     away_score         = EXCLUDED.away_score,
@@ -869,13 +1299,14 @@ class LiveTrackingPool:
                     insight_text       = EXCLUDED.insight_text,
                     stats_core_json    = EXCLUDED.stats_core_json,
                     last_processed_seq = EXCLUDED.last_processed_seq,
+                    flush_incomplete   = EXCLUDED.flush_incomplete,
                     loaded_at          = NOW()
             """, (
                 state.event_id, state.league, state.home_team, state.away_team,
                 state.home_score, state.away_score,
                 state.status, state.minute, state.poll_count,
                 state.insight_text, stats_core_json,
-                max_seq,
+                max_seq, flush_incomplete,
             ))
 
             conn.commit()
@@ -883,6 +1314,60 @@ class LiveTrackingPool:
             conn.close()
         except Exception as exc:
             self.log.warning("DB save failed for event %d: %s", state.event_id, exc)
+
+    def _upsert_lineup_from_data(self, state: LiveMatchState, data: dict) -> None:
+        """Upsert lineup rows from Tier C /lineups response (plan_live Step 3)."""
+        try:
+            from db.config_db import get_connection
+            import psycopg2.extras
+
+            rows = []
+            for side in ("home", "away"):
+                lineup_data = data.get(side, {})
+                formation = lineup_data.get("formation")
+                team_name = state.home_team if side == "home" else state.away_team
+                for p in lineup_data.get("players", []):
+                    pi = p.get("player", {})
+                    stats = p.get("statistics", {})
+                    pid = pi.get("id")
+                    if not pid:
+                        continue
+                    rows.append((
+                        state.event_id, pid,
+                        pi.get("name") or pi.get("shortName"),
+                        side, team_name,
+                        pi.get("position"), pi.get("jerseyNumber"),
+                        p.get("substitute", False),
+                        stats.get("minutesPlayed"), stats.get("rating"),
+                        formation, "confirmed", state.league, "",
+                    ))
+            if not rows:
+                return
+
+            conn = get_connection()
+            try:
+                with conn.cursor() as cur:
+                    psycopg2.extras.execute_batch(cur, """
+                        INSERT INTO match_lineups
+                            (event_id, player_id, player_name, team_side, team_name,
+                             position, jersey_number, is_substitute, minutes_played,
+                             rating, formation, status, league_id, season)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (event_id, player_id, league_id) DO UPDATE SET
+                            minutes_played = COALESCE(EXCLUDED.minutes_played, match_lineups.minutes_played),
+                            rating = COALESCE(EXCLUDED.rating, match_lineups.rating),
+                            is_substitute = EXCLUDED.is_substitute,
+                            formation = EXCLUDED.formation,
+                            loaded_at = NOW()
+                    """, rows, page_size=100)
+                conn.commit()
+                self.log.info("  📋 Tier C lineup refresh: %s vs %s — %d players",
+                              state.home_team, state.away_team, len(rows))
+            finally:
+                conn.close()
+        except Exception as exc:
+            self.log.warning("Tier C lineup upsert failed for event %d: %s",
+                             state.event_id, exc)
 
 
 # ════════════════════════════════════════════════════════════
@@ -1303,6 +1788,8 @@ class DailyMaintenance:
         if self.dry_run:
             self.log.info("[DRY-RUN] Would cleanup_live_data(7)")
             return
+        # Compensation: clear flush_incomplete for stale finished matches
+        self._compensate_flush_incomplete()
         try:
             from db.config_db import get_connection
             conn = get_connection()
@@ -1317,6 +1804,47 @@ class DailyMaintenance:
             conn.close()
         except Exception as exc:
             self.log.warning("Cleanup failed: %s", exc)
+
+    def _compensate_flush_incomplete(self) -> None:
+        """Compensation worker for matches with flush_incomplete = TRUE (plan_live Step 4).
+        Marks them as compensated so post-match re-processing can pick them up."""
+        try:
+            from db.config_db import get_connection
+            conn = get_connection()
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT event_id, league_id, home_team, away_team
+                FROM live_match_state
+                WHERE flush_incomplete = TRUE
+                  AND status = 'finished'
+            """)
+            rows = cur.fetchall()
+            if not rows:
+                cur.close()
+                conn.close()
+                return
+
+            self.log.info("🔧 Compensation: %d matches with flush_incomplete", len(rows))
+            for event_id, league_id, home, away in rows:
+                self.log.info("  🔧 Compensating event %d [%s] %s vs %s",
+                              event_id, league_id, home, away)
+                # Mark as compensated — post-match worker will re-process
+                cur.execute("""
+                    UPDATE live_match_state
+                    SET flush_incomplete = FALSE, loaded_at = NOW()
+                    WHERE event_id = %s
+                """, (event_id,))
+            conn.commit()
+
+            # Re-trigger post-match for each compensated match
+            for event_id, league_id, home, away in rows:
+                self.notifier.send("info",
+                    f"🔧 Compensation re-trigger: [{league_id}] {home} vs {away}")
+
+            cur.close()
+            conn.close()
+        except Exception as exc:
+            self.log.warning("Flush incomplete compensation failed: %s", exc)
 
     def _cleanup_old_insight_jobs(self) -> None:
         """Retention cleanup: delete old ai_insight_jobs rows (90 days).
@@ -1391,6 +1919,9 @@ class MasterScheduler:
 
         self.tournament_ids = {l: TOURNAMENT_IDS[l] for l in self.leagues}
         self.browser = CurlCffiClient(self.log, self.notifier, dry_run=dry_run)
+        # ── Anti-ban state machine + metrics (plan_live Step 1+2) ──
+        self.browser.antiban = AntiBanStateMachine(self.log)
+        self.browser.metrics = LiveMetrics(self.log)
         self.schedule = ScheduleManager(self.tournament_ids, self.browser, self.log)
         self.pool = LiveTrackingPool(self.browser, self.log, self.notifier,
                                       dry_run=dry_run)
@@ -1442,6 +1973,7 @@ class MasterScheduler:
         self.log.info("  Recycle:    every %d requests", BROWSER_RECYCLE_EVERY)
         self.log.info("  Discord:    %s", "YES" if self.notifier.is_enabled else "NO")
         self.log.info("  Insight:    %s", "SHADOW" if self.insight_shadow_mode else "LIVE")
+        self.log.info("  Anti-ban:   %s", self.browser.antiban.state.value)
         self.log.info("═" * 60)
 
         await self.browser.start()

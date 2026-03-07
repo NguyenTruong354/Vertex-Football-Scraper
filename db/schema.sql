@@ -953,6 +953,7 @@ CREATE TABLE IF NOT EXISTS live_match_state (
     insight_text        TEXT,
     stats_core_json     JSONB,
     last_processed_seq  BIGINT,
+    flush_incomplete    BOOLEAN  NOT NULL DEFAULT FALSE,
     loaded_at           TIMESTAMPTZ DEFAULT NOW(),
     updated_at          TIMESTAMPTZ,
     PRIMARY KEY (event_id)
