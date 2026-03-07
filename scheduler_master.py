@@ -1388,15 +1388,53 @@ def run_with_retry(cmd: list[str], cwd: Path, label: str,
         log.info("▶ %s (attempt %d/%d)", label, attempt + 1, MAX_ATTEMPTS)
         t0 = time.perf_counter()
         try:
-            proc = subprocess.run(
-                cmd, cwd=str(cwd), capture_output=True, text=True, timeout=timeout,
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(cwd),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
             )
-            if proc.returncode == 0:
+
+            timed_out = False
+            while True:
+                if shutdown_event and shutdown_event.is_set():
+                    log.info("⏹ %s — terminating child process (shutdown)", label)
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=5)
+                    return False
+
+                if (time.monotonic() - t0) >= timeout:
+                    timed_out = True
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=5)
+                    break
+
+                try:
+                    proc.wait(timeout=2)
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+
+            stdout, stderr = proc.communicate()
+
+            if timed_out:
+                log.warning("✗ %s — timeout", label)
+            elif proc.returncode == 0:
                 log.info("✓ %s — %.1fs", label, time.perf_counter() - t0)
                 return True
-            log.warning("✗ %s — exit code %d. Error details:", label, proc.returncode)
-            if proc.stderr:
-                for line in proc.stderr.strip().split("\n"):
+            else:
+                log.warning("✗ %s — exit code %d. Error details:", label, proc.returncode)
+            if stderr:
+                for line in stderr.strip().split("\n"):
                     log.warning("  | %s", line)
         except subprocess.TimeoutExpired:
             log.warning("✗ %s — timeout", label)
@@ -1907,7 +1945,8 @@ class MasterScheduler:
     """Single-process HTTP worker daemon for all leagues."""
 
     def __init__(self, leagues: list[str], *, dry_run: bool = False,
-                 skip_crossref_build: bool = False):
+                 skip_crossref_build: bool = False,
+                 skip_daily_maintenance: bool = False):
         self.leagues = [l.upper() for l in leagues]
         self.dry_run = dry_run
         # AI Insight Pipeline: shadow_mode=True keeps old direct flow active,
@@ -1931,6 +1970,10 @@ class MasterScheduler:
         self.daily = DailyMaintenance(self.leagues, self.log, self.notifier,
                                        dry_run=dry_run, shutdown_event=self._shutdown,
                                        skip_crossref_build=skip_crossref_build)
+        if skip_daily_maintenance:
+            # Mark daily as already done for today so restart/test can continue immediately.
+            self.daily.last_run_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            self.log.info("Daily maintenance bypassed for this run (--skip-daily-maintenance)")
         self.last_news_fetch: datetime | None = None
         self._lineup_fetched: set[int] = set()  # event_ids already fetched lineups
 
@@ -2249,6 +2292,8 @@ Examples:
                         help="Send test Discord notification and exit")
     parser.add_argument("--skip-crossref-build", action="store_true",
                         help="Skip daily team_canonical + match_crossref build")
+    parser.add_argument("--skip-daily-maintenance", action="store_true",
+                        help="Skip daily maintenance for current process run")
 
     args = parser.parse_args()
     leagues = [l.upper() for l in args.leagues]
@@ -2273,6 +2318,7 @@ Examples:
         leagues,
         dry_run=args.dry_run,
         skip_crossref_build=args.skip_crossref_build,
+        skip_daily_maintenance=args.skip_daily_maintenance,
     )
     asyncio.run(scheduler.run())
 

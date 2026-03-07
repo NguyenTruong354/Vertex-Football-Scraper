@@ -9,6 +9,7 @@ Fallback: Groq (llama-3.3-70b-versatile)
 import os
 import time
 import logging
+from pathlib import Path
 from typing import Optional
 from google import genai
 from google.genai import types as genai_types
@@ -16,7 +17,24 @@ from google.genai.errors import APIError as GeminiAPIError
 from groq import Groq
 from groq import APIStatusError as GroqAPIError
 
+try:
+    from dotenv import load_dotenv
+except Exception:  # pragma: no cover - optional dependency guard
+    load_dotenv = None
+
 logger = logging.getLogger(__name__)
+
+
+def _bootstrap_env() -> None:
+    """Load workspace .env so LLM keys work without shell-level exports."""
+    if load_dotenv is None:
+        return
+    env_file = Path(__file__).resolve().parents[1] / ".env"
+    if env_file.exists():
+        load_dotenv(env_file)
+
+
+_bootstrap_env()
 
 class CircuitBreaker:
     def __init__(self, name: str, provider: str):
