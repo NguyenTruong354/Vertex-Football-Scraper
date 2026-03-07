@@ -129,6 +129,7 @@ def refresh_materialized_views(league: str) -> bool:
         "cur = conn.cursor(); "
         "cur.execute('REFRESH MATERIALIZED VIEW CONCURRENTLY mv_player_profiles;'); "
         "cur.execute('REFRESH MATERIALIZED VIEW CONCURRENTLY mv_team_profiles;'); "
+        "cur.execute('REFRESH MATERIALIZED VIEW CONCURRENTLY mv_player_complete_stats;'); "
         "conn.commit(); cur.close(); conn.close();"
     ]
     return _run(cmd, ROOT, f"Refresh MVs [{league}]")

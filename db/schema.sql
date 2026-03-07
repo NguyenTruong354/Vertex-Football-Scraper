@@ -54,6 +54,7 @@
 --  28. match_crossref      — cross-source match bridging
 --  30. ai_insight_jobs     — AI insight pipeline queue
 --  31. ai_insight_feedback — AI insight quality feedback
+--  32. mv_player_complete_stats — player comparison MV (all sources)
 -- ============================================================
 
 -- ============================================================
@@ -1078,6 +1079,152 @@ LEFT JOIN team_metadata tm
 ORDER BY t.team_id, t.league_id;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_team_profiles_id ON mv_team_profiles(fbref_team_id, league_id);
+
+
+-- ──────────────────────────────────────────────────────────
+-- 32. mv_player_complete_stats: single source of truth cho player comparison
+--     Grain: 1 row per (player_id, league_id, season)
+--     Sources: player_season_stats + crossref + shots(Understat) +
+--              defensive + possession + gk_stats + mv_player_profiles
+-- ──────────────────────────────────────────────────────────
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_player_complete_stats AS
+WITH base AS (
+    -- Anchor: pick primary team row (highest minutes) per player/league/season
+    SELECT DISTINCT ON (pss.player_id, pss.league_id, pss.season)
+        pss.player_id,
+        pss.player_name,
+        pss.team_id,
+        pss.league_id,
+        pss.season,
+        pss.position,
+        pss.nationality,
+        pss.minutes_90s,
+        pss.goals,
+        pss.assists,
+        pss.goals_per90,
+        pss.shots         AS pss_shots,
+        pss.shots_on_target_pct,
+        pss.yellow_cards,
+        pss.red_cards
+    FROM player_season_stats pss
+    ORDER BY pss.player_id, pss.league_id, pss.season,
+             pss.minutes_90s DESC NULLS LAST
+),
+shot_agg AS (
+    -- Aggregate Understat shots per player/league/season
+    SELECT
+        s.player_id  AS understat_player_id,
+        s.league_id,
+        s.season     AS shot_season,
+        SUM(s.xg)                                         AS total_xg,
+        COUNT(*) FILTER (WHERE s.result = 'Goal')         AS goals_from_shots
+    FROM shots s
+    GROUP BY s.player_id, s.league_id, s.season
+)
+SELECT
+    -- Identity / profile
+    b.player_id,
+    b.player_name,
+    b.team_id,
+    b.league_id,
+    b.season,
+    b.position,
+    b.nationality,
+    pp.player_image_url,
+    pp.market_value_numeric,
+
+    -- Attacking / core
+    b.minutes_90s,
+    b.goals,
+    b.assists,
+    b.goals_per90,
+    b.pss_shots        AS shots,
+    b.shots_on_target_pct,
+    b.yellow_cards,
+    b.red_cards,
+
+    -- Understat shot context
+    (cx.understat_player_id IS NOT NULL)  AS has_understat_crossref,
+    CASE
+        WHEN cx.understat_player_id IS NULL THEN NULL          -- no crossref → unknown
+        ELSE COALESCE(sa.total_xg, 0)
+    END                                   AS total_xg,
+    CASE
+        WHEN cx.understat_player_id IS NULL THEN NULL
+        WHEN b.minutes_90s IS NULL OR b.minutes_90s = 0 THEN NULL
+        ELSE COALESCE(sa.total_xg, 0) / b.minutes_90s
+    END                                   AS xg_per90,
+    CASE
+        WHEN cx.understat_player_id IS NULL THEN NULL
+        ELSE COALESCE(sa.goals_from_shots, 0)
+    END                                   AS goals_from_shots,
+    CASE
+        WHEN cx.understat_player_id IS NULL THEN NULL
+        ELSE COALESCE(sa.goals_from_shots, 0) - COALESCE(sa.total_xg, 0)
+    END                                   AS xg_overperformance,
+
+    -- Defensive
+    d.tackles,
+    d.interceptions,
+    d.blocks,
+    d.clearances,
+    d.pressures,
+
+    -- Possession / progression
+    po.progressive_carries,
+    po.progressive_passes_received,
+    po.take_ons_won_pct,
+
+    -- Goalkeeper subset (NULL for non-GK)
+    gk.gk_save_pct,
+    gk.gk_clean_sheets,
+
+    -- Metadata
+    NOW()  AS built_at
+
+FROM base b
+
+-- Crossref for Understat mapping
+LEFT JOIN player_crossref cx
+    ON cx.fbref_player_id = b.player_id
+   AND cx.league_id       = b.league_id
+
+-- Understat shot aggregates
+LEFT JOIN shot_agg sa
+    ON sa.understat_player_id = cx.understat_player_id
+   AND sa.league_id           = b.league_id
+   AND sa.shot_season         = SPLIT_PART(b.season, '-', 1)::INTEGER
+
+-- Defensive stats
+LEFT JOIN player_defensive_stats d
+    ON d.player_id  = b.player_id
+   AND d.league_id  = b.league_id
+   AND d.season     = b.season
+
+-- Possession stats
+LEFT JOIN player_possession_stats po
+    ON po.player_id  = b.player_id
+   AND po.league_id  = b.league_id
+   AND po.season     = b.season
+
+-- GK stats (season-safe, no team_id needed — validated no fanout)
+LEFT JOIN gk_stats gk
+    ON gk.player_id  = b.player_id
+   AND gk.league_id  = b.league_id
+   AND gk.season     = b.season
+
+-- Profile (image + market value)
+LEFT JOIN mv_player_profiles pp
+    ON pp.fbref_player_id = b.player_id
+   AND pp.league_id       = b.league_id;
+
+-- Indexes for REFRESH CONCURRENTLY and common queries
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mvpcs_pk
+    ON mv_player_complete_stats(player_id, league_id, season);
+CREATE INDEX IF NOT EXISTS idx_mvpcs_league_season
+    ON mv_player_complete_stats(league_id, season);
+CREATE INDEX IF NOT EXISTS idx_mvpcs_team
+    ON mv_player_complete_stats(team_id, league_id, season);
 
 
 -- ============================================================

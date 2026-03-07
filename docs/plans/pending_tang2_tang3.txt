@@ -18,6 +18,7 @@ Done.
 - Materialized view tong hop cho player comparison.
 - Plan: docs/plans/plan_live_state_mv_player_complete_stats.txt
 
+Done.
 5) ai_insight_jobs + ai_insight_feedback
 - Can thiet ke AI pipeline truoc khi trien khai.
 

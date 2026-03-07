@@ -1,8 +1,18 @@
+Done.
+
 LIVE_MATCH_STATE + MV_PLAYER_COMPLETE_STATS PLAN (Tang 2)
 Version: v1.3
 Date: 2026-03-07
 Owner: Data Pipeline
-Status: Planning (no code changes yet)
+Status: Implemented (Items 3+4 code-complete, deployed, validated)
+
+Implementation Notes (2026-03-07):
+- Item 3 (live_match_state): Schema DDL + dual-write + drift guard deployed earlier.
+- Item 4 (mv_player_complete_stats): MV deployed with all joins, 1351 rows.
+  Validation: row count match=True, fanout dupes=0, NULL policy violations=0,
+  GK isolation=clean, xG spot-check=correct (Haaland 22.83 xG / 22 goals).
+  Refresh hooks added in scheduler_master._refresh_views + run_pipeline.refresh_materialized_views.
+  LALIGA defensive/possession = 0 rows (source data not yet scraped — MV correctly NULLs).
 
 Verification Note (2026-03-07):
 - This v1.1 addressed verification round #1 findings:
