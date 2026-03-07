@@ -71,7 +71,7 @@ Start the central master scheduler again.
 sudo systemctl start scheduler-master
 sudo systemctl status scheduler-master
 
-# Or using your daemon.bat equivalent / bash run script:
+# Or using your Windows script `scripts/windows/daemon.bat` equivalent / bash run script:
 nohup python scheduler_master.py --league EPL LALIGA BUNDESLIGA SERIEA LIGUE1 &
 ```
 

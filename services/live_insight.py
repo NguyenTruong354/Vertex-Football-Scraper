@@ -8,7 +8,7 @@ If a threshold is met, it uses llm_client to generate a punchy, Vietnamese broad
 
 import logging
 from typing import Tuple, Dict, Any, Optional
-from llm_client import LLMClient
+from services.llm_client import LLMClient
 
 log = logging.getLogger(__name__)
 

@@ -141,7 +141,7 @@ Tạo file `daemon_master.bat`:
 
 ```bash
 # Windows
-daemon.bat
+scripts\\windows\\daemon.bat
 
 # Trực tiếp
 python run_daemon.py
@@ -296,9 +296,9 @@ python run_pipeline.py --quick-test        # Test nhanh
 python run_pipeline.py --load-only         # Chỉ load DB
 
 # ── Automation ────────────────────────────────────────────
-autorun.bat                                # Windows: 1 lần
+scripts\\windows\\autorun.bat              # Windows: 1 lần
 python run_daemon.py                       # 24/7 daemon
-daemon.bat                                 # Windows daemon
+scripts\\windows\\daemon.bat               # Windows daemon
 
 # ── Live tracking ─────────────────────────────────────────
 python live_match.py --today

@@ -71,7 +71,7 @@ from schemas_fbref import (
 
 # League registry (project root)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from league_registry import get_fbref_leagues, get_league, list_leagues  # noqa: E402
+from services.league_registry import get_fbref_leagues, get_league, list_leagues  # noqa: E402
 
 
 # ────────────────────────────────────────────────────────────

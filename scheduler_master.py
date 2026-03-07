@@ -35,7 +35,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
-import live_insight
+from services import live_insight
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
@@ -888,7 +888,7 @@ class PostMatchWorker:
     def _generate_match_story(self, match: dict) -> None:
         """Generate a 30-second AI match story and save to DB."""
         try:
-            import match_story
+            from services import match_story
             from db.config_db import get_connection
             event_id = match.get("event_id")
             if not event_id:
@@ -1113,7 +1113,7 @@ class DailyMaintenance:
             self.log.info("[DRY-RUN] Would analyze player trends")
             return
         try:
-            import player_trend
+            from services import player_trend
             total = 0
             for league in self.leagues:
                 if self._shutdown and self._shutdown.is_set():
@@ -1351,7 +1351,7 @@ class MasterScheduler:
                 self.log.info("[DRY-RUN] Would fetch RSS news")
             else:
                 try:
-                    import news_radar
+                    from services import news_radar
                     news_radar.run_and_save()
                 except Exception as exc:
                     self.log.error("News radar error: %s", exc)

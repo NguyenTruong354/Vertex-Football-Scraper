@@ -36,7 +36,7 @@
 --  10. gk_stats             — goalkeeper stats (FBref)
 --  11. player_defensive_stats — defensive actions (FBref)
 --  12. player_possession_stats — touches, carries, take-ons (FBref)
---  12b. match_passing_stats   — per-match passing data (FBref)
+--  12b. match_passing_stats   — per-match passing data (SofaScore)
 --  13. ss_events            — match events list (SofaScore)
 --  14. player_avg_positions — average positions (SofaScore)
 --  15. heatmaps             — heatmap summaries (SofaScore)

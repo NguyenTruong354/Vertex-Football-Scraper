@@ -4,7 +4,7 @@ Patch script to add auto-standings feature to scheduler_master.py on e2-micro.
 Run this ONCE on the server, then restart the service.
 
 Usage:
-    python3 patch_standings.py
+    python3 tools/maintenance/patch_standings.py
     sudo systemctl restart scheduler-master.service
 """
 import re

@@ -11,7 +11,7 @@
 ├── run_pipeline.py       # Chạy pipeline thủ công cho từng giải
 ├── live_match.py         # Module polling live data (SofaScore)
 ├── async_scraper.py      # Module cào Understat (Async)
-├── news_radar.py         # Tự động quét tin tức & chấn thương (RSS)
+├── services/news_radar.py # Tự động quét tin tức & chấn thương (RSS)
 ├── db/
 │   ├── schema.sql        # Định nghĩa 20+ bảng & Materialized Views
 │   ├── loader.py         # Logic chuẩn hóa & đẩy CSV vào PostgreSQL
@@ -143,7 +143,7 @@ POSTGRES_PASSWORD=your_password_here
 
 ## League Registry
 
-`league_registry.py` là single source of truth. Thêm giải mới chỉ cần 1 entry.
+`services/league_registry.py` là single source of truth. Thêm giải mới chỉ cần 1 entry.
 
 ### Giải đấu hỗ trợ hiện tại
 
@@ -162,7 +162,7 @@ POSTGRES_PASSWORD=your_password_here
 ### Thêm giải mới
 
 ```python
-# Trong league_registry.py, thêm vào LEAGUES dict:
+# Trong services/league_registry.py, thêm vào LEAGUES dict:
 "SCOTTISH_PREM": LeagueConfig(
     league_id="SCOTTISH_PREM",
     display_name="Scottish Premiership",

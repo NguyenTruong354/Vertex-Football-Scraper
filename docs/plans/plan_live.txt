@@ -1,0 +1,182 @@
+LIVE PIPELINE PLAN (scheduler_master)
+Version: v2
+Date: 2026-03-07
+Decision: KEEP current anti-ban core, add targeted upgrades only.
+
+1) Executive Decision
+- Do NOT replace existing anti-ban architecture in scheduler_master.
+- Keep current protections as baseline because they are already production-capable:
+  - global serialized requests via asyncio.Lock
+  - jitter pacing per request
+  - 429/403 split retries with separate multipliers
+  - persistent-block alerting (Discord)
+  - session recycle after request threshold
+  - round-robin load spreading across active matches
+- Only add incremental controls where missing (observability, circuit-breaker states, post-match flush safety).
+
+2) Why Keep Current Core (already working)
+Existing scheduler_master strengths:
+- Single shared HTTP session + lock prevents burst storms.
+- Human-like jitter already reduces bot-like timing signatures.
+- 429 and 403 are already treated differently.
+- Retry and backoff already exist and are stable.
+- Recycle policy reduces stale fingerprint/cookie buildup.
+- Live loop already reduces heavy calls (statistics every 3rd poll).
+
+Risk of full redesign now:
+- Higher regression risk than benefit.
+- Harder to debug under live traffic.
+- Could unintentionally increase request burst patterns.
+
+3) Keep vs Update Matrix
+Keep unchanged:
+- CurlCffiClient lock model.
+- Jitter model (2-4s random pacing).
+- Retry structure and recycle trigger.
+- Round-robin spacing in LiveTrackingPool.
+- Statistics every 3rd poll baseline.
+
+Update (safe incremental):
+- Add explicit anti-ban runtime states (NORMAL, THROTTLED_429, DEGRADED_403).
+- Add endpoint-tier throttling policy under stress.
+- Add metrics and alert thresholds (req/min, queue lag, skip count).
+- Add post-match flush incomplete flag for recovery.
+- Add Tier C trigger guard and cooldown map.
+
+4) Anti-Ban Runtime State Machine (new)
+State NORMAL
+- Use current behavior.
+- Tier A/B/C run by configured intervals.
+
+State THROTTLED_429 (trigger)
+- Enter when consecutive_429 >= 3 in a rolling window.
+- Actions for 5 minutes:
+  - Keep Tier A at 60s (core live only).
+  - Slow Tier B to >= 240s.
+  - Pause Tier C periodic pulls; allow event-driven only with 120s cooldown.
+  - Global sleep padding +20% over normal pacing.
+- Exit when 5 consecutive successful 200 responses on mixed endpoints.
+
+State DEGRADED_403 (trigger)
+- Enter when consecutive_403 >= 2 or any sustained 403 over 3 minutes.
+- Actions:
+  - Pause Tier C globally for 15 minutes.
+  - Slow Tier B to >= 300s.
+  - Tier A only, 90-120s adaptive spacing.
+  - Force session recycle once at state entry.
+  - Emit high-priority Discord alert once per hour (already partly present).
+- Exit when no 403 for 10 minutes and >= 8 successful 200 responses.
+
+5) Tier Policy (live data)
+Tier A: /event, /incidents
+- Target: realtime integrity.
+- Default: 60s.
+- Under THROTTLED_429: keep 60s.
+- Under DEGRADED_403: 90-120s.
+
+Tier B: /statistics
+- Default: every 3rd poll.
+- Under THROTTLED_429: min every 240s.
+- Under DEGRADED_403: min every 300s.
+
+Tier C: /lineups (passing + advanced snapshots)
+- Default periodic: every 300s.
+- Event-driven triggers (strict):
+  - goal
+  - red card / second yellow -> red
+  - VAR decision that changes goal validity
+  - substitution when minute >= 70
+- Not triggers:
+  - normal yellow
+  - early substitutions (<70)
+  - generic period incident markers
+- Cooldown:
+  - per match min 90s between Tier C fetches
+  - in THROTTLED_429: min 120s
+  - in DEGRADED_403: Tier C fully paused
+
+6) Match State Awareness (lightweight, no deep refactor)
+- Pre-match: Tier A every 120s.
+- Inprogress standard: Tier A every 60s.
+- High-volatility windows:
+  - 0-15 min: Tier A every 45s
+  - 70-90+ min: Tier A every 30-45s (if not throttled)
+- Halftime detection:
+  - enter HT when status.description in ("Halftime", "HT")
+  - resume when previous description was HT and current is not HT
+  - do not infer only by minute=46
+
+7) Post-Match Flush Safety (must have)
+On finished transition:
+1. Final pull sequence:
+- /event
+- /incidents
+- /statistics
+- /lineups
+2. Retry missing endpoints:
+- 10s, 30s, 60s
+3. Final writes:
+- live_snapshots final
+- live_incidents final
+- match_passing_stats upsert
+- match_player_advanced_stats upsert (when enabled)
+4. Fallback on failure:
+- set postmatch_flush_incomplete=true
+- keep postmatch_ready=false
+- daily/post-match worker must run compensation fetch
+
+8) Observability (new, required)
+Emit every 60s:
+- req_per_min_total
+- queue_lag_seconds
+- skipped_poll_count
+- active_matches
+- tier_b_calls, tier_c_calls
+- state_machine_status (NORMAL/THROTTLED_429/DEGRADED_403)
+
+Alerts:
+- req_per_min_total > 45 for 3 consecutive cycles
+- queue_lag_seconds > 60 for 3 consecutive cycles
+- DEGRADED_403 active > 10 minutes
+
+9) Capacity Policy by active matches
+<= 5 matches
+- Normal Tier A/B/C policy.
+
+6-10 matches
+- Tier B min 240s.
+- Tier C min 420s unless triggered.
+
+> 10 matches
+- Tier B min 300s.
+- Tier C event-driven only.
+- Hard cap: max 1 lineup pull/match/8 min.
+
+10) Implementation Steps (incremental, low risk)
+Step 1
+- Add runtime state machine enums + timers in scheduler_master.
+Step 2
+- Add metric counters and periodic metric log line.
+Step 3
+- Add Tier C trigger cooldown map.
+Step 4
+- Add post-match flush incomplete flags and compensation hook.
+Step 5
+- Add capacity policy thresholds by active match count.
+Step 6
+- Dry-run 24h (no schema changes), then 1-league live test.
+Step 7
+- Rollout all leagues.
+
+11) Acceptance Criteria
+- No increase in 403/429 incident rate after rollout.
+- req_per_min_total stays <= 45 most cycles; no sustained breach > 3 cycles.
+- queue_lag_seconds <= 60 for >= 95% cycles.
+- Tier A freshness maintained (core live data updates within 60-90s depending state).
+- postmatch_flush_incomplete <= 1% matches/day and all compensated by daily run.
+- No duplicate rows in match-level upsert tables.
+
+12) Final Recommendation
+- Keep anti-ban core as-is.
+- Implement only the incremental controls above.
+- Do not add multi-process/multi-terminal live workers; keep single scheduler_master authority.

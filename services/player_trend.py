@@ -10,7 +10,7 @@ and generates a short AI-written explanation saved to `player_insights`.
 import json
 import logging
 from typing import Optional
-from llm_client import LLMClient
+from services.llm_client import LLMClient
 
 log = logging.getLogger(__name__)
 llm = LLMClient()

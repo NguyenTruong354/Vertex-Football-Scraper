@@ -6,9 +6,9 @@
 :: Xem docs/05_autorun.md de biet cach cau hinh.
 :: ============================================================
 
-set PROJECT_DIR=%~dp0
-set PYTHON=%PROJECT_DIR%.venv\Scripts\python.exe
-set LOG_DIR=%PROJECT_DIR%logs
+for %%I in ("%~dp0..\..") do set PROJECT_DIR=%%~fI
+set PYTHON=%PROJECT_DIR%\.venv\Scripts\python.exe
+set LOG_DIR=%PROJECT_DIR%\logs
 
 :: Tao thu muc log neu chua co
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"

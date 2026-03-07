@@ -20,7 +20,7 @@ from pathlib import Path
 
 # Import league registry (nằm ở thư mục cha)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from league_registry import LeagueConfig, get_league  # noqa: E402
+from services.league_registry import LeagueConfig, get_league  # noqa: E402
 
 # ────────────────────────────────────────────────────────────
 # 1. HTTP HEADERS

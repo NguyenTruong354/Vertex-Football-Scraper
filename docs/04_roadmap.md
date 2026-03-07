@@ -33,7 +33,7 @@ CSV Output           PostgreSQL           Celery + Redis        Kubernetes
 > 4 nguồn scraping, multi-league, PostgreSQL, live tracking.
 
 ### 2.1 League Registry ✅
-- [x] `league_registry.py` — Single source of truth cho tất cả giải đấu
+- [x] `services/league_registry.py` — Single source of truth cho tất cả giải đấu
 - [x] 9 leagues: EPL, LALIGA, BUNDESLIGA, SERIEA, LIGUE1, RFPL, UCL, EREDIVISIE, LIGA_PORTUGAL
 - [x] Thêm giải mới chỉ cần 1 entry
 
@@ -58,9 +58,9 @@ CSV Output           PostgreSQL           Celery + Redis        Kubernetes
 
 ### 2.5 Pipeline Orchestrator ✅
 - [x] `run_pipeline.py` — chạy 4 scrapers + load DB trong 1 lệnh
-- [x] `autorun.bat` (Windows) — bat file cho Task Scheduler
+- [x] `scripts/windows/autorun.bat` (Windows) — bat file cho Task Scheduler
 - [x] `run_daemon.py` — 24/7 daemon với 3-tier scheduling
-- [x] `daemon.bat` — Windows bat file cho daemon
+- [x] `scripts/windows/daemon.bat` — Windows bat file cho daemon
 
 ### 2.6 Live Match Tracker ✅
 - [x] `live_match.py` (~1,039 lines) — real-time live match tracking
