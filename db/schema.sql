@@ -49,6 +49,9 @@
 --  21. player_insights       — AI-generated performance trends
 --  22. news_feed            — RSS news aggregator
 --  23. live_incidents      — live match incidents (goals, cards...)
+--  26. team_registry       — anchor table seeded from standings
+--  27. team_canonical      — cross-source team name mapping
+--  28. match_crossref      — cross-source match bridging
 -- ============================================================
 
 -- ============================================================
@@ -1021,6 +1024,119 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_team_profiles_id ON mv_team_profiles(fb
 
 
 -- ============================================================
+-- NHÓM K: TEAM CANONICAL + MATCH CROSSREF (Tầng 2 foundation)
+-- ============================================================
+
+-- ──────────────────────────────────────────────────────────
+-- 26. TEAM_REGISTRY — anchor table seeded from standings
+--     PK: (league_id, fbref_team_id)
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS team_registry (
+    league_id       TEXT NOT NULL,
+    fbref_team_id   TEXT NOT NULL,
+    fbref_team_name TEXT,
+    is_active       BOOLEAN DEFAULT TRUE,
+    loaded_at       TIMESTAMPTZ DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ,
+    PRIMARY KEY (league_id, fbref_team_id)
+);
+
+-- ──────────────────────────────────────────────────────────
+-- 27. TEAM_CANONICAL — cross-source team name mapping
+--     FK → team_registry
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS team_canonical (
+    league_id          TEXT NOT NULL,
+    fbref_team_id      TEXT NOT NULL,
+    canonical_name     TEXT NOT NULL,
+
+    fbref_name         TEXT,
+    understat_name     TEXT,
+    sofascore_name     TEXT,
+    tm_name            TEXT,
+
+    sofascore_team_id  INTEGER,
+    tm_team_id         TEXT,
+
+    is_active          BOOLEAN DEFAULT TRUE,
+    matched_by         TEXT DEFAULT 'manual_seed',
+    loaded_at          TIMESTAMPTZ DEFAULT NOW(),
+    updated_at         TIMESTAMPTZ,
+
+    PRIMARY KEY (league_id, fbref_team_id),
+    CONSTRAINT fk_tc_team_registry
+        FOREIGN KEY (league_id, fbref_team_id)
+        REFERENCES team_registry (league_id, fbref_team_id)
+        ON DELETE RESTRICT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_team_canonical_league_name
+    ON team_canonical (league_id, canonical_name);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_team_canonical_sofascore_id
+    ON team_canonical (league_id, sofascore_team_id)
+    WHERE sofascore_team_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_team_canonical_tm_id
+    ON team_canonical (league_id, tm_team_id)
+    WHERE tm_team_id IS NOT NULL;
+
+-- ──────────────────────────────────────────────────────────
+-- 28. MATCH_CROSSREF — cross-source match bridging
+--     FK → team_registry (home + away)
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS match_crossref (
+    crossref_id           BIGSERIAL PRIMARY KEY,
+    understat_match_id    BIGINT,
+    fbref_match_id        TEXT,
+    sofascore_event_id    BIGINT,
+
+    home_fbref_team_id    TEXT NOT NULL,
+    away_fbref_team_id    TEXT NOT NULL,
+    match_date            DATE NOT NULL,
+    original_date         DATE,
+    is_rescheduled        BOOLEAN DEFAULT FALSE,
+
+    league_id             TEXT NOT NULL DEFAULT 'EPL',
+    season                TEXT,
+
+    matched_by            TEXT DEFAULT 'auto_exact',
+    confidence            REAL DEFAULT 1.0,
+    notes                 TEXT,
+    loaded_at             TIMESTAMPTZ DEFAULT NOW(),
+    updated_at            TIMESTAMPTZ,
+
+    CONSTRAINT fk_mcr_home_team
+        FOREIGN KEY (league_id, home_fbref_team_id)
+        REFERENCES team_registry (league_id, fbref_team_id)
+        ON DELETE RESTRICT,
+    CONSTRAINT fk_mcr_away_team
+        FOREIGN KEY (league_id, away_fbref_team_id)
+        REFERENCES team_registry (league_id, fbref_team_id)
+        ON DELETE RESTRICT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_mcr_understat
+    ON match_crossref (league_id, understat_match_id)
+    WHERE understat_match_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_mcr_fbref
+    ON match_crossref (league_id, fbref_match_id)
+    WHERE fbref_match_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_mcr_sofascore
+    ON match_crossref (league_id, sofascore_event_id)
+    WHERE sofascore_event_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_mcr_fixture_key
+    ON match_crossref (league_id, season, home_fbref_team_id, away_fbref_team_id, match_date);
+
+CREATE INDEX IF NOT EXISTS idx_mcr_understat ON match_crossref (understat_match_id);
+CREATE INDEX IF NOT EXISTS idx_mcr_fbref     ON match_crossref (fbref_match_id);
+CREATE INDEX IF NOT EXISTS idx_mcr_sofascore ON match_crossref (sofascore_event_id);
+
+
+-- ============================================================
 -- NHÓM J: UPDATED_AT TRIGGER + COLUMNS
 -- ============================================================
 -- Tự động set updated_at = NOW() khi row bị UPDATE.
@@ -1049,6 +1165,9 @@ ALTER TABLE match_passing_stats     ADD COLUMN IF NOT EXISTS updated_at TIMESTAM
 ALTER TABLE match_player_advanced_stats ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
 ALTER TABLE market_values           ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
 ALTER TABLE player_crossref         ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+ALTER TABLE team_registry           ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+ALTER TABLE team_canonical          ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+ALTER TABLE match_crossref          ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
 
 -- Tạo trigger cho mỗi bảng (DROP IF EXISTS → idempotent)
 DO $$ 
@@ -1061,7 +1180,8 @@ BEGIN
         'player_defensive_stats', 'player_possession_stats',
         'fixtures', 'gk_stats', 'ss_events',
         'match_passing_stats', 'match_player_advanced_stats',
-        'market_values', 'player_crossref'
+        'market_values', 'player_crossref',
+        'team_registry', 'team_canonical', 'match_crossref'
     ])
     LOOP
         EXECUTE format(

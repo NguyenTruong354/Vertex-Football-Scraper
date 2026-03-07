@@ -1,0 +1,310 @@
+TEAM_CANONICAL + MATCH_CROSSREF PLAN (Tang 2 foundation)
+Version: v1.1
+Date: 2026-03-07
+Owner: Data Pipeline
+
+0) Goal
+- Tao lop chuan hoa team va bridge match giua 3 nguon: Understat, FBref, SofaScore.
+- Loai bo join text truc tiep theo home_team/away_team de tranh silent mismatch.
+- Tao du lieu foundation cho cac tinh nang sau: comparison, AI insight, live, reports.
+
+1) Decision Summary
+- Lam theo 2 phase phu thuoc:
+  Phase A: team_canonical (bat buoc truoc)
+  Phase B: match_crossref (dua tren team da canonical)
+- Team anchor chinh: fbref_team_id (khong tao namespace canonical_id tu do).
+- Builder location chot: Python scripts trong tools/maintenance, duoc orchestrate sau db_load.
+- Khong thay doi crawler ngay lap tuc, uu tien load + map + validate.
+- Rollout shadow truoc khi cho downstream query dung mac dinh.
+
+2) Scope v1
+Include:
+- New table: team_registry (anchor from standings)
+- New table: team_canonical
+- New table: match_crossref
+- Mapping script team aliases from 4 sources (fbref, understat, sofascore, transfermarkt)
+- Crossref builder by source IDs first, date/team only as supporting signal
+- Confidence scoring + matched_by fields
+- Validation queries + anomaly reports
+
+Out of scope v1:
+- Auto fuzzy matching tu do khong guardrail
+- Multi-league auto onboarding 100%
+- Refactor all existing business queries ngay lap tuc
+
+3) Data Model - team_canonical
+Proposed tables:
+
+CREATE TABLE IF NOT EXISTS team_registry (
+  league_id       TEXT NOT NULL,
+  fbref_team_id   TEXT NOT NULL,
+  fbref_team_name TEXT,
+  is_active       BOOLEAN DEFAULT TRUE,
+  loaded_at       TIMESTAMPTZ DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ,
+  PRIMARY KEY (league_id, fbref_team_id)
+);
+
+-- team_registry duoc build tu standings (distinct team_id theo league)
+-- va la parent table de tranh canonical anchor bi "troi" khoi source reliable.
+
+CREATE TABLE IF NOT EXISTS team_canonical (
+  league_id          TEXT NOT NULL,
+  fbref_team_id      TEXT NOT NULL,
+  canonical_name     TEXT NOT NULL,
+
+    fbref_name         TEXT,
+    understat_name     TEXT,
+    sofascore_name     TEXT,
+    tm_name            TEXT,
+
+    sofascore_team_id  INTEGER,
+    tm_team_id         TEXT,
+
+    is_active          BOOLEAN DEFAULT TRUE,
+    matched_by         TEXT DEFAULT 'manual_seed', -- manual_seed|auto_exact|auto_alias
+    loaded_at          TIMESTAMPTZ DEFAULT NOW(),
+  updated_at         TIMESTAMPTZ,
+
+  PRIMARY KEY (league_id, fbref_team_id),
+  CONSTRAINT fk_tc_team_registry
+    FOREIGN KEY (league_id, fbref_team_id)
+    REFERENCES team_registry (league_id, fbref_team_id)
+    ON DELETE RESTRICT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_team_canonical_league_name
+    ON team_canonical (league_id, canonical_name);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_team_canonical_sofascore_id
+    ON team_canonical (league_id, sofascore_team_id)
+    WHERE sofascore_team_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_team_canonical_tm_id
+    ON team_canonical (league_id, tm_team_id)
+    WHERE tm_team_id IS NOT NULL;
+
+Notes:
+- understat currently khong co team_id on dinh => giu understat_name lam alias v1.
+- Neu sau nay co understat team_id reliable, add them sau.
+- canonical key khong con la chuoi tu do; dung fbref_team_id de tranh sai namespace.
+
+4) Data Model - match_crossref
+Proposed table:
+
+CREATE TABLE IF NOT EXISTS match_crossref (
+  crossref_id            BIGSERIAL PRIMARY KEY,
+    understat_match_id    BIGINT,
+    fbref_match_id        TEXT,
+    sofascore_event_id    BIGINT,
+
+  home_fbref_team_id    TEXT NOT NULL,
+  away_fbref_team_id    TEXT NOT NULL,
+    match_date            DATE NOT NULL,
+  original_date         DATE,
+  is_rescheduled        BOOLEAN DEFAULT FALSE,
+
+    league_id             TEXT NOT NULL DEFAULT 'EPL',
+    season                TEXT,
+
+    matched_by            TEXT DEFAULT 'auto_exact', -- auto_exact|auto_date_window|manual
+    confidence            REAL DEFAULT 1.0,
+    notes                 TEXT,
+    loaded_at             TIMESTAMPTZ DEFAULT NOW(),
+    updated_at            TIMESTAMPTZ,
+
+  CONSTRAINT fk_mcr_home_team
+    FOREIGN KEY (league_id, home_fbref_team_id)
+    REFERENCES team_registry (league_id, fbref_team_id)
+    ON DELETE RESTRICT,
+  CONSTRAINT fk_mcr_away_team
+    FOREIGN KEY (league_id, away_fbref_team_id)
+    REFERENCES team_registry (league_id, fbref_team_id)
+    ON DELETE RESTRICT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_mcr_understat
+  ON match_crossref (league_id, understat_match_id)
+  WHERE understat_match_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_mcr_fbref
+  ON match_crossref (league_id, fbref_match_id)
+  WHERE fbref_match_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_mcr_sofascore
+  ON match_crossref (league_id, sofascore_event_id)
+  WHERE sofascore_event_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_mcr_fixture_key
+  ON match_crossref (league_id, season, home_fbref_team_id, away_fbref_team_id, match_date);
+
+CREATE INDEX IF NOT EXISTS idx_mcr_understat ON match_crossref (understat_match_id);
+CREATE INDEX IF NOT EXISTS idx_mcr_fbref     ON match_crossref (fbref_match_id);
+CREATE INDEX IF NOT EXISTS idx_mcr_sofascore ON match_crossref (sofascore_event_id);
+
+5) Matching Strategy
+Step 1: Build team canonical map
+- Seed team_registry from standings.team_id + team_name (nguon reliable nhat).
+- team_canonical phai map 1-1 vao (league_id, fbref_team_id).
+- Enrich aliases from:
+  - fixtures.home_team / away_team + home_team_id / away_team_id
+  - ss_events.home_team / away_team + home_team_id / away_team_id
+  - team_metadata.team_name + team_id (transfermarkt)
+  - match_stats.h_team / a_team (understat names)
+
+Step 2: Normalize names (deterministic)
+- lower()
+- trim()
+- collapse spaces
+- unicode normalization (NFD/NFKD) + strip diacritics: "Atletico" vs "Atletico"
+- unify apostrophe variants (U+2019 -> U+0027)
+- remove punctuation noise (., -, apostrophe variants)
+- abbreviation map (deterministic):
+  - utd -> united
+  - fc -> ''
+  - afc -> ''
+  - cf -> ''
+- khong fuzzy ratio o v1 (de tranh false positive)
+
+Step 3: Resolve team to canonical anchor
+- Priority:
+  1) by source team_id (fbref/sofascore/tm)
+  2) by exact normalized alias
+  3) unresolved -> write to review queue (manual)
+
+Output key cho team v1:
+- (league_id, fbref_team_id)
+
+Step 4: Build match candidate sets
+- Understat key: date(match_stats.datetime_str), h_team, a_team
+- FBref key: fixtures.date, home_team, away_team
+- SofaScore key: ss_events.match_date, home_team, away_team
+- Convert all to (home_fbref_team_id, away_fbref_team_id) truoc khi join.
+
+Step 5: Match rules
+- Rule A (confidence 1.0): exact same date + home_fbref_team_id + away_fbref_team_id
+- Rule B (confidence 0.9): +/- 1 day window + home_fbref_team_id + away_fbref_team_id (timezone edge)
+- Rule C (confidence 0.7): one source missing id but 2 sources agree key
+- Else unresolved -> manual.
+
+Rescheduled handling (critical):
+- Anchor row by source IDs (understat/fbref/sofascore) qua unique partial indexes, KHONG anchor bang date-home-away.
+- Neu cung source match_id da ton tai nhung date doi:
+  1) set original_date = old match_date (neu original_date null)
+  2) update match_date = new date
+  3) set is_rescheduled = TRUE
+  4) append notes with source + timestamp
+- Drift check cap nhat:
+  - 1 source ID -> >1 row la BUG (must be 0)
+  - date changed with same source ID + is_rescheduled=TRUE la EXPECTED.
+
+6) Loader / Builder Design
+Builder location (final decision):
+- Python scripts in tools/maintenance
+- Called after db_load in pipeline (shadow first)
+- Reason: de debug/business logic de hon SQL procedure, de test unit, de add report file.
+
+New builders:
+- build_team_canonical.py
+- build_match_crossref.py
+
+Recommended execution order:
+1. Load core source tables (match_stats, fixtures, ss_events, standings)
+2. Build/refresh team_registry
+3. Build/refresh team_canonical
+4. Build/refresh match_crossref
+5. Run sanity SQL and export unresolved report
+
+Idempotency:
+- Upsert by PK/unique keys
+- ON CONFLICT DO UPDATE set aliases, ids, confidence, updated_at
+
+7) Validation Plan
+A) Team canonical checks
+- No duplicate mapping by source id per league
+- Alias collision report (1 alias map to >1 fbref_team_id)
+- Coverage:
+  - % fixtures teams resolved
+  - % ss_events teams resolved
+  - % understat teams resolved
+
+B) Match crossref checks
+- ID linkage coverage:
+  - % rows has understat_match_id
+  - % rows has fbref_match_id
+  - % rows has sofascore_event_id
+  - % rows has all 3 ids
+- Drift check:
+  - same understat_match_id map >1 crossref row => must be 0
+  - same fbref_match_id map >1 crossref row => must be 0
+  - same sofascore_event_id map >1 crossref row => must be 0
+  - date changed for same source id must set is_rescheduled=TRUE and original_date not null
+
+8) Rollout Plan
+Phase 0: Dry run (local)
+- Build on EPL only, no downstream dependency switch.
+
+Phase 1: Shadow run (3-5 daily cycles)
+- Run builder after pipeline.
+- Keep old joins active; only log and compare outputs.
+
+Phase 2: Controlled adoption
+- Migrate selected queries to use match_crossref + team_canonical.
+- Keep fallback to old join for one release window.
+
+Phase 3: Official
+- Default all cross-source joins via match_crossref.
+- Alert on unresolved teams/matches above threshold.
+
+9) Monitoring & Alert Thresholds
+Metrics:
+- team_canonical_total
+- team_unresolved_count
+- match_crossref_total
+- match_crossref_triple_link_rate
+- unresolved_match_count
+- low_confidence_count
+- confidence_regression_count      -- so row bi downgrade confidence
+- bulk_updated_rows_24h            -- so row updated bat thuong trong 24h
+
+Warn if:
+- team_unresolved_count > 0 for EPL in official phase
+- triple_link_rate drops > 5% day-over-day
+- unresolved_match_count > baseline + 3
+- confidence_regression_count > 0 (official phase)
+- bulk_updated_rows_24h > baseline x 3
+
+10) Risks and Mitigation
+Risk 1: Team rename / alias drift
+- Mitigation: alias table update + manual review queue.
+
+Risk 2: Timezone/date mismatch around midnight
+- Mitigation: rule B (+/- 1 day) with lower confidence.
+
+Risk 3: Postponed/rescheduled fixtures
+- Mitigation: source-id anchored upsert + original_date + is_rescheduled.
+
+Risk 4: False positive if fuzzy enabled too early
+- Mitigation: keep deterministic exact matching in v1.
+
+11) Deliverables
+- DDL in db/schema.sql for team_canonical + match_crossref
+- Builder scripts and optional loader hooks
+- Validation SQL scripts and unresolved reports
+- Runbook for manual correction process
+
+12) Definition of Done
+- team_canonical built with >= 99% team coverage for EPL source tables
+- match_crossref built with stable PK and no duplicate key violations
+- Triple-link target duoc chot theo baseline that te:
+  - Shadow acceptance: >= baseline_historical - 3%
+  - Official target: >= baseline_historical (khong hardcode 95% neu data source khong dong deu)
+- unresolved items exported for manual triage
+- shadow run stable for at least 3 daily cycles
+
+13) Suggested next action
+- Implement Phase A first:
+  1) Add team_registry + team_canonical DDL
+  2) Create seed builder from standings/fixtures/ss_events/team_metadata + normalize unicode/abbrev map
+  3) Run EPL dry validation va do baseline triple-link lich su
+- Only after Team A stable -> start Phase B match_crossref builder.
