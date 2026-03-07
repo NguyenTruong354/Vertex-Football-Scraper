@@ -789,8 +789,37 @@ class LiveTrackingPool:
                 state.poll_count,
             ))
 
-            # ── 2. New: live_match_state (lightweight, no blob) ──
-            # Build stats_core_json: only UI-critical subset
+            # ── 2. Incidents (seq auto-increments) ──
+            for inc in state.incidents:
+                inc_type = inc.get("incidentType", "")
+                if inc_type not in ("goal", "card", "substitution", "varDecision"):
+                    continue
+                cur.execute("""
+                    INSERT INTO live_incidents
+                        (event_id, incident_type, minute, added_time,
+                         player_name, player_in_name, player_out_name,
+                         is_home, detail)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (event_id, incident_type, minute, COALESCE(player_name, ''), is_home)
+                    DO UPDATE SET
+                        added_time     = EXCLUDED.added_time,
+                        player_in_name = EXCLUDED.player_in_name,
+                        player_out_name= EXCLUDED.player_out_name,
+                        is_home        = EXCLUDED.is_home,
+                        detail         = EXCLUDED.detail,
+                        loaded_at      = NOW()
+                """, (
+                    state.event_id, inc_type,
+                    inc.get("time"), inc.get("addedTime"),
+                    inc.get("player", {}).get("name"),
+                    inc.get("playerIn", {}).get("name"),
+                    inc.get("playerOut", {}).get("name"),
+                    inc.get("isHome"),
+                    inc.get("incidentClass", ""),
+                ))
+
+            # ── 3. New: live_match_state (lightweight, no blob) ──
+            # Build stats_core_json: only UI-critical subset.
             stats_core = {}
             _CORE_KEYS = ("Ball possession", "Shots on target",
                           "Expected goals", "Dangerous attacks")
@@ -799,7 +828,7 @@ class LiveTrackingPool:
                     stats_core[key] = state.statistics[key]
             stats_core_json = json.dumps(stats_core, ensure_ascii=False) if stats_core else None
 
-            # Get max seq from live_incidents for this event
+            # Compute last processed seq after incident upserts so cursor is current.
             cur.execute(
                 "SELECT MAX(seq) FROM live_incidents WHERE event_id = %s",
                 (state.event_id,),
@@ -829,35 +858,6 @@ class LiveTrackingPool:
                 state.insight_text, stats_core_json,
                 max_seq,
             ))
-
-            # ── 3. Incidents (unchanged, seq auto-increments) ──
-            for inc in state.incidents:
-                inc_type = inc.get("incidentType", "")
-                if inc_type not in ("goal", "card", "substitution", "varDecision"):
-                    continue
-                cur.execute("""
-                    INSERT INTO live_incidents
-                        (event_id, incident_type, minute, added_time,
-                         player_name, player_in_name, player_out_name,
-                         is_home, detail)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (event_id, incident_type, minute, COALESCE(player_name, ''))
-                    DO UPDATE SET
-                        added_time     = EXCLUDED.added_time,
-                        player_in_name = EXCLUDED.player_in_name,
-                        player_out_name= EXCLUDED.player_out_name,
-                        is_home        = EXCLUDED.is_home,
-                        detail         = EXCLUDED.detail,
-                        loaded_at      = NOW()
-                """, (
-                    state.event_id, inc_type,
-                    inc.get("time"), inc.get("addedTime"),
-                    inc.get("player", {}).get("name"),
-                    inc.get("playerIn", {}).get("name"),
-                    inc.get("playerOut", {}).get("name"),
-                    inc.get("isHome"),
-                    inc.get("incidentClass", ""),
-                ))
 
             conn.commit()
             cur.close()
