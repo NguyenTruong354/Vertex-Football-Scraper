@@ -1,3 +1,5 @@
+Done.
+
 TEAM_CANONICAL + MATCH_CROSSREF PLAN (Tang 2 foundation)
 Version: v1.1
 Date: 2026-03-07

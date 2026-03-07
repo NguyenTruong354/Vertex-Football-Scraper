@@ -43,8 +43,9 @@ ABBREVIATION_MAP = {
 
 # Known alias clusters: all forms → single canonical normalized form.
 # Key = normalized variant, Value = canonical normalized form.
-# Built from common EPL/European name differences across sources.
+# Built from common name differences across sources for all leagues.
 ALIAS_MAP = {
+    # ── EPL ──────────────────────────────────────────────────
     "wolves": "wolverhampton wanderers",
     "wolverhampton": "wolverhampton wanderers",
     "tottenham": "tottenham hotspur",
@@ -61,6 +62,57 @@ ALIAS_MAP = {
     "nottm forest": "nottingham forest",
     "leicester": "leicester city",
     "palace": "crystal palace",
+    # ── LA LIGA ──────────────────────────────────────────────
+    "deportivo alaves": "alaves",
+    "athletic bilbao": "athletic club",
+    "atletico de madrid": "atletico madrid",
+    "celta de vigo": "celta vigo",
+    "rcd espanyol barcelona": "espanyol",
+    "rcd mallorca": "mallorca",
+    "ca osasuna": "osasuna",
+    "oviedo": "real oviedo",
+    "real betis balompie": "real betis",
+    "levante ud": "levante",
+    # ── BUNDESLIGA ───────────────────────────────────────────
+    "bayern munchen": "bayern munich",
+    "1 heidenheim": "heidenheim",
+    "1 heidenheim 1846": "heidenheim",
+    "1fc heidenheim 1846": "heidenheim",
+    "1 koln": "koln",
+    "cologne": "koln",
+    "1fc koln": "koln",
+    "1 union berlin": "union berlin",
+    "1fc union berlin": "union berlin",
+    "1 fsv mainz 05": "mainz 05",
+    "1fsv mainz 05": "mainz 05",
+    "bayer 04 leverkusen": "bayer leverkusen",
+    "borussia mgladbach": "borussia monchengladbach",
+    "borussia m gladbach": "borussia monchengladbach",
+    "sv werder bremen": "werder bremen",
+    "tsg hoffenheim": "hoffenheim",
+    "tsg 1899 hoffenheim": "hoffenheim",
+    "vfl wolfsburg": "wolfsburg",
+    "rasenballsport leipzig": "rb leipzig",
+    # ── SERIE A ──────────────────────────────────────────────
+    "ac milan": "milan",
+    "hellas verona": "verona",
+    "parma calcio 1913": "parma",
+    "ssc napoli": "napoli",
+    "as roma": "roma",
+    # ── LIGUE 1 ──────────────────────────────────────────────
+    "as monaco": "monaco",
+    "olympique de marseille": "marseille",
+    "olympique lyonnais": "lyon",
+    "rc lens": "lens",
+    "rc strasbourg": "strasbourg",
+    "rc strasbourg alsace": "strasbourg",
+    "stade brestois": "brest",
+    "stade rennais": "rennes",
+    "ogc nice": "nice",
+    "saint etienne": "st etienne",
+    "as saint etienne": "st etienne",
+    "stade de reims": "reims",
+    "angers": "angers",
 }
 
 
@@ -104,14 +156,30 @@ def normalize_team_name(name: str) -> str:
 def _fetch_standings_teams(cur, league_id: str) -> list[dict]:
     """Get distinct (team_id, team_name) from standings.
 
-    Filters to only FBref team_ids (8-char hex strings) to exclude
-    SofaScore numeric IDs that may have leaked into standings.
+    For leagues WITH FBref data (hex8 IDs present): filter to hex8 only
+    to exclude SofaScore numeric IDs that may have leaked into standings.
+    For leagues WITHOUT FBref data: accept all standings IDs as anchor.
     """
     cur.execute(
-        "SELECT DISTINCT team_id, team_name FROM standings "
+        "SELECT COUNT(*) FROM standings "
         "WHERE league_id = %s AND team_id ~ '^[0-9a-f]{8}$'",
         (league_id,),
     )
+    has_fbref = cur.fetchone()[0] > 0
+
+    if has_fbref:
+        cur.execute(
+            "SELECT DISTINCT team_id, team_name FROM standings "
+            "WHERE league_id = %s AND team_id ~ '^[0-9a-f]{8}$'",
+            (league_id,),
+        )
+    else:
+        logger.info("No FBref hex IDs for %s — using all standings IDs as anchor", league_id)
+        cur.execute(
+            "SELECT DISTINCT team_id, team_name FROM standings "
+            "WHERE league_id = %s",
+            (league_id,),
+        )
     return [{"fbref_team_id": r[0], "fbref_team_name": r[1]} for r in cur.fetchall()]
 
 
