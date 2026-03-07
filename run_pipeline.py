@@ -123,12 +123,16 @@ def populate_tm_crossref(league: str) -> bool:
 
 
 def refresh_materialized_views(league: str) -> bool:
+    # Strict refresh order: helper → v2 → legacy → downstream
     cmd = [
         PYTHON, "-c",
         "from db.config_db import get_connection; conn = get_connection(); "
         "cur = conn.cursor(); "
+        "cur.execute('REFRESH MATERIALIZED VIEW CONCURRENTLY mv_tm_player_candidates;'); "
         "cur.execute('REFRESH MATERIALIZED VIEW CONCURRENTLY mv_player_profiles;'); "
+        "cur.execute('REFRESH MATERIALIZED VIEW CONCURRENTLY mv_player_profiles_v2;'); "
         "cur.execute('REFRESH MATERIALIZED VIEW CONCURRENTLY mv_team_profiles;'); "
+        "cur.execute('REFRESH MATERIALIZED VIEW CONCURRENTLY mv_team_profiles_v2;'); "
         "cur.execute('REFRESH MATERIALIZED VIEW CONCURRENTLY mv_player_complete_stats;'); "
         "conn.commit(); cur.close(); conn.close();"
     ]

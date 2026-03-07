@@ -1,10 +1,43 @@
 Done.
 
 MV NAME-MATCHING IMPROVEMENT PLAN (Tang 3)
-Version: v1.0
+Version: v1.2
 Date: 2026-03-07
 Owner: Data Pipeline
-Status: Planning (no code changes yet)
+Status: Implemented (Phase B shadow mode — v2 MVs live alongside old MVs)
+
+Implementation Record (2026-03-07):
+- Baked in feedback: mv_tm_player_candidates mandatory (not optional);
+  Phase E must retain helper MV and rename refresh references when swapping.
+- Phase A baseline recorded:
+    Player: 1351 rows, image 70.47%, value 70.39%
+    Team: 136 rows, logo coverage 40
+    Ambiguous name groups: 1
+    team_canonical: 96 rows (60 with tm_team_id)
+    player_crossref: 1022 rows (952 with tm_player_id)
+- Phase B deployed:
+    mv_tm_player_candidates: 1611 rows (from market_values)
+    mv_player_profiles_v2:   1351 rows (952 crossref_tm_id, 399 unmatched)
+    mv_team_profiles_v2:      136 rows (60 canonical_tm_id, 17 name_fallback, 59 unmatched)
+- Phase C validation results:
+    Player coverage: identical to old (70.47% img, 70.39% val) — zero regression
+    Team logo coverage: improved from 40 → 75 (+87.5% via canonical mapping)
+    Image gained/lost: 0/0
+    Market value >50% change: 0
+    No suspicious changes detected
+- Code changes:
+    db/schema.sql: added 3 new MVs (25b, 25c, 25d) with indexes
+    run_pipeline.py: strict refresh order (helper → v2 → legacy → downstream)
+    scheduler_master.py: added v2 MVs to refresh list in dependency order
+- Remaining Phase D/E: swap v2 as default when downstream consumers ready
+
+Review Update (2026-03-07):
+- This v1.1 addresses blocking/medium feedback:
+  1) Add explicit MV refresh dependency order to prevent stale helper reads.
+  2) Document known transfer-lag limitation for Priority 3 name-only fallback.
+  3) Set `match_confidence` convention to numeric (0.0 for unmatched).
+  4) Define deterministic suspicious-change thresholds for Phase C automation.
+  5) Add mandatory baseline coverage SQL in Phase A before any v2 build.
 
 0) Goal
 - Improve name-matching quality in profile MVs after `team_canonical` is available.
@@ -35,6 +68,8 @@ Status: Planning (no code changes yet)
 - `mv_tm_player_candidates` precomputes normalized candidate rows from `market_values`:
   - `tm_player_id`, `league_id`, `tm_team_id`, `player_name_norm`, `team_name_norm`,
     `market_value_numeric`, `player_image_url`, `loaded_at`.
+- Dependency rule (critical): if this helper MV is enabled, all downstream refreshes must
+  treat it as a hard prerequisite for `mv_player_profiles_v2`.
 
 4.2 Player profile matching order (deterministic)
 Priority 1: `player_crossref.tm_player_id` exact match.
@@ -51,6 +86,12 @@ Priority 2: canonical team-constrained name match:
 Priority 3: name-only fallback (guarded):
 - only when unique candidate in same league
 - if multiple candidates: do not pick, keep NULL (avoid false positives)
+- Known limitation v1:
+  - Mid-season transfer lag between `squad_rosters` (FBref) and `market_values`
+    (Transfermarkt) can create temporary team inconsistency for `name_only_unique`
+    matches (profile team from roster, value/image from updated TM row).
+  - Mitigation: flag all `matched_by = 'name_only_unique'` rows for manual review
+    after each transfer window.
 
 Tie-breaker order (when >1 candidate in same priority):
 1) exact `tm_team_id` hit
@@ -74,12 +115,21 @@ For player profile MV v2:
   - 1.00 for exact ID
   - 0.90 for canonical team-constrained name
   - 0.60 for unique name-only
-  - NULL for unmatched
+  - 0.00 for unmatched (convention: never use NULL)
 
 5) Implementation Plan
 Phase A: Diagnostics
 - Build analysis query for ambiguous names per league.
 - Baseline current coverage and known mismatch sample.
+- Mandatory baseline SQL before Phase B:
+  ```sql
+  SELECT
+      COUNT(*) FILTER (WHERE player_image_url IS NOT NULL) * 100.0 / COUNT(*) AS image_coverage_pct,
+      COUNT(*) FILTER (WHERE market_value_numeric IS NOT NULL) * 100.0 / COUNT(*) AS value_coverage_pct
+  FROM mv_player_profiles;
+  ```
+- Record baseline outputs in rollout notes; Phase C non-regression checks must compare
+  against these exact baseline values.
 
 Phase B: Build v2 MVs (shadow)
 - Create `mv_player_profiles_v2` and `mv_team_profiles_v2` with new matching logic.
@@ -89,7 +139,10 @@ Phase C: Diff validation
 - Compare old vs v2 on:
   - coverage rate (`player_image_url` not null)
   - market value fill rate
-  - suspicious changes list (large value jumps, team mismatch)
+  - suspicious changes list using fixed thresholds:
+    - `market_value_numeric` change > 50% vs old MV
+    - matched team differs from `squad_rosters.team_id`
+    - `matched_by` downgrade from `crossref_tm_id` to lower-priority strategy
 - Manual review sample (at least 50 changed rows).
 
 Phase D: Adoption
@@ -101,14 +154,20 @@ Phase E: Cleanup
 
 6) SQL/Code Touch Points
 - `db/schema.sql`: add v2 MV definitions and indexes.
-- `run_pipeline.py`: refresh new v2 MVs during post-load.
-- `scheduler_master.py`: include new v2 MVs in daily refresh list.
+- `run_pipeline.py`: refresh in strict order to avoid stale dependencies:
+  1) `team_canonical`
+  2) `mv_tm_player_candidates` (if enabled)
+  3) `mv_player_profiles_v2`
+  4) `mv_team_profiles_v2`
+- `scheduler_master.py`: include same strict refresh order in daily list.
 - Optional: add diagnostics script in `tools/` for mismatch report.
 
 7) Validation Checklist
 - No regression in exact crossref matches.
 - Ambiguous name matches reduced (target >= 70% reduction in flagged collisions).
-- `player_image_url` coverage non-regression (target: no worse than -2%).
+- `player_image_url` coverage non-regression vs Phase A baseline (target: no worse than -2%).
+- `market_value_numeric` coverage non-regression vs Phase A baseline (target: no worse than -2%).
+- `matched_by = 'name_only_unique'` rows reviewed after transfer-window updates.
 - Manual QA sample confirms no obvious team mismatch for changed rows.
 - MV refresh success stable under daily schedule.
 

@@ -25,8 +25,7 @@ Done.
 6) Partition shots theo season  ✅ Done (2026-03-07)
 - Plan: docs/plans/plan_partition_shots_by_season.txt
 
-7) Name-matching trong MV
-- Cai thien sau khi co team_canonical.
+7) Name-matching trong MV  ✅ Done (2026-03-07, shadow mode — v2 MVs live)
 - Plan: docs/plans/plan_mv_name_matching_after_team_canonical.txt
 
 Ghi chu:

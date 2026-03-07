@@ -1088,6 +1088,178 @@ ORDER BY t.team_id, t.league_id;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_team_profiles_id ON mv_team_profiles(fbref_team_id, league_id);
 
+-- ──────────────────────────────────────────────────────────
+-- 25b. mv_tm_player_candidates: pre-normalized TM candidates for v2 matching
+--      Mandatory prerequisite for mv_player_profiles_v2.
+--      Refresh order: team_canonical → mv_tm_player_candidates → mv_player_profiles_v2
+-- ──────────────────────────────────────────────────────────
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_tm_player_candidates AS
+SELECT
+    mv.player_id                                              AS tm_player_id,
+    mv.league_id,
+    mv.team_id                                                AS tm_team_id,
+    lower(regexp_replace(mv.player_name, '\s+', '', 'g'))     AS player_name_norm,
+    lower(regexp_replace(mv.team_name,   '\s+', '', 'g'))     AS team_name_norm,
+    mv.market_value_numeric,
+    mv.player_image_url,
+    mv.loaded_at
+FROM market_values mv;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_tm_cand_pk
+    ON mv_tm_player_candidates (tm_player_id, tm_team_id, league_id);
+CREATE INDEX IF NOT EXISTS idx_mv_tm_cand_name_league
+    ON mv_tm_player_candidates (player_name_norm, league_id);
+
+-- ──────────────────────────────────────────────────────────
+-- 25c. mv_player_profiles_v2: 3-priority matching with confidence metadata
+--      Priority 1: crossref exact (1.00)
+--      Priority 2: canonical team-constrained name (0.90)
+--      Priority 3: name-only unique in league (0.60, guarded)
+--      Unmatched: 0.00
+--      Known limitation: mid-season transfer lag may cause team inconsistency
+--      for name_only_unique rows — review after each transfer window.
+-- ──────────────────────────────────────────────────────────
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_player_profiles_v2 AS
+WITH roster AS (
+    SELECT DISTINCT ON (r.player_id, r.league_id)
+        r.player_id,
+        r.player_name,
+        r.team_id,
+        r.league_id,
+        r.position,
+        r.nationality,
+        lower(regexp_replace(r.player_name, '\s+', '', 'g')) AS player_name_norm
+    FROM squad_rosters r
+    ORDER BY r.player_id, r.league_id, r.season DESC
+),
+candidates AS (
+    -- Priority 1: crossref exact
+    SELECT ro.player_id, ro.league_id,
+           c.player_image_url, c.market_value_numeric, c.tm_player_id,
+           1 AS priority, 'crossref_tm_id'::text AS matched_by, 1.00::numeric AS match_confidence
+    FROM roster ro
+    JOIN player_crossref xr
+        ON xr.fbref_player_id = ro.player_id AND xr.league_id = ro.league_id
+        AND xr.tm_player_id IS NOT NULL
+    JOIN mv_tm_player_candidates c
+        ON c.tm_player_id = xr.tm_player_id AND c.league_id = ro.league_id
+
+    UNION ALL
+
+    -- Priority 2: canonical team-constrained name
+    SELECT ro.player_id, ro.league_id,
+           c.player_image_url, c.market_value_numeric, c.tm_player_id,
+           2, 'canonical_team_name_exact'::text, 0.90::numeric
+    FROM roster ro
+    JOIN team_canonical tc
+        ON tc.fbref_team_id = ro.team_id AND tc.league_id = ro.league_id
+        AND tc.tm_team_id IS NOT NULL
+    JOIN mv_tm_player_candidates c
+        ON c.league_id = ro.league_id
+        AND c.player_name_norm = ro.player_name_norm
+        AND (c.tm_team_id = tc.tm_team_id
+             OR c.team_name_norm = lower(regexp_replace(COALESCE(tc.tm_name, ''), '\s+', '', 'g')))
+
+    UNION ALL
+
+    -- Priority 3: name-only (all candidates; filtered for uniqueness below)
+    SELECT ro.player_id, ro.league_id,
+           c.player_image_url, c.market_value_numeric, c.tm_player_id,
+           3, 'name_only_unique'::text, 0.60::numeric
+    FROM roster ro
+    JOIN mv_tm_player_candidates c
+        ON c.league_id = ro.league_id
+        AND c.player_name_norm = ro.player_name_norm
+),
+best_priority AS (
+    SELECT player_id, league_id, MIN(priority) AS best_p
+    FROM candidates
+    GROUP BY player_id, league_id
+),
+filtered AS (
+    SELECT c.*
+    FROM candidates c
+    JOIN best_priority bp
+        ON bp.player_id = c.player_id AND bp.league_id = c.league_id
+        AND c.priority = bp.best_p
+),
+p3_unique_check AS (
+    SELECT player_id, league_id, COUNT(DISTINCT tm_player_id) AS distinct_players
+    FROM filtered
+    WHERE priority = 3
+    GROUP BY player_id, league_id
+),
+final_filtered AS (
+    SELECT f.*
+    FROM filtered f
+    LEFT JOIN p3_unique_check uc
+        ON uc.player_id = f.player_id AND uc.league_id = f.league_id
+    WHERE f.priority < 3
+       OR (f.priority = 3 AND uc.distinct_players = 1)
+),
+best AS (
+    SELECT DISTINCT ON (player_id, league_id)
+        player_id, league_id, player_image_url, market_value_numeric,
+        matched_by, match_confidence
+    FROM final_filtered
+    ORDER BY player_id, league_id,
+             match_confidence DESC,
+             market_value_numeric DESC NULLS LAST
+)
+SELECT
+    ro.player_id AS fbref_player_id,
+    ro.player_name,
+    ro.team_id   AS fbref_team_id,
+    ro.league_id,
+    ro.position,
+    ro.nationality,
+    b.player_image_url,
+    b.market_value_numeric,
+    COALESCE(b.matched_by, 'unmatched')         AS matched_by,
+    COALESCE(b.match_confidence, 0.00)::numeric  AS match_confidence
+FROM roster ro
+LEFT JOIN best b ON b.player_id = ro.player_id AND b.league_id = ro.league_id;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_player_profiles_v2_id
+    ON mv_player_profiles_v2 (fbref_player_id, league_id);
+
+-- ──────────────────────────────────────────────────────────
+-- 25d. mv_team_profiles_v2: canonical mapping preferred, name fallback secondary
+-- ──────────────────────────────────────────────────────────
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_team_profiles_v2 AS
+SELECT DISTINCT ON (t.team_id, t.league_id)
+    t.team_id   AS fbref_team_id,
+    t.team_name,
+    t.league_id,
+    COALESCE(tm1.logo_url,       tm2.logo_url)       AS logo_url,
+    COALESCE(tm1.stadium_name,   tm2.stadium_name)   AS stadium_name,
+    COALESCE(tm1.manager_name,   tm2.manager_name)   AS manager_name,
+    CASE
+        WHEN tm1.team_id IS NOT NULL THEN 'canonical_tm_id'
+        WHEN tm2.team_id IS NOT NULL THEN 'name_fallback'
+        ELSE 'unmatched'
+    END::text AS matched_by,
+    CASE
+        WHEN tm1.team_id IS NOT NULL THEN 1.00
+        WHEN tm2.team_id IS NOT NULL THEN 0.70
+        ELSE 0.00
+    END::numeric AS match_confidence
+FROM standings t
+-- Priority 1: canonical mapping via team_canonical
+LEFT JOIN team_canonical tc
+    ON tc.fbref_team_id = t.team_id AND tc.league_id = t.league_id
+LEFT JOIN team_metadata tm1
+    ON tm1.team_id = tc.tm_team_id AND tm1.league_id = t.league_id
+-- Priority 2: name fallback
+LEFT JOIN team_metadata tm2
+    ON tm2.league_id = t.league_id
+    AND lower(regexp_replace(tm2.team_name, '\s+', '', 'g'))
+      = lower(regexp_replace(t.team_name,  '\s+', '', 'g'))
+ORDER BY t.team_id, t.league_id;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_team_profiles_v2_id
+    ON mv_team_profiles_v2 (fbref_team_id, league_id);
+
 
 -- ──────────────────────────────────────────────────────────
 -- 32. mv_player_complete_stats: single source of truth cho player comparison
