@@ -1,16 +1,20 @@
 Chua fix (can plan rieng, thiet ke lon):
 
+Done.
 1) match_crossref (bridge Understat <-> FBref <-> SofaScore)
 - Can thiet ke team_canonical truoc.
 
+Done.
 2) team_canonical (chuan hoa ten doi)
 - Anh huong toan bo pipeline.
 
 3) live_match_state tach khoi live_snapshots
 - Can refactor live module.
+- Plan: docs/plans/plan_live_state_mv_player_complete_stats.txt
 
 4) mv_player_complete_stats
 - Materialized view tong hop cho player comparison.
+- Plan: docs/plans/plan_live_state_mv_player_complete_stats.txt
 
 5) ai_insight_jobs + ai_insight_feedback
 - Can thiet ke AI pipeline truoc khi trien khai.

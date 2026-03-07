@@ -506,6 +506,7 @@ class LiveMatchState:
     poll_count: int = 0
     last_updated: str = ""
     start_timestamp: int = 0
+    last_drift_check: float = 0.0  # monotonic time of last drift check
 
 
 # ════════════════════════════════════════════════════════════
@@ -515,6 +516,8 @@ class LiveMatchState:
 class LiveTrackingPool:
     """Tracks multiple concurrent matches via round-robin polling on HTTP client."""
 
+    _DRIFT_INTERVAL = 300  # 5 minutes between drift checks
+
     def __init__(self, browser: CurlCffiClient, log: logging.Logger,
                  notifier: Notifier, *, dry_run: bool = False):
         self.browser = browser
@@ -522,6 +525,7 @@ class LiveTrackingPool:
         self.notifier = notifier
         self.dry_run = dry_run
         self._matches: dict[int, LiveMatchState] = {}
+        self.live_drift_mismatch_count: int = 0
 
     @property
     def is_empty(self) -> bool:
@@ -692,6 +696,18 @@ class LiveTrackingPool:
         # 5. Save to DB every poll
         self._save_to_db(state)
 
+        # 6. Drift guard: compare live_match_state vs live_snapshots
+        now_mono = time.monotonic()
+        should_check_drift = False
+        if state.status == "finished":
+            should_check_drift = True  # mandatory at finish
+        elif state.status == "inprogress":
+            if now_mono - state.last_drift_check >= self._DRIFT_INTERVAL:
+                should_check_drift = True
+        if should_check_drift:
+            self._check_drift(state)
+            state.last_drift_check = now_mono
+
         self.log.info("  📊 [%s] %s %d-%d %s | %s' | poll #%d",
                       state.league, state.home_team, state.home_score,
                       state.away_score, state.away_team,
@@ -699,13 +715,55 @@ class LiveTrackingPool:
 
         return state.status != "finished"
 
+    def _check_drift(self, state: LiveMatchState) -> None:
+        """Compare live_match_state vs live_snapshots for key fields.
+        Emits ERROR log + increments metric counter on mismatch.
+        Never raises — polling loop must stay alive."""
+        try:
+            from db.config_db import get_connection
+            conn = get_connection()
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT ls.home_score, ls.away_score, ls.status, ls.minute,
+                       lm.home_score, lm.away_score, lm.status, lm.minute
+                FROM live_snapshots ls
+                JOIN live_match_state lm ON lm.event_id = ls.event_id
+                WHERE ls.event_id = %s
+            """, (state.event_id,))
+            row = cur.fetchone()
+            cur.close()
+            conn.close()
+            if row is None:
+                return  # one side missing, skip (first write race)
+            ls_hs, ls_as, ls_st, ls_min = row[0], row[1], row[2], row[3]
+            lm_hs, lm_as, lm_st, lm_min = row[4], row[5], row[6], row[7]
+            diffs = []
+            if ls_hs != lm_hs:
+                diffs.append(f"home_score snap={ls_hs} state={lm_hs}")
+            if ls_as != lm_as:
+                diffs.append(f"away_score snap={ls_as} state={lm_as}")
+            if ls_st != lm_st:
+                diffs.append(f"status snap={ls_st} state={lm_st}")
+            if ls_min != lm_min:
+                diffs.append(f"minute snap={ls_min} state={lm_min}")
+            if diffs:
+                self.live_drift_mismatch_count += 1
+                self.log.error(
+                    "DRIFT MISMATCH event=%d [%s] %s vs %s: %s (total_mismatches=%d)",
+                    state.event_id, state.league, state.home_team, state.away_team,
+                    "; ".join(diffs), self.live_drift_mismatch_count,
+                )
+        except Exception as exc:
+            self.log.warning("Drift check failed for event %d: %s", state.event_id, exc)
+
     def _save_to_db(self, state: LiveMatchState) -> None:
-        """Upsert to live_snapshots + live_incidents tables."""
+        """Upsert to live_snapshots + live_match_state + live_incidents (dual-write)."""
         try:
             from db.config_db import get_connection
             conn = get_connection()
             cur = conn.cursor()
 
+            # ── 1. Legacy: live_snapshots (unchanged) ──
             cur.execute("""
                 INSERT INTO live_snapshots
                     (event_id, home_team, away_team, home_score, away_score,
@@ -731,6 +789,48 @@ class LiveTrackingPool:
                 state.poll_count,
             ))
 
+            # ── 2. New: live_match_state (lightweight, no blob) ──
+            # Build stats_core_json: only UI-critical subset
+            stats_core = {}
+            _CORE_KEYS = ("Ball possession", "Shots on target",
+                          "Expected goals", "Dangerous attacks")
+            for key in _CORE_KEYS:
+                if key in state.statistics:
+                    stats_core[key] = state.statistics[key]
+            stats_core_json = json.dumps(stats_core, ensure_ascii=False) if stats_core else None
+
+            # Get max seq from live_incidents for this event
+            cur.execute(
+                "SELECT MAX(seq) FROM live_incidents WHERE event_id = %s",
+                (state.event_id,),
+            )
+            max_seq = (cur.fetchone() or (None,))[0]
+
+            cur.execute("""
+                INSERT INTO live_match_state
+                    (event_id, league_id, home_team, away_team, home_score, away_score,
+                     status, minute, poll_count, insight_text, stats_core_json,
+                     last_processed_seq)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (event_id) DO UPDATE SET
+                    home_score         = EXCLUDED.home_score,
+                    away_score         = EXCLUDED.away_score,
+                    status             = EXCLUDED.status,
+                    minute             = EXCLUDED.minute,
+                    poll_count         = EXCLUDED.poll_count,
+                    insight_text       = EXCLUDED.insight_text,
+                    stats_core_json    = EXCLUDED.stats_core_json,
+                    last_processed_seq = EXCLUDED.last_processed_seq,
+                    loaded_at          = NOW()
+            """, (
+                state.event_id, state.league, state.home_team, state.away_team,
+                state.home_score, state.away_score,
+                state.status, state.minute, state.poll_count,
+                state.insight_text, stats_core_json,
+                max_seq,
+            ))
+
+            # ── 3. Incidents (unchanged, seq auto-increments) ──
             for inc in state.incidents:
                 inc_type = inc.get("incidentType", "")
                 if inc_type not in ("goal", "card", "substitution", "varDecision"):

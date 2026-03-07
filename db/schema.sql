@@ -914,6 +914,61 @@ CREATE INDEX IF NOT EXISTS idx_live_inc_event   ON live_incidents (event_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_live_inc
     ON live_incidents (event_id, incident_type, minute, COALESCE(player_name, ''), is_home);
 
+-- ──────────────────────────────────────────────────────────
+-- 29. LIVE MATCH STATE — lightweight live state (1 row/event)
+--     Dual-write target: scheduler writes here + live_snapshots
+--     FK → ss_events (event_id, league_id)
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS live_match_state (
+    event_id            BIGINT   NOT NULL,
+    league_id           TEXT     NOT NULL,
+    home_team           TEXT,
+    away_team           TEXT,
+    home_score          INTEGER  DEFAULT 0,
+    away_score          INTEGER  DEFAULT 0,
+    status              TEXT,
+    minute              INTEGER  DEFAULT 0,
+    poll_count          INTEGER  DEFAULT 0,
+    insight_text        TEXT,
+    stats_core_json     JSONB,
+    last_processed_seq  BIGINT,
+    loaded_at           TIMESTAMPTZ DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ,
+    PRIMARY KEY (event_id)
+);
+
+-- CHECK: stats_core_json must be a JSON object if not NULL
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'chk_lms_stats_core_json_object'
+    ) THEN
+        ALTER TABLE live_match_state
+            ADD CONSTRAINT chk_lms_stats_core_json_object
+            CHECK (stats_core_json IS NULL OR jsonb_typeof(stats_core_json) = 'object');
+    END IF;
+END $$;
+
+-- FK: live_match_state → ss_events
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'fk_lms_event'
+    ) THEN
+        ALTER TABLE live_match_state
+            ADD CONSTRAINT fk_lms_event
+            FOREIGN KEY (event_id, league_id)
+            REFERENCES ss_events (event_id, league_id)
+            ON DELETE CASCADE
+            DEFERRABLE INITIALLY DEFERRED;
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_lms_status ON live_match_state(status);
+CREATE INDEX IF NOT EXISTS idx_lms_league_status ON live_match_state(league_id, status);
+
+-- Add seq cursor column to live_incidents for incremental streaming
+ALTER TABLE live_incidents ADD COLUMN IF NOT EXISTS seq BIGSERIAL;
+CREATE INDEX IF NOT EXISTS idx_live_inc_event_seq ON live_incidents(event_id, seq);
+
 CREATE OR REPLACE FUNCTION cleanup_live_data(keep_days INTEGER DEFAULT 7)
 RETURNS TABLE (deleted_snapshots INT, deleted_incidents INT)
 LANGUAGE plpgsql AS $$
@@ -1168,6 +1223,7 @@ ALTER TABLE player_crossref         ADD COLUMN IF NOT EXISTS updated_at TIMESTAM
 ALTER TABLE team_registry           ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
 ALTER TABLE team_canonical          ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
 ALTER TABLE match_crossref          ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+ALTER TABLE live_match_state        ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
 
 -- Tạo trigger cho mỗi bảng (DROP IF EXISTS → idempotent)
 DO $$ 
@@ -1181,7 +1237,8 @@ BEGIN
         'fixtures', 'gk_stats', 'ss_events',
         'match_passing_stats', 'match_player_advanced_stats',
         'market_values', 'player_crossref',
-        'team_registry', 'team_canonical', 'match_crossref'
+        'team_registry', 'team_canonical', 'match_crossref',
+        'live_match_state'
     ])
     LOOP
         EXECUTE format(

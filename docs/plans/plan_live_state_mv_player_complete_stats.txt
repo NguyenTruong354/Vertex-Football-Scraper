@@ -1,0 +1,366 @@
+LIVE_MATCH_STATE + MV_PLAYER_COMPLETE_STATS PLAN (Tang 2)
+Version: v1.3
+Date: 2026-03-07
+Owner: Data Pipeline
+Status: Planning (no code changes yet)
+
+Verification Note (2026-03-07):
+- This v1.1 addressed verification round #1 findings:
+  1) Add FK for live_match_state -> ss_events (critical)
+  2) Fix season join format for shots (critical)
+  3) Fix xg_overperformance direction (critical)
+  4) Clarify seq semantics in live state (medium)
+  5) Define validation tolerance by metric type (medium)
+  6) Define NULL vs 0 rules for MV fields (medium)
+
+Verification Update (2026-03-07, round #2):
+- This v1.2 additionally addresses:
+  7) gk_stats fanout risk in MV (critical)
+  8) dual-write drift check cadence too slow (critical)
+  9) stats_core_json CHECK constraint missing (medium)
+  10) last_published_seq exit plan (medium)
+  11) maintenance window definition for non-concurrent refresh fallback (medium)
+
+Verification Update (2026-03-07, round #3 final):
+- This v1.3 additionally addresses:
+  12) event_id global uniqueness assumption explicitly documented (medium)
+  13) separate no-crossref vs zero-shots semantics for xG fields (medium)
+  14) drift alert mechanism specified (medium)
+  15) seq historical ordering note documented (info)
+  16) built_at refresh semantics documented (info)
+
+0) Goal
+- Item 3: Tach live_match_state khoi live_snapshots de giam write amplification,
+  tang do tuoi du lieu live, va de backend/frontend doc state nhanh hon.
+- Item 4: Tao mv_player_complete_stats lam single source of truth cho
+  player comparison (stats tong hop + profile + market value + xG context).
+
+1) Current State (as-is)
+- scheduler_master dang upsert live state vao live_snapshots (JSONB stats + incidents_json)
+  va incidents vao live_incidents.
+- live_snapshots hien dang vua la state table vua la denormalized payload table.
+- Co cac MV: mv_player_profiles, mv_team_profiles.
+- Chua co mv_player_complete_stats.
+- Team canonical + match_crossref da co va da duoc integrate vao pipeline/scheduler daily.
+
+2) Problem Statement
+Item 3 (live):
+- Moi poll update 1 row live_snapshots co JSONB lon (statistics_json/incidents_json).
+- Frontend/API khi can state nhe van phai doc row chua blob.
+- Khong co sequence cursor cho incidents stream.
+
+Item 4 (comparison):
+- Query player comparison can join nhieu bang, SQL dai, kho maintain.
+- Cung mot logic bi duplicate o nhieu noi (API/analytics).
+- Chua co lop tong hop de cache/refresh tap trung.
+
+3) Design Decision Summary
+Item 3:
+- Giu live_snapshots de backward compatibility trong rollout.
+- Them bang moi live_match_state cho state nhe (1 row / event).
+- live_incidents bo sung seq cursor de stream incremental.
+- scheduler_master ghi song song (dual-write) trong giai doan migration.
+- live_match_state bat buoc co FK toi ss_events(event_id, league_id).
+- Assumption (explicit): SofaScore event_id globally unique across leagues.
+  Validation query must return 0 rows before Milestone 2:
+  SELECT event_id
+  FROM ss_events
+  GROUP BY event_id
+  HAVING COUNT(DISTINCT league_id) > 1;
+
+Item 4:
+- Tao materialized view mv_player_complete_stats.
+- Anchor theo (player_id, league_id, season) tu player_season_stats.
+- Join enrichment qua player_crossref, shots (Understat),
+  player_defensive_stats, player_possession_stats, gk_stats, mv_player_profiles.
+- Season join voi shots phai map text season "YYYY-YYYY" -> integer YYYY.
+- Hard prerequisite: gk_stats grain phai duoc fix theo season truoc khi build MV.
+
+4) Proposed Data Model
+4.1 New table: live_match_state
+- event_id BIGINT NOT NULL
+- league_id TEXT NOT NULL
+- home_team TEXT
+- away_team TEXT
+- home_score INTEGER DEFAULT 0
+- away_score INTEGER DEFAULT 0
+- status TEXT
+- minute INTEGER DEFAULT 0
+- poll_count INTEGER DEFAULT 0
+- insight_text TEXT
+- stats_core_json JSONB
+  (chi giu subset quan trong cho UI nhanh: possession, shots_on_target,
+   xg neu co, dangerous_attacks neu co)
+- last_processed_seq BIGINT
+  (duoc scheduler update: seq cuoi cung da persist vao live_match_state,
+   de detect drift va resume worker)
+- last_published_seq BIGINT
+  (optional, duoc API layer update neu can; neu khong dung thi de NULL,
+   KHONG duoc scheduler ghi vao cot nay)
+- loaded_at TIMESTAMPTZ DEFAULT NOW()
+- updated_at TIMESTAMPTZ
+
+Constraints:
+- PRIMARY KEY (event_id)
+- CONSTRAINT fk_lms_event
+    FOREIGN KEY (event_id, league_id)
+    REFERENCES ss_events (event_id, league_id)
+    ON DELETE CASCADE
+    DEFERRABLE INITIALLY DEFERRED
+- CONSTRAINT chk_lms_stats_core_json_object
+  CHECK (stats_core_json IS NULL OR jsonb_typeof(stats_core_json) = 'object')
+
+Indexes:
+- idx_lms_status ON live_match_state(status)
+- idx_lms_league_status ON live_match_state(league_id, status)
+
+4.2 Change table: live_incidents
+- ADD COLUMN seq BIGSERIAL
+Indexes:
+- idx_live_inc_event_seq ON live_incidents(event_id, seq)
+
+4.3 New MV: mv_player_complete_stats
+Grain:
+- 1 row / (player_id, league_id, season)
+
+Core join rules (must-follow):
+- Season mapping for shots:
+  shots.season = SPLIT_PART(pss.season, '-', 1)::INTEGER
+  (example: pss.season='2024-2025' -> 2024)
+- Goalkeeper join (mandatory season-safe join):
+  LEFT JOIN gk_stats gk
+    ON gk.player_id = pss.player_id
+   AND gk.league_id = pss.league_id
+   AND gk.season = pss.season
+  Note: This requires gk_stats PK/grain to include season first.
+- xg_overperformance formula:
+  goals_from_shots - total_xg
+  (positive = overperform, negative = underperform)
+
+Columns (v1):
+Identity/profile:
+- player_id, player_name, team_id, league_id, season, position, nationality
+- player_image_url, market_value_numeric
+
+Attacking/core:
+- minutes_90s, goals, assists, goals_per90, shots, shots_on_target_pct
+
+Understat shot context:
+- has_understat_crossref
+- total_xg
+- xg_per90
+- goals_from_shots
+- xg_overperformance
+
+Defensive:
+- tackles, interceptions, blocks, clearances (neu co), pressures (neu co)
+
+Possession/progression:
+- progressive_carries, progressive_passes_received, take_ons_won_pct
+
+Goalkeeper subset:
+- gk_save_pct, gk_clean_sheets (nullable, chi co gia tri voi GK)
+
+Metadata:
+- built_at
+
+NULL / COALESCE policy (strict):
+- Counting stats from base FBref table (goals, assists, shots, minutes_90s):
+  keep source value; do not force 0 if source NULL.
+- Understat crossref semantics:
+  - has_understat_crossref = TRUE when player_crossref.understat_player_id exists.
+  - has_understat_crossref = FALSE when no understat mapping exists.
+- Understat aggregate fields:
+  - if has_understat_crossref = FALSE: total_xg, goals_from_shots, xg_per90,
+    xg_overperformance MUST be NULL (unknown, not zero).
+  - if has_understat_crossref = TRUE and player has no shot rows:
+    total_xg = 0, goals_from_shots = 0, xg_overperformance = 0.
+  - xg_per90 stays NULL when minutes_90s is NULL or 0.
+- Defensive/possession optional joins:
+  keep NULL when row missing (do not COALESCE to 0 at MV layer).
+- GK fields:
+  keep NULL for non-GK players (never coalesce to 0).
+
+built_at semantics:
+- built_at = NOW() evaluated at MV REFRESH time (snapshot freshness marker).
+
+Indexes:
+- UNIQUE (player_id, league_id, season)
+- idx_mvpcs_league_season (league_id, season)
+- idx_mvpcs_team (team_id, league_id, season)
+
+5) Refactor Scope (code)
+5.1 scheduler_master.py
+- LiveTrackingPool._save_to_db:
+  - Continue write live_snapshots (legacy)
+  - Add write live_match_state (new)
+  - Keep write live_incidents, and let seq auto-increment
+- PostMatchWorker._generate_match_story:
+  - During migration: read from live_snapshots as now (no breaking)
+  - Phase 2 can switch to prefer live_match_state + live_incidents
+
+5.2 API/backend consumers (outside this repo docs only)
+- Any endpoint reading live_snapshots for compact status should switch to live_match_state.
+- Endpoint incident stream should support incremental read by seq:
+  WHERE event_id = ? AND seq > :last_seen_seq ORDER BY seq
+
+5.3 run_pipeline.py and scheduler_master.py
+- Add refresh hook for mv_player_complete_stats in post-load/daily phase
+  (sau khi db.loader + canonical/crossref complete).
+- Use REFRESH MATERIALIZED VIEW CONCURRENTLY mv_player_complete_stats
+  khi da co unique index.
+
+6) SQL Implementation Plan
+Phase 0 (prerequisite before MV)
+- Fix gk_stats schema/grain to include season in PK/unique key.
+- Backfill and deduplicate gk_stats by (player_id, team_id, league_id, season).
+- Validate no multi-row fanout for same (player_id, league_id, season).
+
+Phase A (DDL safe, backward compatible)
+- CREATE TABLE live_match_state
+- ALTER TABLE live_incidents ADD COLUMN seq BIGSERIAL
+- CREATE INDEX idx_live_inc_event_seq
+- CREATE FUNCTION trg_set_updated_at() reuse if available
+- Add updated_at trigger for live_match_state
+- Add FK fk_lms_event(event_id, league_id) -> ss_events(event_id, league_id)
+- Add CHECK chk_lms_stats_core_json_object
+
+Phase B (MV)
+- CREATE MATERIALIZED VIEW mv_player_complete_stats AS ...
+  - shots join uses SPLIT_PART(pss.season, '-', 1)::INTEGER
+  - gk_stats join includes season equality
+  - include has_understat_crossref boolean
+  - when has_understat_crossref = FALSE => xG fields remain NULL
+  - xg_overperformance = goals_from_shots - total_xg
+- CREATE UNIQUE INDEX idx_mvpcs_pk ON mv_player_complete_stats(player_id, league_id, season)
+- CREATE INDEX supporting indexes
+
+Phase C (maintenance)
+- Add refresh command in:
+  - run_pipeline post-load
+  - DailyMaintenance._refresh_views (scheduler_master)
+
+7) Migration & Rollout (no downtime)
+Step 0: Prepare
+- Deploy schema changes only.
+- No reader switch.
+
+Step 1: Dual-write
+- scheduler_master write both live_snapshots + live_match_state.
+- Keep all current readers unchanged.
+- Observe 3-5 days.
+- Drift guard in live loop:
+  - compare key fields every 5 minutes while match status='inprogress'
+  - mandatory compare trigger at status transition to 'finished'
+  - daily check remains historical reconcile only
+  - alert mechanism on mismatch:
+    - write structured ERROR log
+    - increment metric live_drift_mismatch_count
+    - DO NOT raise exception that stops polling loop
+
+Step 2: Reader migration
+- Move low-latency readers to live_match_state first.
+- Incident stream move to seq cursor.
+- Keep fallback to live_snapshots for one release window.
+
+Step 3: MV adoption
+- Create mv_player_complete_stats and refresh nightly.
+- Switch player comparison queries to MV.
+- Keep old query behind feature flag/fallback.
+- Milestone gate: Step 3 blocked until Phase 0 (gk_stats season-safe) is complete.
+
+Step 4: Cleanup
+- Optional: stop writing heavy JSON fields in live_snapshots
+  after all readers migrated.
+- Review last_published_seq usage at Milestone 3:
+  - if still unused (NULL-only), schedule DROP COLUMN in next schema cycle.
+
+8) Validation Checklist
+Item 3:
+- live_match_state row count ~ active/known events (no missing event in dual-write).
+- max lag (live_match_state.loaded_at vs live_snapshots.loaded_at) <= 3s p95.
+- incident seq monotonic per event.
+- no duplicate incidents after seq introduction.
+- FK validation: no orphan row in live_match_state against ss_events.
+- Semantics validation:
+  - scheduler updates only last_processed_seq
+  - scheduler never writes last_published_seq
+- Real-time drift validation:
+  - in-progress diff check every 5 minutes
+  - forced diff check at match finish
+  - alert immediately on mismatch in score/status/minute
+  - polling loop remains alive after alert (no hard-fail)
+
+Seq migration note:
+- After ADD COLUMN seq BIGSERIAL on existing data, historical incidents receive
+  generated seq values that may not reflect original insertion order.
+- seq is authoritative cursor for matches ingested after migration; historical
+  replay ordering should not depend on seq.
+
+Item 4:
+- mv row count matches distinct (player_id, league_id, season) from base table.
+- random 30 players manual reconcile vs legacy joins with strict tolerance policy:
+  - counting stats (goals, assists, cards): exact match (tolerance = 0)
+  - float stats (total_xg, xg_per90): abs diff <= 0.001
+  - GK nullable stats: NULL for non-GK is expected (not error)
+- query latency comparison endpoint reduced (target >= 40%).
+- GK fanout guard:
+  - assert max joined gk row count per (player_id, league_id, season) = 1
+
+9) KPI / SLO
+- Live state read p95 < 50ms for event-level query.
+- Incident incremental API payload reduced >= 60% in active matches.
+- Comparison query p95 reduced >= 40% after MV adoption.
+- MV refresh success rate >= 99% daily.
+
+10) Risks & Mitigations
+Risk A: Field mismatch between sources in mv_player_complete_stats.
+- Mitigation:
+  - enforce season cast rule via SPLIT_PART(...)
+  - enforce NULL/COALESCE policy from section 4.3
+  - add validation SQL sample set by league/season
+
+Risk B: Dual-write drift.
+- Mitigation:
+  - live check every 5 minutes during inprogress matches
+  - mandatory check on finished transition
+  - daily diff kept only for historical reconcile
+  - emit ERROR log + metric, do not crash poll loop
+
+Risk C: REFRESH CONCURRENTLY lock/contention.
+- Mitigation: keep unique index, schedule off-peak, fallback to non-concurrent
+  only in maintenance window 03:00-04:00 UTC+7.
+
+11) Delivery Breakdown
+Milestone 1 (Item 3 schema + dual-write)
+- DDL live_match_state + seq
+- add FK fk_lms_event
+- scheduler_master dual-write
+- implement last_processed_seq only
+- implement drift guard (5-minute + finished trigger)
+- smoke test + 24h observe
+
+Milestone 2 (Item 4 MV)
+- create mv_player_complete_stats + indexes
+- implement fixed season join and fixed xg_overperformance direction
+- prerequisite complete: gk_stats season-safe schema migration
+- validate event_id global uniqueness assumption before rollout
+- add has_understat_crossref and NULL-safe xG semantics
+- integrate refresh hook in pipeline/scheduler daily
+- comparison query switch shadow mode
+
+Milestone 3 (adoption)
+- switch default readers to live_match_state
+- switch default comparison endpoint to MV
+- finalize docs
+
+12) Definition of Done
+Item 3 done when:
+- live_match_state receives stable dual-write,
+- at least one production reader switched,
+- no regression in live polling loop.
+
+Item 4 done when:
+- mv_player_complete_stats deployed + indexed + refreshed automatically,
+- comparison endpoints use MV by default,
+- data parity validated and documented.
