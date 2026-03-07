@@ -1,0 +1,65 @@
+❌ Điểm chưa tốt & Lỗ hổng
+
+🔴 BUG NGHIÊM TRỌNG
+1. FK fk_rosters_team sẽ fail thường xuyên
+sql-- standings PK:
+PRIMARY KEY (team_id, league_id, season)
+
+-- squad_rosters PK:
+PRIMARY KEY (player_id, team_id, league_id)  ← không có season!
+squad_rosters thiếu cột season trong FK reference sang standings(team_id, league_id, season). Khi bạn load roster của mùa 2024-2025 nhưng standings chưa có row đó → FK violation ngay lập tức.
+Fix:
+sql-- Thêm season vào PK của squad_rosters
+PRIMARY KEY (player_id, team_id, league_id, season)
+
+2. gk_stats PK thiếu season → data bị ghi đè mỗi mùa
+sqlPRIMARY KEY (player_id, team_id, league_id)
+-- Không có season → mùa 2025-2026 upsert sẽ overwrite mùa 2024-2025
+So sánh với player_season_stats có season trong PK — gk_stats đang không nhất quán.
+
+3. Type mismatch nguy hiểm trong player_crossref
+sqlunderstat_player_id  BIGINT   -- từ shots.player_id (BIGINT)
+fbref_player_id      TEXT     -- từ squad_rosters.player_id (TEXT)
+tm_player_id         TEXT     -- từ market_values.player_id (TEXT)
+Vấn đề: market_values.player_id là TEXT (Transfermarkt ID dạng "12345"), nhưng khi JOIN:
+sqlON mv1.player_id = c.tm_player_id
+Nếu ai đó insert tm_player_id dạng integer string có leading zero hoặc format khác → silent mismatch, không có lỗi compile.
+
+4. live_incidents UNIQUE constraint có thể miss duplicate
+sqlCREATE UNIQUE INDEX uq_live_inc
+    ON live_incidents (event_id, incident_type, minute, COALESCE(player_name, ''));
+Một trận có thể có 2 thẻ vàng cùng phút (hiếm nhưng có), hoặc 2 bàn thắng cùng phút khác cầu thủ. Constraint này không đủ để deduplicate chính xác — thiếu player_id hoặc team làm discriminator.
+
+🟡 VẤN ĐỀ THIẾT KẾ
+5. match_stats và fixtures là 2 bảng cho cùng 1 thực thể
+match_stats (Understat) và fixtures (FBref) đều chứa thông tin trận đấu nhưng không có FK nối nhau. Không có cách JOIN tự động vì Understat dùng BIGINT match_id còn FBref dùng TEXT match_id. Đây là lỗ hổng lớn — khi muốn kết hợp xG từ Understat với referee/venue từ FBref bạn phải match thủ công qua home_team + date, rất dễ sai khi có postponed matches.
+6. Denormalization không nhất quán
+Nhiều bảng lưu home_team, away_team dạng TEXT thay vì FK:
+sql-- match_passing_stats, heatmaps, player_avg_positions đều có:
+home_team  TEXT,
+away_team  TEXT,
+Nếu tên team thay đổi (FBref đôi khi dùng "Man City" vs "Manchester City") → JOIN bị miss mà không có cảnh báo.
+7. player_insights.player_id là BIGINT (Understat) nhưng không có FK
+sqlCREATE TABLE player_insights (
+    player_id  BIGINT  -- Understat ID
+    ...
+Không FK về shots hay bảng nào → không enforce tính toàn vẹn. Khi một Understat player_id bị deprecated → orphan rows.
+8. mv_player_profiles dùng name-matching không đáng tin
+sqllower(regexp_replace(mv2.player_name, '\s+', '', 'g')) 
+= lower(regexp_replace(r.player_name, '\s+', '', 'g'))
+Strip toàn bộ whitespace rồi so sánh sẽ miss: "De Bruyne" vs "De  Bruyne" (đúng) nhưng "Ben White" và "Ben White" của đội khác sẽ match sai nếu có 2 cầu thủ cùng tên khác team. DISTINCT ON chỉ lấy 1 row và có thể lấy nhầm.
+
+🟠 THIẾU SÓT CHỨC NĂNG
+9. Không có updated_at — chỉ có loaded_at
+Không thể phân biệt row được tạo lần đầu hay updated. Khi debug "tại sao số liệu sai" không biết data đến từ lần cào nào.
+10. squad_stats vs player_season_stats không có reconciliation
+squad_stats.goals (tổng goals của team) không bao giờ được verify bằng SUM(player_season_stats.goals). Không có constraint hay trigger kiểm tra → hai bảng có thể diverge mà không ai hay.
+11. Không có partition cho bảng lớn
+shots và player_match_stats sẽ tích lũy hàng triệu rows theo năm. Không có partition theo season hay league_id → query sẽ chậm dần khi data lớn dù đã có index.
+12. heatmap_points JSONB không có validation
+sqlheatmap_points  JSONB   -- JSON array of {x, y, v}
+Không có CHECK constraint hay schema validation cho JSONB → có thể insert {"broken": true} mà không lỗi. Nên thêm:
+sqlCHECK (jsonb_typeof(heatmap_points) = 'array')
+
+📋 Tóm tắt mức độ ưu tiên fix
+#Vấn đềMức độFix1FK fk_rosters_team thiếu season🔴 CriticalThêm season vào PK squad_rosters2gk_stats PK thiếu season🔴 CriticalThêm season vào PK4live_incidents unique constraint yếu🔴 CriticalThêm player_id vào unique index5match_stats ↔ fixtures không join được🟡 HighThêm crossref table hoặc shared match key6Tên team TEXT không FK🟡 HighChuẩn hóa qua team_id8Name-matching trong materialized view🟡 HighƯu tiên dùng player_crossref9Thiếu updated_at🟠 MediumThêm trigger cập nhật updated_at11Thiếu partition🟠 MediumPartition shots theo season12JSONB không validate🟠 LowThêm CHECK constraint

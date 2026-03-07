@@ -1,0 +1,231 @@
+TẦNG 1 — Fix nền móng trước (làm ngay, không bàn cãi)
+Đây là những thứ sẽ gây data sai im lặng — nguy hiểm hơn crash vì không ai biết.
+1.1 — Thêm updated_at + audit trigger vào mọi bảng quan trọng
+sql-- Thêm vào tất cả bảng có loaded_at
+ALTER TABLE shots         ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+ALTER TABLE player_season_stats ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+-- ... tương tự các bảng khác
+
+-- Trigger tự động cập nhật
+CREATE OR REPLACE FUNCTION set_updated_at()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN NEW.updated_at = NOW(); RETURN NEW; END;
+$$;
+
+CREATE TRIGGER trg_shots_updated
+BEFORE UPDATE ON shots
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+Không có updated_at thì khi AI insight ra số sai, bạn không biết data đến từ lần cào nào để debug.
+
+1.2 — Tạo bảng match_crossref để bridge Understat ↔ FBref ↔ SofaScore
+Đây là lỗ hổng lớn nhất hiện tại. 3 nguồn data có 3 kiểu match_id khác nhau và không có cách join:
+sqlCREATE TABLE IF NOT EXISTS match_crossref (
+    -- Ba ID từ ba nguồn khác nhau
+    understat_match_id   BIGINT,   -- match_stats.match_id
+    fbref_match_id       TEXT,     -- fixtures.match_id  
+    sofascore_event_id   BIGINT,   -- ss_events.event_id
+
+    -- Key chung để match: home + away + date
+    home_team_canonical  TEXT NOT NULL,
+    away_team_canonical  TEXT NOT NULL,
+    match_date           DATE NOT NULL,
+    league_id            TEXT NOT NULL DEFAULT 'EPL',
+    season               TEXT,
+
+    -- Meta
+    matched_by  TEXT DEFAULT 'auto',  -- 'auto' | 'manual'
+    confidence  REAL DEFAULT 1.0,     -- 0.0 → 1.0
+    loaded_at   TIMESTAMPTZ DEFAULT NOW(),
+
+    PRIMARY KEY (match_date, home_team_canonical, away_team_canonical, league_id)
+);
+
+CREATE INDEX idx_mcr_understat ON match_crossref (understat_match_id);
+CREATE INDEX idx_mcr_fbref     ON match_crossref (fbref_match_id);
+CREATE INDEX idx_mcr_sofascore ON match_crossref (sofascore_event_id);
+Khi có bảng này, query xG (Understat) + referee (FBref) + heatmap (SofaScore) trong một trận mới thực sự được.
+
+1.3 — Thêm team_canonical để chuẩn hóa tên đội
+FBref ghi "Manchester City", Understat ghi "Manchester City", Transfermarkt ghi "Man. City", SofaScore ghi "Man City" — đây là nguồn gốc của 80% bug join sai.
+sqlCREATE TABLE IF NOT EXISTS team_canonical (
+    canonical_id    TEXT PRIMARY KEY,  -- 'manchester_city'
+    canonical_name  TEXT NOT NULL,     -- 'Manchester City'
+    league_id       TEXT NOT NULL,
+
+    -- Alias từ từng nguồn
+    fbref_name      TEXT,
+    understat_name  TEXT,
+    sofascore_name  TEXT,
+    tm_name         TEXT,
+
+    -- IDs từ từng nguồn  
+    fbref_team_id      TEXT,
+    sofascore_team_id  INTEGER,
+    tm_team_id         TEXT
+);
+Sau đó tất cả bảng nên JOIN qua team_canonical thay vì match text trực tiếp.
+
+TẦNG 2 — Tối ưu theo từng tính năng
+
+🔴 Live Match
+Live match là tính năng khắt khe nhất về latency. Schema hiện tại có vấn đề thiết kế: live_snapshots lưu cả statistics_json và incidents_json trong cùng một row — mỗi lần poll phải update toàn bộ JSON blob dù chỉ thêm 1 sự kiện.
+Nên tách ra:
+sql-- Chỉ lưu match state, không lưu incidents trong đây nữa
+CREATE TABLE live_match_state (
+    event_id       BIGINT PRIMARY KEY,
+    home_score     INTEGER DEFAULT 0,
+    away_score     INTEGER DEFAULT 0,
+    minute         INTEGER DEFAULT 0,
+    status         TEXT,           -- notstarted | 1h | ht | 2h | finished
+    possession_h   REAL,
+    possession_a   REAL,
+    shots_h        INTEGER,
+    shots_a        INTEGER,
+    xg_h           REAL,
+    xg_a           REAL,
+    updated_at     TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- live_incidents giữ nguyên nhưng thêm sequence để client biết đã đọc đến đâu
+ALTER TABLE live_incidents ADD COLUMN seq BIGSERIAL;
+CREATE INDEX idx_live_inc_seq ON live_incidents (event_id, seq);
+Client chỉ cần query WHERE seq > last_seen_seq thay vì fetch toàn bộ incidents mỗi lần poll. Với Postgres LISTEN/NOTIFY còn tốt hơn nữa — không cần polling.
+
+🟣 Player Comparison & Stats
+Vấn đề hiện tại: để so sánh 2 cầu thủ, bạn phải join qua ít nhất 5 bảng (player_season_stats, player_defensive_stats, player_possession_stats, gk_stats, shots). Query sẽ chậm và phức tạp.
+Giải pháp là tạo materialized view tổng hợp làm "single source of truth" cho comparison:
+sqlCREATE MATERIALIZED VIEW mv_player_complete_stats AS
+SELECT
+    pss.player_id,
+    pss.player_name,
+    pss.team_id,
+    pss.season,
+    pss.league_id,
+    pss.position,
+
+    -- Attacking (FBref)
+    pss.goals,
+    pss.assists,
+    pss.goals_per90,
+    pss.shots,
+    pss.shots_on_target_pct,
+
+    -- xG (Understat — join qua crossref)
+    SUM(s.xg)                                          AS total_xg,
+    SUM(s.xg) / NULLIF(pss.minutes_90s, 0)            AS xg_per90,
+    SUM(CASE WHEN s.result = 'Goal' THEN 1 ELSE 0 END) AS goals_from_shots,
+    SUM(s.xg) - SUM(CASE WHEN s.result='Goal' THEN 1 ELSE 0 END) AS xg_overperformance,
+
+    -- Defensive (FBref)
+    pd.tackles,
+    pd.interceptions,
+    pd.pressures,
+    pd.pressure_regain_pct,
+
+    -- Possession (FBref)
+    pp.progressive_carries,
+    pp.take_ons_won_pct,
+    pp.progressive_passes_received,
+
+    -- Profile
+    mv.market_value_numeric,
+    mv.player_image_url
+
+FROM player_season_stats pss
+LEFT JOIN player_crossref cx
+    ON cx.fbref_player_id = pss.player_id AND cx.league_id = pss.league_id
+LEFT JOIN shots s
+    ON s.player_id = cx.understat_player_id AND s.season = pss.season::INTEGER
+LEFT JOIN player_defensive_stats pd
+    ON pd.player_id = pss.player_id AND pd.season = pss.season AND pd.league_id = pss.league_id
+LEFT JOIN player_possession_stats pp
+    ON pp.player_id = pss.player_id AND pp.season = pss.season AND pp.league_id = pss.league_id
+LEFT JOIN mv_player_profiles mv
+    ON mv.fbref_player_id = pss.player_id AND mv.league_id = pss.league_id
+GROUP BY pss.player_id, pss.player_name, pss.team_id, pss.season, pss.league_id,
+         pss.position, pss.goals, pss.assists, pss.goals_per90, pss.shots,
+         pss.shots_on_target_pct, pss.minutes_90s,
+         pd.tackles, pd.interceptions, pd.pressures, pd.pressure_regain_pct,
+         pp.progressive_carries, pp.take_ons_won_pct, pp.progressive_passes_received,
+         mv.market_value_numeric, mv.player_image_url;
+
+CREATE UNIQUE INDEX ON mv_player_complete_stats (player_id, season, league_id);
+Refresh nightly hoặc sau mỗi lần scrape xong. Query comparison chỉ còn:
+sqlSELECT * FROM mv_player_complete_stats
+WHERE player_id IN ('id_saka', 'id_salah') AND season = '2024-2025';
+
+🤖 AI Insights & Predictions
+Schema hiện tại lưu AI output nhưng không lưu input context — không thể explain "tại sao AI nói vậy" hay retrain. Cần thêm:
+sqlCREATE TABLE ai_insight_jobs (
+    id            BIGSERIAL PRIMARY KEY,
+    job_type      TEXT,    -- 'player_trend' | 'match_preview' | 'injury_risk'
+    entity_id     TEXT,    -- player_id hoặc event_id
+    entity_type   TEXT,    -- 'player' | 'match'
+    league_id     TEXT,
+    
+    -- Input context snapshot (để audit + retrain)
+    input_data    JSONB,
+    
+    -- Output
+    model_used    TEXT,    -- 'claude-sonnet-4-...'
+    output_text   TEXT,
+    confidence    REAL,
+    
+    -- Lifecycle
+    status        TEXT DEFAULT 'pending',  -- pending | done | failed
+    error_msg     TEXT,
+    created_at    TIMESTAMPTZ DEFAULT NOW(),
+    completed_at  TIMESTAMPTZ
+);
+
+-- Feedback từ user để improve model
+CREATE TABLE ai_insight_feedback (
+    id          BIGSERIAL PRIMARY KEY,
+    job_id      BIGINT REFERENCES ai_insight_jobs(id),
+    user_id     TEXT,
+    rating      INTEGER CHECK (rating BETWEEN 1 AND 5),
+    comment     TEXT,
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+📰 News & Injury Tracker
+news_feed hiện tại quá đơn giản — chỉ là RSS dump. Để thực sự hữu ích cần entity linking:
+sql-- Thêm vào news_feed
+ALTER TABLE news_feed ADD COLUMN IF NOT EXISTS player_ids   TEXT[];  -- ['fbref_id_1', ...]
+ALTER TABLE news_feed ADD COLUMN IF NOT EXISTS team_ids     TEXT[];
+ALTER TABLE news_feed ADD COLUMN IF NOT EXISTS news_type    TEXT;    -- 'injury' | 'transfer' | 'match' | 'general'
+ALTER TABLE news_feed ADD COLUMN IF NOT EXISTS sentiment    REAL;    -- -1.0 → 1.0
+ALTER TABLE news_feed ADD COLUMN IF NOT EXISTS is_verified  BOOLEAN DEFAULT FALSE;
+
+-- Index để query "tin tức liên quan đến Salah"
+CREATE INDEX idx_news_player ON news_feed USING GIN (player_ids);
+CREATE INDEX idx_news_team   ON news_feed USING GIN (team_ids);
+CREATE INDEX idx_news_type   ON news_feed (news_type, published_at DESC);
+
+TẦNG 3 — Chuẩn bị cho scale
+Bạn chưa rõ scale nhưng nên setup sẵn để không phải refactor sau:
+Partition shots theo season — đây sẽ là bảng lớn nhất (10 mùa × ~10 league × ~10 shots/game × ~380 game = ~38M rows):
+sql-- Tạo lại shots với partition
+CREATE TABLE shots_partitioned (
+    LIKE shots INCLUDING ALL
+) PARTITION BY LIST (season);
+
+CREATE TABLE shots_2024 PARTITION OF shots_partitioned FOR VALUES IN (2024);
+CREATE TABLE shots_2023 PARTITION OF shots_partitioned FOR VALUES IN (2023);
+-- ...
+```
+
+**Read replica** cho query nặng của AI/comparison — không để query phân tích block live polling.
+
+**Cache layer** — `mv_player_complete_stats` nên được cache ở Redis với TTL 1 giờ. DB không nên là điểm duy nhất chịu read traffic.
+
+---
+
+### Tổng kết thứ tự thực hiện
+```
+Tuần 1-2:  Tầng 1 — Fix bugs + match_crossref + team_canonical
+Tuần 3-4:  Tầng 2 (Live) — Tách live_state + seq-based polling
+Tuần 5-6:  Tầng 2 (Stats) — mv_player_complete_stats
+Tuần 7-8:  Tầng 2 (AI + News) — ai_insight_jobs + entity linking
+Tháng 3+:  Tầng 3 — Partition + replica khi có traffic thực
+Điểm mấu chốt: Tầng 1 phải làm trước vì nếu data sai thì AI insight sai, comparison sai, news linking sai — mọi tính năng đẹp ở trên đều vô nghĩa.

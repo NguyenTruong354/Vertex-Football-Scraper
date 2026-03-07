@@ -204,7 +204,8 @@ CREATE TABLE IF NOT EXISTS squad_rosters (
     season       TEXT,
     league_id    TEXT NOT NULL DEFAULT 'EPL',
     loaded_at    TIMESTAMPTZ DEFAULT NOW(),
-    PRIMARY KEY (player_id, team_id, league_id)
+    updated_at   TIMESTAMPTZ,
+    PRIMARY KEY (player_id, team_id, league_id, season)
 );
 
 CREATE INDEX IF NOT EXISTS idx_rosters_team  ON squad_rosters (team_id, league_id);
@@ -391,7 +392,8 @@ CREATE TABLE IF NOT EXISTS gk_stats (
     gk_avg_distance_def_actions   REAL,
     league_id                     TEXT NOT NULL DEFAULT 'EPL',
     loaded_at                     TIMESTAMPTZ DEFAULT NOW(),
-    PRIMARY KEY (player_id, team_id, league_id)
+    updated_at                    TIMESTAMPTZ,
+    PRIMARY KEY (player_id, team_id, league_id, season)
 );
 
 
@@ -673,6 +675,17 @@ CREATE TABLE IF NOT EXISTS heatmaps (
 
 ALTER TABLE heatmaps ALTER COLUMN heatmap_points SET STORAGE EXTENDED;
 
+-- JSONB validation: ensure heatmap_points is always a JSON array
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'chk_heatmap_points_array'
+    ) THEN
+        ALTER TABLE heatmaps
+            ADD CONSTRAINT chk_heatmap_points_array
+            CHECK (heatmap_points IS NULL OR jsonb_typeof(heatmap_points) = 'array');
+    END IF;
+END $$;
+
 CREATE INDEX IF NOT EXISTS idx_hm_event ON heatmaps (event_id, league_id);
 
 -- ──────────────────────────────────────────────────────────
@@ -798,6 +811,7 @@ DO $$ BEGIN
 END $$;
 
 -- ── FBref: squad_rosters → standings ────────────────────────
+-- FK references (team_id, league_id, season) which is now part of squad_rosters PK
 DO $$ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint WHERE conname = 'fk_rosters_team'
@@ -895,7 +909,7 @@ CREATE TABLE IF NOT EXISTS live_incidents (
 CREATE INDEX IF NOT EXISTS idx_live_snap_status ON live_snapshots (status);
 CREATE INDEX IF NOT EXISTS idx_live_inc_event   ON live_incidents (event_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_live_inc
-    ON live_incidents (event_id, incident_type, minute, COALESCE(player_name, ''));
+    ON live_incidents (event_id, incident_type, minute, COALESCE(player_name, ''), is_home);
 
 CREATE OR REPLACE FUNCTION cleanup_live_data(keep_days INTEGER DEFAULT 7)
 RETURNS TABLE (deleted_snapshots INT, deleted_incidents INT)
@@ -1004,3 +1018,58 @@ LEFT JOIN team_metadata tm
 ORDER BY t.team_id, t.league_id;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_team_profiles_id ON mv_team_profiles(fbref_team_id, league_id);
+
+
+-- ============================================================
+-- NHÓM J: UPDATED_AT TRIGGER + COLUMNS
+-- ============================================================
+-- Tự động set updated_at = NOW() khi row bị UPDATE.
+-- Giúp debug data cũ vs mới, biết row đến từ lần cào nào.
+
+CREATE OR REPLACE FUNCTION set_updated_at()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$;
+
+-- Thêm cột updated_at vào các bảng quan trọng (idempotent)
+ALTER TABLE match_stats             ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+ALTER TABLE standings               ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+ALTER TABLE shots                   ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+ALTER TABLE player_match_stats      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+ALTER TABLE squad_stats             ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+ALTER TABLE player_season_stats     ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+ALTER TABLE player_defensive_stats  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+ALTER TABLE player_possession_stats ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+ALTER TABLE fixtures                ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+ALTER TABLE ss_events               ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+ALTER TABLE match_passing_stats     ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+ALTER TABLE match_player_advanced_stats ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+ALTER TABLE market_values           ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+ALTER TABLE player_crossref         ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+
+-- Tạo trigger cho mỗi bảng (DROP IF EXISTS → idempotent)
+DO $$ 
+DECLARE
+    tbl TEXT;
+BEGIN
+    FOR tbl IN SELECT unnest(ARRAY[
+        'match_stats', 'standings', 'shots', 'player_match_stats',
+        'squad_rosters', 'squad_stats', 'player_season_stats',
+        'player_defensive_stats', 'player_possession_stats',
+        'fixtures', 'gk_stats', 'ss_events',
+        'match_passing_stats', 'match_player_advanced_stats',
+        'market_values', 'player_crossref'
+    ])
+    LOOP
+        EXECUTE format(
+            'DROP TRIGGER IF EXISTS trg_%s_updated ON %I; '
+            'CREATE TRIGGER trg_%s_updated '
+            'BEFORE UPDATE ON %I '
+            'FOR EACH ROW EXECUTE FUNCTION set_updated_at();',
+            tbl, tbl, tbl, tbl
+        );
+    END LOOP;
+END $$;

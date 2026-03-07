@@ -164,7 +164,7 @@ def load_squad_rosters(conn, league_id: str = "EPL") -> int:
         logger.warning("  File không tồn tại: %s", path)
         return 0
     df = pd.read_csv(path, on_bad_lines="skip")
-    count = _upsert(conn, "squad_rosters", df, ["player_id", "team_id", "league_id"], league_id=league_id)
+    count = _upsert(conn, "squad_rosters", df, ["player_id", "team_id", "league_id", "season"], league_id=league_id)
     logger.info("  squad_rosters: %d rows upserted ← %s", count, path.name)
     return count
 
@@ -236,7 +236,7 @@ def load_gk_stats(conn, league_id: str = "EPL") -> int:
         logger.warning("  File không tồn tại: %s", path)
         return 0
     df = pd.read_csv(path, on_bad_lines="skip")
-    count = _upsert(conn, "gk_stats", df, ["player_id", "team_id", "league_id"], league_id=league_id)
+    count = _upsert(conn, "gk_stats", df, ["player_id", "team_id", "league_id", "season"], league_id=league_id)
     logger.info("  gk_stats: %d rows upserted ← %s", count, path.name)
     return count
 
