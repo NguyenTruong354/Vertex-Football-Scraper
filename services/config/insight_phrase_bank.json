@@ -1,0 +1,59 @@
+{
+  "_version": "v1",
+  "_description": "Phrase bank for template diversity gate. Opening phrase = first 5 tokens after normalization. Block rule: same opening phrase cannot appear in 2 consecutive published insights for same event. Rolling cap: max 2 uses of same opening phrase per 30-minute event window.",
+
+  "live_badge": {
+    "opening_phrases": [
+      "Dominant display from",
+      "Momentum swinging towards",
+      "Clinical finishing separates the",
+      "Possession battle heating up",
+      "Relentless pressure building from",
+      "Defensive masterclass underway by",
+      "Counter-attacking threat emerging from",
+      "Set-piece danger increasing for",
+      "Tactical shift paying off",
+      "Intensity rising as the",
+      "Quality on the ball",
+      "Growing influence from the",
+      "Razor-sharp on the break",
+      "Stranglehold on midfield by",
+      "Waves of attack from",
+      "Composure under pressure from",
+      "Ruthless efficiency shown by",
+      "Control slipping away from",
+      "Surging forward play from",
+      "Game-changing moment as the"
+    ]
+  },
+
+  "match_story": {
+    "opening_phrases": [
+      "A commanding victory for",
+      "Drama unfolded as the",
+      "The scoreline tells the",
+      "From the first whistle",
+      "An absorbing contest between",
+      "Resilience defined this encounter",
+      "A hard-fought battle saw",
+      "The hosts controlled proceedings",
+      "Visitors stunned the crowd",
+      "A tale of two"
+    ]
+  },
+
+  "player_trend": {
+    "opening_phrases": [
+      "Consistent performances from the",
+      "Rising form evident in",
+      "Statistical progression shows a",
+      "Key contributions sustaining the",
+      "Output trending upward across",
+      "Decisive impact measured by",
+      "Reliability reflected in the",
+      "Growing threat level from",
+      "Numbers highlighting the sustained",
+      "Benchmark-setting displays from the"
+    ]
+  }
+}

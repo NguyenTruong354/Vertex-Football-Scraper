@@ -36,6 +36,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from services import live_insight
+from services import insight_producer, insight_worker
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
@@ -693,6 +694,24 @@ class LiveTrackingPool:
                     self.notifier.send("live", f"💡 [INSIGHT] {state.league} ({state.home_team} vs {state.away_team}): {insight}")
                 state.insight_text = insight
 
+            # Phase B (shadow): enqueue live_badge job for AI pipeline
+            if score > 0:
+                try:
+                    insight_producer.enqueue_live_badge(
+                        event_id=state.event_id,
+                        league_id=state.league,
+                        home_team=state.home_team,
+                        away_team=state.away_team,
+                        home_score=state.home_score,
+                        away_score=state.away_score,
+                        minute=state.minute,
+                        statistics=state.statistics,
+                        incidents=state.incidents,
+                        momentum_score=score,
+                    )
+                except Exception as exc:
+                    self.log.debug("Insight producer error: %s", exc)
+
         # 5. Save to DB every poll
         self._save_to_db(state)
 
@@ -986,7 +1005,8 @@ class PostMatchWorker:
         return ok
 
     def _generate_match_story(self, match: dict) -> None:
-        """Generate a 30-second AI match story and save to DB."""
+        """Generate a 30-second AI match story and save to DB.
+        Phase D: also enqueues a match_story pipeline job."""
         try:
             from services import match_story
             from db.config_db import get_connection
@@ -1031,6 +1051,22 @@ class PostMatchWorker:
                 self.notifier.send("info",
                     f"📝 [{match['league']}] Match story generated: "
                     f"{match['home_team']} vs {match['away_team']}")
+
+            # Phase D: enqueue match_story pipeline job (shadow mode)
+            try:
+                insight_producer.enqueue_match_story(
+                    event_id=event_id,
+                    league_id=match["league"],
+                    home_team=match["home_team"],
+                    away_team=match["away_team"],
+                    home_score=match.get("home_score", 0),
+                    away_score=match.get("away_score", 0),
+                    statistics=statistics,
+                    incidents=incidents,
+                )
+            except Exception as exc:
+                self.log.debug("Match story pipeline enqueue error: %s", exc)
+
         except Exception as exc:
             self.log.warning("Match story generation failed: %s", exc)
 
@@ -1210,6 +1246,8 @@ class DailyMaintenance:
 
         # Cleanup live data
         self._cleanup_live_data()
+        # AI insight jobs retention cleanup
+        self._cleanup_old_insight_jobs()
         # Refresh views
         self._refresh_views()
 
@@ -1222,7 +1260,8 @@ class DailyMaintenance:
         return ok
 
     def _analyze_player_trends(self) -> None:
-        """Run nightly AI player performance trend analysis for all leagues."""
+        """Run nightly AI player performance trend analysis for all leagues.
+        Phase D: also enqueues player_trend pipeline jobs (shadow mode)."""
         if self.dry_run:
             self.log.info("[DRY-RUN] Would analyze player trends")
             return
@@ -1234,6 +1273,27 @@ class DailyMaintenance:
                     return
                 count = player_trend.run_and_save(league)
                 total += count
+
+                # Phase D: enqueue player_trend pipeline jobs for notable players
+                try:
+                    insights = player_trend.analyze_all_players(league)
+                    for p in insights:
+                        if p["trend"] in ("GREEN", "RED"):
+                            insight_producer.enqueue_player_trend(
+                                league_id=league,
+                                player_id=p["player_id"],
+                                player_name=p["player_name"],
+                                trend=p["trend"],
+                                trend_score=p["score"],
+                                goals=p.get("goals", []),
+                                assists=p.get("assists", []),
+                                xg_arr=p.get("xg_arr", []),
+                                xa_arr=p.get("xa_arr", []),
+                                match_count=p.get("match_count", 0),
+                            )
+                except Exception as exc:
+                    self.log.debug("Player trend pipeline enqueue error: %s", exc)
+
             self.log.info("✓ Player trends: %d players analyzed", total)
             self.notifier.send("info", f"📈 Player trend analysis complete: {total} players")
         except Exception as exc:
@@ -1257,6 +1317,34 @@ class DailyMaintenance:
             conn.close()
         except Exception as exc:
             self.log.warning("Cleanup failed: %s", exc)
+
+    def _cleanup_old_insight_jobs(self) -> None:
+        """Retention cleanup: delete old ai_insight_jobs rows (90 days).
+        Guarded: never deletes jobs that have linked feedback (FK RESTRICT)."""
+        if self.dry_run:
+            self.log.info("[DRY-RUN] Would cleanup old insight jobs")
+            return
+        try:
+            from db.config_db import get_connection
+            conn = get_connection()
+            cur = conn.cursor()
+            cur.execute("""
+                DELETE FROM ai_insight_jobs
+                WHERE status IN ('succeeded', 'dropped', 'failed')
+                  AND created_at < NOW() - INTERVAL '90 days'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM ai_insight_feedback f
+                      WHERE f.job_id = ai_insight_jobs.id
+                  )
+            """)
+            deleted = cur.rowcount
+            conn.commit()
+            cur.close()
+            conn.close()
+            if deleted:
+                self.log.info("✓ Insight retention: deleted %d old jobs", deleted)
+        except Exception as exc:
+            self.log.warning("Insight retention cleanup failed: %s", exc)
 
     def _refresh_views(self) -> None:
         if self.dry_run:
@@ -1291,6 +1379,9 @@ class MasterScheduler:
                  skip_crossref_build: bool = False):
         self.leagues = [l.upper() for l in leagues]
         self.dry_run = dry_run
+        # AI Insight Pipeline: shadow_mode=True keeps old direct flow active,
+        # set INSIGHT_SHADOW_MODE=0 to switch to pipeline-driven publish (Phase C)
+        self.insight_shadow_mode = os.environ.get("INSIGHT_SHADOW_MODE", "1") != "0"
         self.log = setup_logging()
         self.notifier = Notifier(self.log)
         self._shutdown = asyncio.Event()
@@ -1347,6 +1438,7 @@ class MasterScheduler:
         self.log.info("  PID:        %d", os.getpid())
         self.log.info("  Recycle:    every %d requests", BROWSER_RECYCLE_EVERY)
         self.log.info("  Discord:    %s", "YES" if self.notifier.is_enabled else "NO")
+        self.log.info("  Insight:    %s", "SHADOW" if self.insight_shadow_mode else "LIVE")
         self.log.info("═" * 60)
 
         await self.browser.start()
@@ -1418,6 +1510,16 @@ class MasterScheduler:
         # ── 5. Poll active matches ──
         if not self.pool.is_empty:
             finished_matches = await self.pool.poll_all()
+
+            # ── 5b. AI Insight worker cycle ──
+            try:
+                processed = insight_worker.run_worker_cycle(
+                    shadow_mode=self.insight_shadow_mode,
+                )
+                if processed:
+                    self.log.info("🤖 Insight worker processed %d jobs", processed)
+            except Exception as exc:
+                self.log.debug("Insight worker error: %s", exc)
 
             # Run post-match for each finished match
             for fm in finished_matches:

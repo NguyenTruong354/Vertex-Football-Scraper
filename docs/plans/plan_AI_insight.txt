@@ -1,0 +1,463 @@
+AI INSIGHT PIPELINE PLAN (ai_insight_jobs + ai_insight_feedback)
+Version: v1.4
+Date: 2026-03-07
+Owner: Data Pipeline
+Status: Implemented (Phase B shadow mode — all milestones code-complete)
+
+Implementation Notes (2026-03-07):
+- Milestone 1 (Schema DDL): NHÓM L tables deployed, all constraints/indexes/triggers verified.
+- Milestone 2 (Worker MVP): live_badge E2E tested (Groq fallback when Gemini 429). SKIP LOCKED pick confirmed.
+- Milestone 3 (Anti-repeat): Novelty gate (SequenceMatcher 0.85) + template diversity gate + phrase bank.
+- Milestone 4 (Full pipeline): match_story + player_trend prompts, feedback module, 90-day retention cleanup.
+- Phase C cutover: INSIGHT_SHADOW_MODE env flag added (default=1/shadow). Pre-cutover checklist passes.
+- EXPLAIN ANALYZE: pick query uses Bitmap Index Scan, 0.2ms execution time.
+- Remaining: Run 7 days in shadow mode, measure KPI baseline, then set INSIGHT_SHADOW_MODE=0 for live.
+
+Verification Update (2026-03-07, round #1):
+- This v1.1 addresses:
+  1) lease_until recovery mechanism for running jobs (critical)
+  2) dedupe race hardening via producer-side ON CONFLICT contract (critical)
+  3) quality gate ordering split into pre-LLM vs post-LLM (critical)
+  4) fingerprint field definition clarified (medium)
+  5) priority bypass criteria made measurable (medium)
+  6) duplicate-rate KPI baseline requirement added (medium)
+  7) league-aware pick index/query for future scaling (medium)
+
+Verification Update (2026-03-07, round #2):
+- This v1.2 additionally addresses:
+  8) lease_until duration by job_type and p99 rule (critical)
+  9) novelty gate source query explicitly defined (critical)
+  10) move cooldown/delta gates to producer-side to avoid DB churn (critical)
+  11) add score CHECK constraint in feedback schema (medium)
+  12) define fingerprint canonicalization algorithm (medium)
+  13) add retention/cleanup policy for ai_insight_jobs (medium)
+  14) define source-of-truth for "last published state" (medium)
+
+Verification Update (2026-03-07, round #3):
+- This v1.3 additionally addresses:
+  15) retention cleanup feedback-safety guard and FK policy (critical)
+  16) isolate shadow mode from publish state via is_published flag (critical)
+  17) add feedback_type CHECK constraint in DDL spec (medium)
+  18) document cross-type novelty as known limitation v1 (info)
+  19) define template diversity implementation baseline (medium)
+
+Verification Update (2026-03-07, round #4 final):
+- This v1.4 additionally addresses:
+  20) Phase B -> Phase C cold-start flood risk with mandatory pre-cutover checklist (critical)
+  21) published consistency CHECK (is_published implies published_at not null) (medium)
+  22) retention performance note: NOT EXISTS alternative for large feedback table (info)
+
+0) Goal
+- Design a production-safe AI pipeline before implementation.
+- Keep existing LLM stack (Gemini/Groq + circuit breaker) and add orchestration layer.
+- Fix current quality problem: repetitive Discord insights with near-duplicate wording.
+
+1) Current State (as-is)
+- LLM router exists: services/llm_client.py
+  - Gemini key 1 -> Gemini key 2 -> Groq fallback
+  - Circuit breaker per provider
+- Insight generation is direct call (sync path):
+  - live_insight.py -> llm.generate_insight(...)
+  - match_story.py -> llm.generate_insight(...)
+  - player_trend.py -> llm.generate_insight(...)
+- Output tables exist:
+  - match_summaries
+  - player_insights
+- Missing tables/runtime:
+  - ai_insight_jobs (queue/orchestration)
+  - ai_insight_feedback (quality loop)
+
+2) Problem Statement
+- Repetitive content: same tone/phrase repeated every few minutes.
+- No queue-level controls for dedupe/cooldown/novelty.
+- No centralized retry state per insight request (attempt, error, backoff).
+- No human/consumer feedback table to tune prompt and quality.
+
+Observed examples from Discord:
+- "... dang ap dao hoan toan voi XX% ..." repeated with only 1-2% numeric changes.
+- Similar sentence shape across multiple updates in same match.
+
+3) Scope
+In scope (item 5):
+- Add ai_insight_jobs table.
+- Add ai_insight_feedback table.
+- Add worker flow to consume jobs and publish/store results.
+- Add anti-repeat quality gates before publish.
+- Add basic monitoring metrics and validation checklist.
+
+Out of scope (for this item):
+- Full model fine-tuning.
+- Frontend UX redesign for insight display.
+- Replacing current LLM providers.
+
+4) Architecture Target
+4.1 Producer layer (enqueue only)
+- live_insight, match_story, player_trend become job producers.
+- They prepare payload and insert into ai_insight_jobs.
+- They do not call LLM directly in final design.
+- Producer-side pre-gates (must run before INSERT):
+  - cooldown gate
+  - delta significance gate
+  - if any pre-gate fails, producer skips enqueue (no job row created).
+- Producer contract (mandatory for dedupe safety):
+  - INSERT must use ON CONFLICT DO NOTHING on active dedupe key.
+  - If RETURNING id is NULL, producer must skip because equivalent active job already exists.
+
+4.2 Worker layer (generate + decide)
+- A worker process picks queued jobs using SKIP LOCKED.
+- Worker executes LLM call through existing LLMClient.
+- Worker performs post-processing + quality gates.
+- Worker writes final output:
+  - match_summaries (for match_story)
+  - player_insights (for trend/live if needed)
+
+4.3 Feedback layer
+- Consumer/manual feedback saved in ai_insight_feedback.
+- Weekly analysis drives prompt/rule updates.
+
+5) Data Model Proposal
+5.1 ai_insight_jobs
+Recommended columns:
+- id BIGSERIAL PRIMARY KEY
+- job_type TEXT NOT NULL
+  - allowed values: live_badge, match_story, player_trend
+- event_id BIGINT
+- league_id TEXT
+- team_focus TEXT
+- status TEXT NOT NULL DEFAULT 'queued'
+  - allowed values: queued, running, succeeded, failed, dropped
+- priority INTEGER NOT NULL DEFAULT 100
+- dedupe_key TEXT
+- fingerprint TEXT
+- payload_json JSONB NOT NULL
+- prompt_version TEXT NOT NULL DEFAULT 'v1'
+- provider_used TEXT
+- model_used TEXT
+- attempt_count INTEGER NOT NULL DEFAULT 0
+- max_attempts INTEGER NOT NULL DEFAULT 3
+- next_retry_at TIMESTAMPTZ
+- lease_until TIMESTAMPTZ
+- worker_id TEXT
+- result_text TEXT
+- reason_code TEXT
+  - examples: near_duplicate, cooldown_block, low_signal
+- is_published BOOLEAN NOT NULL DEFAULT FALSE
+- published_at TIMESTAMPTZ
+- error_code TEXT
+- error_message TEXT
+- latency_ms INTEGER
+- input_tokens INTEGER
+- output_tokens INTEGER
+- created_at TIMESTAMPTZ DEFAULT NOW()
+- started_at TIMESTAMPTZ
+- finished_at TIMESTAMPTZ
+
+Constraints/Indexes:
+- CHECK status in (queued, running, succeeded, failed, dropped)
+- CHECK job_type in (live_badge, match_story, player_trend)
+- CONSTRAINT chk_published_consistency
+  CHECK (is_published = FALSE OR published_at IS NOT NULL)
+- idx_ai_jobs_pick on (league_id, status, priority, next_retry_at, created_at)
+- idx_ai_jobs_event on (event_id, created_at DESC)
+- idx_ai_jobs_published on (event_id, job_type, is_published, published_at DESC)
+- uq_ai_jobs_dedupe_active partial unique on dedupe_key where status in (queued, running)
+
+Field definition (clarify dedupe_key vs fingerprint):
+- dedupe_key:
+  - Business-key identity for mutually exclusive active jobs.
+  - Example: live_badge:EPL:event_123:insight_type_possession.
+  - Used by partial unique index + ON CONFLICT contract.
+- fingerprint:
+  - Content signature of normalized payload (hash of payload_json after canonicalization).
+  - Not for strict uniqueness; used for analytics, duplicate diagnostics, and feedback grouping.
+  - Canonicalization spec (mandatory):
+    - sort JSON keys recursively
+    - exclude volatile keys: timestamp, worker_id, lease_until
+    - normalize floats to fixed precision (4 decimals)
+    - fingerprint = SHA256(canonical_json_string)
+
+5.2 ai_insight_feedback
+Recommended columns:
+- id BIGSERIAL PRIMARY KEY
+- job_id BIGINT NOT NULL REFERENCES ai_insight_jobs(id) ON DELETE RESTRICT
+- event_id BIGINT
+- league_id TEXT
+- channel TEXT
+  - examples: discord, api, manual_review
+- feedback_type TEXT NOT NULL
+  - allowed values: upvote, downvote, duplicate, irrelevant, too_generic
+- score SMALLINT
+  - range: -2..+2
+- tags TEXT[]
+- comment TEXT
+- created_by TEXT
+- created_at TIMESTAMPTZ DEFAULT NOW()
+
+Constraints/Indexes:
+- CHECK (score IS NULL OR score BETWEEN -2 AND 2)
+- CHECK (feedback_type IN ('upvote', 'downvote', 'duplicate', 'irrelevant', 'too_generic'))
+- idx_ai_feedback_job on (job_id)
+- idx_ai_feedback_event on (event_id, created_at DESC)
+- idx_ai_feedback_type_time on (feedback_type, created_at DESC)
+
+6) Worker Processing Logic
+6.1 Pick jobs
+- Query pattern:
+  - league_id = :worker_league (or IN (...) for shared worker)
+  - status='queued'
+  - next_retry_at is null or <= now()
+  - order by priority asc, created_at asc
+  - for update skip locked
+
+Producer insert pattern (required):
+- SQL contract:
+  INSERT INTO ai_insight_jobs (..., dedupe_key, ...)
+  VALUES (...)
+  ON CONFLICT (dedupe_key) WHERE status IN ('queued', 'running')
+  DO NOTHING
+  RETURNING id;
+- Handling:
+  - If id returned: producer created new job.
+  - If no row returned: producer must skip enqueue (active equivalent job exists).
+
+6.2 Execute
+- Set running + lease_until.
+- Build prompt from payload_json + prompt_version.
+- Call LLMClient.
+- Capture provider/model/latency/tokens if available.
+- Lease duration policy (must follow):
+  - live_badge: lease_until = NOW() + INTERVAL '2 minutes'
+  - match_story: lease_until = NOW() + INTERVAL '5 minutes'
+  - player_trend: lease_until = NOW() + INTERVAL '5 minutes'
+  - rule: lease duration must be greater than p99 LLM latency for that job_type.
+  - before production lock, compute p99 from LLM logs and adjust values if needed.
+
+6.3 Quality gate (critical)
+-- Gate ordering (mandatory to control token cost):
+  - Producer-side pre-LLM gates:
+    - cooldown gate
+    - delta significance gate
+    - if failed: skip enqueue (no DB write to jobs table).
+  - Worker-side post-LLM gates:
+    - novelty text similarity gate
+    - template diversity gate
+    - If failed, mark dropped (reason_code=near_duplicate or template_repeat).
+  - If pass all gates:
+    - shadow mode: succeeded with is_published = FALSE
+    - production mode: succeeded with is_published = TRUE, published_at = NOW()
+    - then write destination table.
+
+6.4 Retry policy
+- attempt_count + 1 each failure.
+- Exponential backoff with jitter.
+- If attempt_count >= max_attempts -> failed.
+
+6.5 Lease recovery mechanism (critical)
+- A periodic recovery task must run every 1-2 minutes.
+- Recovery queries:
+  - Requeue expired running jobs that still have attempts left:
+    UPDATE ai_insight_jobs
+    SET
+      status        = 'queued',
+      worker_id     = NULL,
+      lease_until   = NULL,
+      next_retry_at = NOW() + INTERVAL '30 seconds'
+    WHERE
+      status = 'running'
+      AND lease_until < NOW()
+      AND attempt_count < max_attempts;
+  - Fail expired running jobs that exceeded attempts:
+    UPDATE ai_insight_jobs
+    SET
+      status      = 'failed',
+      reason_code = 'lease_expired'
+    WHERE
+      status = 'running'
+      AND lease_until < NOW()
+      AND attempt_count >= max_attempts;
+- Ownership:
+  - Recovery task is owned by worker supervisor (scheduler maintenance loop), not by producers.
+- Safety note:
+  - Recovery must only requeue jobs where lease_until < NOW().
+  - lease_until values above are chosen to reduce duplicate processing while keeping crash recovery fast.
+
+7) Anti-Repetition Strategy (for current pain)
+7.1 Event cooldown gate
+- For same event + insight_type, minimum publish interval:
+  - live_badge default 10 minutes.
+- Priority bypass criteria (explicit):
+  - bypass = TRUE when any condition is true:
+    - incident_type IN ('red_card', 'goal')
+    - score delta changed (home_score or away_score differs from last published state)
+    - minute >= 80 AND incident_type = 'goal'
+- Source of truth for "last published state" (mandatory):
+  - query latest successful and published live_badge job for event_id from ai_insight_jobs
+  - read state fields from payload_json (home_score, away_score, minute, incident_type)
+  - fallback: if no successful live_badge exists yet, use current live_match_state snapshot only.
+
+7.2 Delta significance gate
+- Do not publish possession insight if only small drift:
+  - require abs(delta_possession) >= 5 from last published possession insight.
+- Do not publish xG dominance insight unless xG gap increases by threshold (example >= 0.25).
+
+7.3 Novelty gate
+- Compare candidate text with last N published insights for same event (N=5).
+- If similarity >= threshold (example 0.85), drop as near duplicate.
+- Similarity can be simple token Jaccard or normalized string similarity (implementation choice).
+- Note:
+  - Novelty gate is post-LLM only, after pre-LLM gates have already reduced unnecessary calls.
+- Source query (mandatory):
+  SELECT result_text
+  FROM ai_insight_jobs
+  WHERE event_id = :event_id
+    AND job_type = :job_type
+    AND status = 'succeeded'
+    AND is_published = TRUE
+    AND finished_at IS NOT NULL
+  ORDER BY finished_at DESC
+  LIMIT 5;
+
+Known limitation (v1):
+- Novelty check is job_type-scoped first.
+- Cross-type semantic repetition (for example possession vs xg dominance with similar tone)
+  is tracked as v1 limitation and scheduled for v2 enhancement.
+
+7.4 Template diversity gate
+- Keep phrase bank with style variants.
+- Block repeated opening phrase for consecutive insights in same event.
+- Enforce max repeating prefix count within 30 minutes.
+- Implementation baseline (mandatory):
+  - phrase_bank stored in config file (versioned) at services/config/insight_phrase_bank.json.
+  - opening phrase defined as first 5 tokens after normalization.
+  - block rule: opening phrase cannot repeat in 2 consecutive published insights for same event.
+  - rolling cap: same opening phrase max 2 times per 30-minute event window.
+
+8) Prompting Strategy
+- Add prompt_version in jobs for controlled migration.
+- Prompt requires:
+  - one specific event context
+  - one concrete metric delta
+  - one consequence statement
+- Ban vague repeated phrases in system instruction.
+- Max length limit to keep concise notifications.
+
+9) Integration Plan
+Phase A (Schema)
+- Add ai_insight_jobs and ai_insight_feedback tables + indexes.
+- Include CHECK score range and fingerprint spec in implementation notes.
+- No producer/consumer switch yet.
+
+Phase B (Hybrid)
+- Keep old direct flow as fallback.
+- Add enqueue for live_badge in shadow mode.
+- Worker runs and logs decision (publish/drop) without affecting production message yet.
+- Producer-side pre-gates already active in shadow mode to prevent queue bloat.
+- Shadow mode publish semantics (mandatory):
+  - status may be succeeded, but is_published must remain FALSE.
+  - cooldown and "last published state" queries must filter is_published = TRUE only.
+
+Phase C (Cutover)
+- Switch live insight publish path to worker output.
+- Keep match_story/player_trend direct path until stable.
+- Pre-cutover checklist (mandatory, prevent cold-start flood):
+  - Drain queue from shadow period:
+    - ensure no live_badge jobs remain in queued/running before flip.
+  - Optional cooldown anchor backfill (limited):
+    - for recent N succeeded live_badge jobs per event from shadow window,
+      set is_published = TRUE and published_at = finished_at.
+    - do not backfill entire history; only recent window needed for cooldown anchor.
+  - Verify cooldown state before switch:
+    - last published row exists for active events, or controlled fallback is expected.
+
+Phase D (Full)
+- Move match_story and player_trend to job pipeline.
+- Enable feedback collection endpoints/process.
+- Add retention/cleanup task in DailyMaintenance for old jobs.
+
+10) Validation Checklist
+Schema:
+- Tables created with expected constraints/indexes.
+- Pick query uses indexes (check explain analyze).
+
+Runtime:
+- Worker processes queued jobs correctly.
+- Retry works and transitions are correct.
+- Dropped reasons are recorded correctly.
+- No duplicate active jobs for same dedupe_key.
+- Expired running jobs are recovered or failed by lease-recovery task.
+- Producer-side pre-gates prevent unnecessary enqueue under cooldown/delta fail.
+
+Quality:
+- Duplicate insight rate reduced significantly.
+- Repeated phrase frequency drops.
+- Publish volume per match reduced without missing major moments.
+- Pre-LLM gate hit ratio is tracked (to verify token-cost savings).
+
+11) KPI / SLO
+- Baseline measurement (mandatory before target lock):
+  - Measure 7-day baseline_duplicate_rate before cutover.
+  - Initial target rule:
+    - duplicate_rate <= min(15%, baseline_duplicate_rate * 0.5)
+- "too_generic" + "duplicate" feedback share < 20% after stabilization.
+- Job success rate >= 98% daily.
+- p95 job processing latency < 5s (excluding queued wait).
+- Mean publishes per in-progress match <= 1 per 10 minutes (except major events).
+
+12) Risks and Mitigation
+Risk A: Over-filtering hides important updates.
+- Mitigation: severity bypass list + manual threshold tuning by league.
+
+Risk B: Queue backlog during busy windows.
+- Mitigation: priority tiers + worker concurrency + max queue lag alert.
+
+Risk C: Prompt drift across versions.
+- Mitigation: prompt_version field + staged rollout + A/B compare logs.
+
+Risk D: Feedback noise quality.
+- Mitigation: weighted scoring by channel/source and spam filtering.
+
+Risk E: ai_insight_jobs table growth.
+- Mitigation: retention policy + periodic cleanup in DailyMaintenance.
+
+Risk F: feedback data loss during retention.
+- Mitigation: FK ON DELETE RESTRICT + guarded cleanup query.
+
+13) Delivery Breakdown
+Milestone 1:
+- Schema for ai_insight_jobs + ai_insight_feedback
+- Job status model + indexes + pick query
+
+Milestone 2:
+- Worker MVP for live_badge
+- Retry/backoff + reason_code + metrics
+
+Milestone 3:
+- Anti-repeat gate (cooldown + delta + novelty + template diversity)
+- Cutover live badge publish path
+
+Milestone 4:
+- Extend to match_story/player_trend
+- Feedback ingestion + weekly quality report
+- Retention policy (mandatory):
+  - mandatory guarded delete query:
+    DELETE FROM ai_insight_jobs
+    WHERE
+      status IN ('succeeded', 'dropped', 'failed')
+      AND created_at < NOW() - INTERVAL '90 days'
+      AND id NOT IN (
+        SELECT DISTINCT job_id FROM ai_insight_feedback
+      );
+  - do not delete jobs that have linked rows in ai_insight_feedback (enforced by FK RESTRICT + query guard)
+  - performance note:
+    - when ai_insight_feedback becomes large, prefer NOT EXISTS form for planner efficiency:
+      AND NOT EXISTS (
+        SELECT 1 FROM ai_insight_feedback f
+        WHERE f.job_id = ai_insight_jobs.id
+      )
+
+14) Definition of Done
+Item 5 is done when:
+- ai_insight_jobs and ai_insight_feedback are deployed and in use.
+- live insight generation is pipeline-driven (not direct-only).
+- anti-repeat quality gates are active in production.
+- measurable quality improvements are observed against baseline.

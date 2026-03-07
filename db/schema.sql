@@ -52,6 +52,8 @@
 --  26. team_registry       — anchor table seeded from standings
 --  27. team_canonical      — cross-source team name mapping
 --  28. match_crossref      — cross-source match bridging
+--  30. ai_insight_jobs     — AI insight pipeline queue
+--  31. ai_insight_feedback — AI insight quality feedback
 -- ============================================================
 
 -- ============================================================
@@ -1192,6 +1194,161 @@ CREATE INDEX IF NOT EXISTS idx_mcr_sofascore ON match_crossref (sofascore_event_
 
 
 -- ============================================================
+-- NHÓM L: AI INSIGHT PIPELINE
+-- ============================================================
+
+-- ──────────────────────────────────────────────────────────
+-- 30. AI_INSIGHT_JOBS — queue/orchestration for AI insight generation
+--     Managed by worker (pick → execute → gate → publish/drop).
+--     Producer inserts with ON CONFLICT DO NOTHING on dedupe_key.
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS ai_insight_jobs (
+    id               BIGSERIAL PRIMARY KEY,
+    job_type         TEXT NOT NULL,      -- live_badge | match_story | player_trend
+    event_id         BIGINT,
+    league_id        TEXT,
+    team_focus       TEXT,
+    status           TEXT NOT NULL DEFAULT 'queued',
+    priority         INTEGER NOT NULL DEFAULT 100,
+    dedupe_key       TEXT,               -- business-key for active job uniqueness
+    fingerprint      TEXT,               -- SHA256 of canonical payload for analytics
+    payload_json     JSONB NOT NULL,
+    prompt_version   TEXT NOT NULL DEFAULT 'v1',
+    provider_used    TEXT,
+    model_used       TEXT,
+    attempt_count    INTEGER NOT NULL DEFAULT 0,
+    max_attempts     INTEGER NOT NULL DEFAULT 3,
+    next_retry_at    TIMESTAMPTZ,
+    lease_until      TIMESTAMPTZ,
+    worker_id        TEXT,
+    result_text      TEXT,
+    reason_code      TEXT,               -- near_duplicate | cooldown_block | low_signal | lease_expired
+    is_published     BOOLEAN NOT NULL DEFAULT FALSE,
+    published_at     TIMESTAMPTZ,
+    error_code       TEXT,
+    error_message    TEXT,
+    latency_ms       INTEGER,
+    input_tokens     INTEGER,
+    output_tokens    INTEGER,
+    created_at       TIMESTAMPTZ DEFAULT NOW(),
+    started_at       TIMESTAMPTZ,
+    finished_at      TIMESTAMPTZ,
+    updated_at       TIMESTAMPTZ
+);
+
+-- CHECK: status enum
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'chk_ai_jobs_status'
+    ) THEN
+        ALTER TABLE ai_insight_jobs
+            ADD CONSTRAINT chk_ai_jobs_status
+            CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'dropped'));
+    END IF;
+END $$;
+
+-- CHECK: job_type enum
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'chk_ai_jobs_type'
+    ) THEN
+        ALTER TABLE ai_insight_jobs
+            ADD CONSTRAINT chk_ai_jobs_type
+            CHECK (job_type IN ('live_badge', 'match_story', 'player_trend'));
+    END IF;
+END $$;
+
+-- CHECK: is_published = TRUE implies published_at IS NOT NULL
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'chk_published_consistency'
+    ) THEN
+        ALTER TABLE ai_insight_jobs
+            ADD CONSTRAINT chk_published_consistency
+            CHECK (is_published = FALSE OR published_at IS NOT NULL);
+    END IF;
+END $$;
+
+-- Pick query index (league-aware worker)
+CREATE INDEX IF NOT EXISTS idx_ai_jobs_pick
+    ON ai_insight_jobs (league_id, status, priority, next_retry_at, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_ai_jobs_event
+    ON ai_insight_jobs (event_id, created_at DESC);
+
+-- Published lookup (novelty gate source)
+CREATE INDEX IF NOT EXISTS idx_ai_jobs_published
+    ON ai_insight_jobs (event_id, job_type, is_published, published_at DESC);
+
+-- Partial unique for active dedupe (ON CONFLICT target)
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ai_jobs_dedupe_active
+    ON ai_insight_jobs (dedupe_key)
+    WHERE status IN ('queued', 'running');
+
+-- ──────────────────────────────────────────────────────────
+-- 31. AI_INSIGHT_FEEDBACK — consumer/manual quality feedback
+--     FK → ai_insight_jobs ON DELETE RESTRICT (preserve feedback data)
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS ai_insight_feedback (
+    id              BIGSERIAL PRIMARY KEY,
+    job_id          BIGINT NOT NULL,
+    event_id        BIGINT,
+    league_id       TEXT,
+    channel         TEXT,           -- discord | api | manual_review
+    feedback_type   TEXT NOT NULL,  -- upvote | downvote | duplicate | irrelevant | too_generic
+    score           SMALLINT,       -- -2..+2
+    tags            TEXT[],
+    comment         TEXT,
+    created_by      TEXT,
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- FK: feedback → jobs (RESTRICT — never cascade-delete feedback)
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'fk_ai_feedback_job'
+    ) THEN
+        ALTER TABLE ai_insight_feedback
+            ADD CONSTRAINT fk_ai_feedback_job
+            FOREIGN KEY (job_id)
+            REFERENCES ai_insight_jobs(id)
+            ON DELETE RESTRICT;
+    END IF;
+END $$;
+
+-- CHECK: score range
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'chk_ai_feedback_score'
+    ) THEN
+        ALTER TABLE ai_insight_feedback
+            ADD CONSTRAINT chk_ai_feedback_score
+            CHECK (score IS NULL OR score BETWEEN -2 AND 2);
+    END IF;
+END $$;
+
+-- CHECK: feedback_type enum
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'chk_ai_feedback_type'
+    ) THEN
+        ALTER TABLE ai_insight_feedback
+            ADD CONSTRAINT chk_ai_feedback_type
+            CHECK (feedback_type IN ('upvote', 'downvote', 'duplicate', 'irrelevant', 'too_generic'));
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_ai_feedback_job
+    ON ai_insight_feedback (job_id);
+
+CREATE INDEX IF NOT EXISTS idx_ai_feedback_event
+    ON ai_insight_feedback (event_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_ai_feedback_type_time
+    ON ai_insight_feedback (feedback_type, created_at DESC);
+
+
+-- ============================================================
 -- NHÓM J: UPDATED_AT TRIGGER + COLUMNS
 -- ============================================================
 -- Tự động set updated_at = NOW() khi row bị UPDATE.
@@ -1224,6 +1381,7 @@ ALTER TABLE team_registry           ADD COLUMN IF NOT EXISTS updated_at TIMESTAM
 ALTER TABLE team_canonical          ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
 ALTER TABLE match_crossref          ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
 ALTER TABLE live_match_state        ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+ALTER TABLE ai_insight_jobs         ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
 
 -- Tạo trigger cho mỗi bảng (DROP IF EXISTS → idempotent)
 DO $$ 
@@ -1238,7 +1396,7 @@ BEGIN
         'match_passing_stats', 'match_player_advanced_stats',
         'market_values', 'player_crossref',
         'team_registry', 'team_canonical', 'match_crossref',
-        'live_match_state'
+        'live_match_state', 'ai_insight_jobs'
     ])
     LOOP
         EXECUTE format(

@@ -8,10 +8,12 @@ Done.
 2) team_canonical (chuan hoa ten doi)
 - Anh huong toan bo pipeline.
 
+Done.
 3) live_match_state tach khoi live_snapshots
 - Can refactor live module.
 - Plan: docs/plans/plan_live_state_mv_player_complete_stats.txt
 
+Done.
 4) mv_player_complete_stats
 - Materialized view tong hop cho player comparison.
 - Plan: docs/plans/plan_live_state_mv_player_complete_stats.txt
