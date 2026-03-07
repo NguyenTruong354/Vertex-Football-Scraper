@@ -1050,12 +1050,14 @@ class PostMatchWorker:
 class DailyMaintenance:
     def __init__(self, leagues: list[str], log: logging.Logger,
                  notifier: Notifier, *, dry_run: bool = False,
-                 shutdown_event: asyncio.Event | None = None):
+                 shutdown_event: asyncio.Event | None = None,
+                 skip_crossref_build: bool = False):
         self.leagues = leagues
         self.log = log
         self.notifier = notifier
         self.dry_run = dry_run
         self._shutdown = shutdown_event
+        self.skip_crossref_build = skip_crossref_build
         self.last_run_date: str | None = None
 
     def is_due(self) -> bool:
@@ -1090,6 +1092,18 @@ class DailyMaintenance:
                 ROOT, f"Daily/DBLoad [{league}]",
                 self.log, dry_run=self.dry_run, shutdown_event=self._shutdown,
             )
+
+            if not self.skip_crossref_build:
+                ok &= run_with_retry(
+                    [PYTHON, "tools/maintenance/build_team_canonical.py", "--league", league],
+                    ROOT, f"Daily/TeamCanonical [{league}]",
+                    self.log, dry_run=self.dry_run, shutdown_event=self._shutdown,
+                )
+                ok &= run_with_retry(
+                    [PYTHON, "tools/maintenance/build_match_crossref.py", "--league", league],
+                    ROOT, f"Daily/MatchCrossref [{league}]",
+                    self.log, dry_run=self.dry_run, shutdown_event=self._shutdown,
+                )
 
         # AI: Nightly player performance trend analysis
         self._analyze_player_trends()
@@ -1173,7 +1187,8 @@ class DailyMaintenance:
 class MasterScheduler:
     """Single-process HTTP worker daemon for all leagues."""
 
-    def __init__(self, leagues: list[str], *, dry_run: bool = False):
+    def __init__(self, leagues: list[str], *, dry_run: bool = False,
+                 skip_crossref_build: bool = False):
         self.leagues = [l.upper() for l in leagues]
         self.dry_run = dry_run
         self.log = setup_logging()
@@ -1189,7 +1204,8 @@ class MasterScheduler:
                                            browser=self.browser, dry_run=dry_run,
                                            shutdown_event=self._shutdown)
         self.daily = DailyMaintenance(self.leagues, self.log, self.notifier,
-                                       dry_run=dry_run, shutdown_event=self._shutdown)
+                                       dry_run=dry_run, shutdown_event=self._shutdown,
+                                       skip_crossref_build=skip_crossref_build)
         self.last_news_fetch: datetime | None = None
         self._lineup_fetched: set[int] = set()  # event_ids already fetched lineups
 
@@ -1494,6 +1510,8 @@ Examples:
                         help="Log schedule without running scrapers or browser")
     parser.add_argument("--test-notify", action="store_true",
                         help="Send test Discord notification and exit")
+    parser.add_argument("--skip-crossref-build", action="store_true",
+                        help="Skip daily team_canonical + match_crossref build")
 
     args = parser.parse_args()
     leagues = [l.upper() for l in args.leagues]
@@ -1514,7 +1532,11 @@ Examples:
         print("✓ Sent")
         sys.exit(0)
 
-    scheduler = MasterScheduler(leagues, dry_run=args.dry_run)
+    scheduler = MasterScheduler(
+        leagues,
+        dry_run=args.dry_run,
+        skip_crossref_build=args.skip_crossref_build,
+    )
     asyncio.run(scheduler.run())
 
 

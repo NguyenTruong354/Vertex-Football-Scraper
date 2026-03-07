@@ -106,6 +106,16 @@ def load_db(league: str) -> bool:
     return _run(cmd, ROOT, f"DB Load [{league}]")
 
 
+def build_team_canonical(league: str) -> bool:
+    cmd = [PYTHON, "tools/maintenance/build_team_canonical.py", "--league", league]
+    return _run(cmd, ROOT, f"Team Canonical [{league}]")
+
+
+def build_match_crossref(league: str) -> bool:
+    cmd = [PYTHON, "tools/maintenance/build_match_crossref.py", "--league", league]
+    return _run(cmd, ROOT, f"Match Crossref [{league}]")
+
+
 def populate_tm_crossref(league: str) -> bool:
     cmd = [PYTHON, "tools/fill_tm_crossref.py"]
     # Currently fill_tm_crossref runs for all rows, but we pass league for logging context if needed later
@@ -206,6 +216,13 @@ def run_pipeline(args: argparse.Namespace) -> None:
             results[league]["db_load"] = "OK" if ok else "FAIL"
             
             if ok:
+                if not args.skip_crossref_build:
+                    ok_tc = build_team_canonical(league)
+                    results[league]["team_canonical"] = "OK" if ok_tc else "FAIL"
+
+                    ok_mcr = build_match_crossref(league)
+                    results[league]["match_crossref"] = "OK" if ok_mcr else "FAIL"
+
                 # ── Post-load data processing ─────────────────────
                 populate_tm_crossref(league)
                 refresh_materialized_views(league)
@@ -286,6 +303,10 @@ Ví dụ:
     parser.add_argument(
         "--quick-test", action="store_true",
         help="Test nhanh: limit 2 teams, 1 match mỗi scraper",
+    )
+    parser.add_argument(
+        "--skip-crossref-build", action="store_true",
+        help="Bỏ qua build team_canonical + match_crossref sau DB load",
     )
 
     args = parser.parse_args()
