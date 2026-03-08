@@ -33,6 +33,7 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -1388,43 +1389,77 @@ def run_with_retry(cmd: list[str], cwd: Path, label: str,
         log.info("▶ %s (attempt %d/%d)", label, attempt + 1, MAX_ATTEMPTS)
         t0 = time.perf_counter()
         try:
-            proc = subprocess.Popen(
-                cmd,
-                cwd=str(cwd),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
+            child_env = os.environ.copy()
+            child_env.setdefault("PYTHONUTF8", "1")
+            child_env.setdefault("PYTHONIOENCODING", "utf-8")
 
-            timed_out = False
-            while True:
-                if shutdown_event and shutdown_event.is_set():
-                    log.info("⏹ %s — terminating child process (shutdown)", label)
-                    proc.terminate()
+            with tempfile.NamedTemporaryFile(mode="w+", encoding="utf-8", errors="replace", delete=False) as out_f, \
+                 tempfile.NamedTemporaryFile(mode="w+", encoding="utf-8", errors="replace", delete=False) as err_f:
+                out_path = out_f.name
+                err_path = err_f.name
+
+                proc = subprocess.Popen(
+                    cmd,
+                    cwd=str(cwd),
+                    stdout=out_f,
+                    stderr=err_f,
+                    text=True,
+                    env=child_env,
+                )
+
+                timed_out = False
+                next_heartbeat = t0 + 30
+                while True:
+                    if shutdown_event and shutdown_event.is_set():
+                        log.info("⏹ %s — terminating child process (shutdown)", label)
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=10)
+                        except subprocess.TimeoutExpired:
+                            proc.kill()
+                            proc.wait(timeout=5)
+                        return False
+
+                    if (time.monotonic() - t0) >= timeout:
+                        timed_out = True
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=10)
+                        except subprocess.TimeoutExpired:
+                            proc.kill()
+                            proc.wait(timeout=5)
+                        break
+
                     try:
-                        proc.wait(timeout=10)
+                        proc.wait(timeout=2)
+                        break
                     except subprocess.TimeoutExpired:
-                        proc.kill()
-                        proc.wait(timeout=5)
-                    return False
+                        now = time.monotonic()
+                        if now >= next_heartbeat:
+                            log.info("… %s still running (%.0fs elapsed)", label, now - t0)
+                            next_heartbeat = now + 30
+                        continue
 
-                if (time.monotonic() - t0) >= timeout:
-                    timed_out = True
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=10)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-                        proc.wait(timeout=5)
-                    break
-
-                try:
-                    proc.wait(timeout=2)
-                    break
-                except subprocess.TimeoutExpired:
-                    continue
-
-            stdout, stderr = proc.communicate()
+            stdout = ""
+            stderr = ""
+            try:
+                with open(out_path, "r", encoding="utf-8", errors="replace") as f:
+                    stdout = f.read()
+            except Exception:
+                pass
+            try:
+                with open(err_path, "r", encoding="utf-8", errors="replace") as f:
+                    stderr = f.read()
+            except Exception:
+                pass
+            try:
+                os.remove(out_path)
+            except Exception:
+                pass
+            try:
+                os.remove(err_path)
+            except Exception:
+                pass
 
             if timed_out:
                 log.warning("✗ %s — timeout", label)
@@ -1710,13 +1745,25 @@ class DailyMaintenance:
     def __init__(self, leagues: list[str], log: logging.Logger,
                  notifier: Notifier, *, dry_run: bool = False,
                  shutdown_event: asyncio.Event | None = None,
-                 skip_crossref_build: bool = False):
+                 skip_crossref_build: bool = False,
+                 task_timeout_seconds: int = 7200,
+                 fbref_standings_only: bool = False,
+                 fbref_no_match_passing: bool = False,
+                 fbref_team_limit: int = 0,
+                 fbref_match_limit: int = 0,
+                 skip_ai_trend: bool = False):
         self.leagues = leagues
         self.log = log
         self.notifier = notifier
         self.dry_run = dry_run
         self._shutdown = shutdown_event
         self.skip_crossref_build = skip_crossref_build
+        self.task_timeout_seconds = max(60, int(task_timeout_seconds))
+        self.fbref_standings_only = fbref_standings_only
+        self.fbref_no_match_passing = fbref_no_match_passing
+        self.fbref_team_limit = max(0, int(fbref_team_limit))
+        self.fbref_match_limit = max(0, int(fbref_match_limit))
+        self.skip_ai_trend = skip_ai_trend
         self.last_run_date: str | None = None
 
     def is_due(self) -> bool:
@@ -1735,42 +1782,83 @@ class DailyMaintenance:
                 return False
             sources = LEAGUE_SOURCES.get(league, {})
             if sources.get("fbref"):
+                fbref_cmd = [PYTHON, "fbref_scraper.py", "--league", league]
+                if self.fbref_standings_only:
+                    fbref_cmd.append("--standings-only")
+                else:
+                    if self.fbref_no_match_passing:
+                        fbref_cmd.append("--no-match-passing")
+                    if self.fbref_team_limit > 0:
+                        fbref_cmd.extend(["--limit", str(self.fbref_team_limit)])
+                    if self.fbref_match_limit > 0:
+                        fbref_cmd.extend(["--match-limit", str(self.fbref_match_limit)])
                 ok &= run_with_retry(
-                    [PYTHON, "fbref_scraper.py", "--league", league],
+                    fbref_cmd,
                     ROOT / "fbref", f"Daily/FBref [{league}]",
-                    self.log, dry_run=self.dry_run, shutdown_event=self._shutdown,
+                    self.log, dry_run=self.dry_run,
+                    timeout=self.task_timeout_seconds,
+                    shutdown_event=self._shutdown,
                 )
             if sources.get("transfermarkt"):
                 ok &= run_with_retry(
                     [PYTHON, "tm_scraper.py", "--league", league],
                     ROOT / "transfermarkt", f"Daily/Transfermarkt [{league}]",
-                    self.log, dry_run=self.dry_run, shutdown_event=self._shutdown,
+                    self.log, dry_run=self.dry_run,
+                    timeout=self.task_timeout_seconds,
+                    shutdown_event=self._shutdown,
                 )
             ok &= run_with_retry(
                 [PYTHON, "-m", "db.loader", "--league", league],
                 ROOT, f"Daily/DBLoad [{league}]",
-                self.log, dry_run=self.dry_run, shutdown_event=self._shutdown,
+                self.log, dry_run=self.dry_run,
+                timeout=self.task_timeout_seconds,
+                shutdown_event=self._shutdown,
             )
 
             if not self.skip_crossref_build:
                 ok &= run_with_retry(
                     [PYTHON, "tools/maintenance/build_team_canonical.py", "--league", league],
                     ROOT, f"Daily/TeamCanonical [{league}]",
-                    self.log, dry_run=self.dry_run, shutdown_event=self._shutdown,
+                    self.log, dry_run=self.dry_run,
+                    timeout=self.task_timeout_seconds,
+                    shutdown_event=self._shutdown,
                 )
                 ok &= run_with_retry(
                     [PYTHON, "tools/maintenance/build_match_crossref.py", "--league", league],
                     ROOT, f"Daily/MatchCrossref [{league}]",
-                    self.log, dry_run=self.dry_run, shutdown_event=self._shutdown,
+                    self.log, dry_run=self.dry_run,
+                    timeout=self.task_timeout_seconds,
+                    shutdown_event=self._shutdown,
                 )
 
+        if self._shutdown and self._shutdown.is_set():
+            self.log.info("⏹ Daily maintenance aborted before post-steps (shutdown)")
+            return False
+
         # AI: Nightly player performance trend analysis
-        self._analyze_player_trends()
+        if self.skip_ai_trend:
+            self.log.info("⏭ Daily AI trend disabled (--skip-ai-trend)")
+        else:
+            self._analyze_player_trends()
+
+        if self._shutdown and self._shutdown.is_set():
+            self.log.info("⏹ Daily maintenance aborted after AI trends (shutdown)")
+            return False
 
         # Cleanup live data
         self._cleanup_live_data()
+
+        if self._shutdown and self._shutdown.is_set():
+            self.log.info("⏹ Daily maintenance aborted after cleanup (shutdown)")
+            return False
+
         # AI insight jobs retention cleanup
         self._cleanup_old_insight_jobs()
+
+        if self._shutdown and self._shutdown.is_set():
+            self.log.info("⏹ Daily maintenance aborted after insight retention cleanup (shutdown)")
+            return False
+
         # Refresh views
         self._refresh_views()
 
@@ -1794,8 +1882,10 @@ class DailyMaintenance:
             for league in self.leagues:
                 if self._shutdown and self._shutdown.is_set():
                     return
+                self.log.info("▶ Daily/AITrend [%s]", league)
                 count = player_trend.run_and_save(league)
                 total += count
+                self.log.info("✓ Daily/AITrend [%s] analyzed=%d", league, count)
 
                 # Phase D: enqueue player_trend pipeline jobs for notable players
                 try:
@@ -1946,9 +2036,17 @@ class MasterScheduler:
 
     def __init__(self, leagues: list[str], *, dry_run: bool = False,
                  skip_crossref_build: bool = False,
-                 skip_daily_maintenance: bool = False):
+                 skip_daily_maintenance: bool = False,
+                 force_daily_now: bool = False,
+                 daily_timeout_seconds: int = 7200,
+                 fbref_standings_only: bool = False,
+                 fbref_no_match_passing: bool = False,
+                 fbref_team_limit: int = 0,
+                 fbref_match_limit: int = 0,
+                 skip_ai_trend: bool = False):
         self.leagues = [l.upper() for l in leagues]
         self.dry_run = dry_run
+        self.force_daily_now = force_daily_now
         # AI Insight Pipeline: shadow_mode=True keeps old direct flow active,
         # set INSIGHT_SHADOW_MODE=0 to switch to pipeline-driven publish (Phase C)
         self.insight_shadow_mode = os.environ.get("INSIGHT_SHADOW_MODE", "1") != "0"
@@ -1969,7 +2067,13 @@ class MasterScheduler:
                                            shutdown_event=self._shutdown)
         self.daily = DailyMaintenance(self.leagues, self.log, self.notifier,
                                        dry_run=dry_run, shutdown_event=self._shutdown,
-                                       skip_crossref_build=skip_crossref_build)
+                                       skip_crossref_build=skip_crossref_build,
+                                       task_timeout_seconds=daily_timeout_seconds,
+                                       fbref_standings_only=fbref_standings_only,
+                                       fbref_no_match_passing=fbref_no_match_passing,
+                                       fbref_team_limit=fbref_team_limit,
+                                       fbref_match_limit=fbref_match_limit,
+                                       skip_ai_trend=skip_ai_trend)
         if skip_daily_maintenance:
             # Mark daily as already done for today so restart/test can continue immediately.
             self.daily.last_run_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -2042,7 +2146,7 @@ class MasterScheduler:
         self.log.info("CYCLE START — %s", now.strftime("%Y-%m-%d %H:%M UTC"))
 
         # ── 1. Daily maintenance (with barrier) ──
-        if self.daily.is_due() and now.hour >= 6:
+        if self.daily.is_due() and (now.hour >= 6 or self.force_daily_now):
             if self.pool.is_empty:
                 self.log.info("🚧 Pool is empty — running daily maintenance")
                 self._lineup_fetched.clear()  # Reset lineup tracking daily
@@ -2294,6 +2398,20 @@ Examples:
                         help="Skip daily team_canonical + match_crossref build")
     parser.add_argument("--skip-daily-maintenance", action="store_true",
                         help="Skip daily maintenance for current process run")
+    parser.add_argument("--force-daily-now", action="store_true",
+                        help="Force daily maintenance even before 06:00 UTC (debug)")
+    parser.add_argument("--daily-timeout-seconds", type=int, default=7200,
+                        help="Timeout per daily subprocess task (default: 7200)")
+    parser.add_argument("--fbref-standings-only", action="store_true",
+                        help="Daily FBref: scrape standings+fixtures only")
+    parser.add_argument("--fbref-no-match-passing", action="store_true",
+                        help="Daily FBref: skip match-report passing data")
+    parser.add_argument("--fbref-team-limit", type=int, default=0,
+                        help="Daily FBref: limit number of squad pages (0=all)")
+    parser.add_argument("--fbref-match-limit", type=int, default=0,
+                        help="Daily FBref: limit match reports (0=all)")
+    parser.add_argument("--skip-ai-trend", action="store_true",
+                        help="Daily: skip AI player trend stage (debug/stability)")
 
     args = parser.parse_args()
     leagues = [l.upper() for l in args.leagues]
@@ -2319,6 +2437,13 @@ Examples:
         dry_run=args.dry_run,
         skip_crossref_build=args.skip_crossref_build,
         skip_daily_maintenance=args.skip_daily_maintenance,
+        force_daily_now=args.force_daily_now,
+        daily_timeout_seconds=args.daily_timeout_seconds,
+        fbref_standings_only=args.fbref_standings_only,
+        fbref_no_match_passing=args.fbref_no_match_passing,
+        fbref_team_limit=args.fbref_team_limit,
+        fbref_match_limit=args.fbref_match_limit,
+        skip_ai_trend=args.skip_ai_trend,
     )
     asyncio.run(scheduler.run())
 

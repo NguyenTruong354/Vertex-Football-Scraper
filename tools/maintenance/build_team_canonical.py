@@ -350,7 +350,8 @@ def build_team_canonical(cur, league_id: str, dry_run: bool = False) -> dict:
              fbref_name, understat_name, sofascore_name, tm_name,
              sofascore_team_id, tm_team_id, matched_by)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (league_id, fbref_team_id) DO UPDATE SET
+        ON CONFLICT ON CONSTRAINT uq_team_canonical_league_name DO UPDATE SET
+            fbref_team_id      = EXCLUDED.fbref_team_id,
             canonical_name    = EXCLUDED.canonical_name,
             fbref_name        = EXCLUDED.fbref_name,
             understat_name    = COALESCE(EXCLUDED.understat_name, team_canonical.understat_name),

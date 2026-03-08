@@ -2,8 +2,8 @@
 Vertex Football - AI Service Router
 
 Provides a unified interface to generate insights using multiple LLM providers.
-Primary: Google Gemini (gemini-2.5-flash)
-Fallback: Groq (llama-3.3-70b-versatile)
+Primary: Groq Key 1 (llama-3.3-70b-versatile)
+Fallback: Groq Key 2 (llama-3.3-70b-versatile)
 """
 
 import os
@@ -11,9 +11,6 @@ import time
 import logging
 from pathlib import Path
 from typing import Optional
-from google import genai
-from google.genai import types as genai_types
-from google.genai.errors import APIError as GeminiAPIError
 from groq import Groq
 from groq import APIStatusError as GroqAPIError
 
@@ -39,12 +36,13 @@ _bootstrap_env()
 class CircuitBreaker:
     def __init__(self, name: str, provider: str):
         self.name = name
-        self.provider = provider  # 'gemini' or 'groq'
+        self.provider = provider  # 'groq'
         self.state = "CLOSED"
         self.consecutive_failures = 0
         self.next_retry_time = 0.0
         self.base_cooldown = 0
         self.current_cooldown = 0
+        self._last_open_log_time = 0.0
 
     def can_execute(self) -> bool:
         current_time = time.time()
@@ -59,7 +57,10 @@ class CircuitBreaker:
             else:
                 remaining = int(self.next_retry_time - current_time)
                 mins, secs = divmod(remaining, 60)
-                logger.warning("[CircuitBreaker-%s] OPEN — skipping request. Retry explicitly in %dm:%02ds.", self.name, mins, secs)
+                # Throttle noisy OPEN logs to at most once per minute per breaker.
+                if (current_time - self._last_open_log_time) >= 60:
+                    logger.warning("[CircuitBreaker-%s] OPEN — skipping request. Retry explicitly in %dm:%02ds.", self.name, mins, secs)
+                    self._last_open_log_time = current_time
                 return False
                 
         if self.state == "HALF_OPEN":
@@ -80,16 +81,7 @@ class CircuitBreaker:
         # Determine base cooldown and threshold based on provider and error
         threshold = 3
         
-        if self.provider == "gemini":
-            if status_code == 429:
-                self.base_cooldown = 3600  # 60 mins
-                threshold = 1
-            elif status_code in (400, 404):
-                self.base_cooldown = 86400 # 24 hours
-                threshold = 1
-            else:
-                self.base_cooldown = 300   # 5 mins
-        else: # groq
+        if self.provider == "groq":
             if status_code == 429:
                 self.base_cooldown = 60    # 1 min
                 threshold = 1
@@ -98,6 +90,8 @@ class CircuitBreaker:
                 threshold = 1
             else:
                 self.base_cooldown = 300   # 5 mins
+        else:
+            self.base_cooldown = 300
                 
         if self.state == "HALF_OPEN":
             # Exponential backoff on failed recovery test
@@ -114,112 +108,86 @@ class CircuitBreaker:
 
 class LLMClient:
     def __init__(self):
-        self.gemini_key_1 = os.getenv("GEMINI_API_KEY")
-        self.gemini_key_2 = os.getenv("GEMINI_API_KEY_2")
-        self.groq_key = os.getenv("GROQ_API_KEY")
-        
-        self.gemini_client_1 = None
-        self.gemini_client_2 = None
-        self.groq_client = None
-        
-        self.cb_gemini_1 = CircuitBreaker("Gemini_1", "gemini")
-        self.cb_gemini_2 = CircuitBreaker("Gemini_2", "gemini")
-        self.cb_groq = CircuitBreaker("Groq", "groq")
-        
-        if self.gemini_key_1:
-            try:
-                self.gemini_client_1 = genai.Client(api_key=self.gemini_key_1)
-            except Exception as e:
-                logger.error("Failed to init Gemini client 1: %s", e)
-                
-        if self.gemini_key_2:
-            try:
-                self.gemini_client_2 = genai.Client(api_key=self.gemini_key_2)
-            except Exception as e:
-                logger.error("Failed to init Gemini client 2: %s", e)
-                
-        if self.groq_key:
-            try:
-                self.groq_client = Groq(api_key=self.groq_key)
-            except Exception as e:
-                logger.error("Failed to init Groq client: %s", e)
+        self.groq_key_1 = os.getenv("GROQ_API_KEY")
+        self.groq_key_2 = os.getenv("GROQ_API_KEY_2")
 
-    def _call_gemini(self, client, prompt: str, system_instruction: Optional[str] = None) -> str:
-        config = genai_types.GenerateContentConfig()
+        self.groq_client_1 = None
+        self.groq_client_2 = None
+
+        self.cb_groq_1 = CircuitBreaker("Groq_1", "groq")
+        self.cb_groq_2 = CircuitBreaker("Groq_2", "groq")
+        self._last_fallback_log_time = 0.0
+
+        if self.groq_key_1:
+            try:
+                self.groq_client_1 = Groq(api_key=self.groq_key_1)
+            except Exception as e:
+                logger.error("Failed to init Groq client 1: %s", e)
+
+        if self.groq_key_2:
+            try:
+                self.groq_client_2 = Groq(api_key=self.groq_key_2)
+            except Exception as e:
+                logger.error("Failed to init Groq client 2: %s", e)
+
+    def _call_groq(self, client: Groq, prompt: str,
+                   system_instruction: Optional[str] = None) -> str:
+        messages = []
         if system_instruction:
-            config.system_instruction = system_instruction
-            
-        response = client.models.generate_content(
-            model='gemini-2.0-flash',
-            contents=prompt,
-            config=config
+            messages.append({"role": "system", "content": system_instruction})
+        messages.append({"role": "user", "content": prompt})
+
+        chat_completion = client.chat.completions.create(
+            messages=messages,
+            model="llama-3.3-70b-versatile",
+            temperature=0.7,
         )
-        if response.text:
-            return response.text.strip()
+        if chat_completion.choices:
+            return chat_completion.choices[0].message.content.strip()
         return ""
 
     def generate_insight(self, prompt: str, system_instruction: Optional[str] = None) -> str:
         """
-        Generates text using Gemini 1 first. If it fails, tries Gemini 2.
-        If both fail, it seamlessly falls back to Groq.
-        Wraps calls with Circuit Breaker to avoid quota exhaustion.
+        Generates text using Groq Key 1 first. If it fails, tries Groq Key 2.
+        Wraps calls with Circuit Breaker to avoid quota/rate-limit loops.
         """
-        if not self.gemini_client_1 and not self.gemini_client_2 and not self.groq_client:
+        if not self.groq_client_1 and not self.groq_client_2:
             logger.warning("No LLM clients configured. Returning empty insight.")
             return ""
 
-        # 1. Try Primary: Gemini Key 1
-        if self.gemini_client_1 and self.cb_gemini_1.can_execute():
+        # 1. Try Primary: Groq Key 1
+        if self.groq_client_1 and self.cb_groq_1.can_execute():
             try:
-                res = self._call_gemini(self.gemini_client_1, prompt, system_instruction)
-                self.cb_gemini_1.record_success()
+                res = self._call_groq(self.groq_client_1, prompt, system_instruction)
+                self.cb_groq_1.record_success()
                 return res
-            except GeminiAPIError as e:
-                status_code = e.code if hasattr(e, 'code') else 500
-                self.cb_gemini_1.record_error(status_code)
-                logger.warning("Gemini API (Key 1) failed (HTTP %s): %s", status_code, e.message if hasattr(e, 'message') else str(e))
-            except Exception as e:
-                self.cb_gemini_1.record_error(500)
-                logger.warning("Gemini API (Key 1) failed with unexpected error: %s", e)
-
-        # 2. Try Secondary: Gemini Key 2
-        if self.gemini_client_2 and self.cb_gemini_2.can_execute():
-            try:
-                res = self._call_gemini(self.gemini_client_2, prompt, system_instruction)
-                self.cb_gemini_2.record_success()
-                return res
-            except GeminiAPIError as e:
-                status_code = e.code if hasattr(e, 'code') else 500
-                self.cb_gemini_2.record_error(status_code)
-                logger.warning("Gemini API (Key 2) failed (HTTP %s): %s", status_code, e.message if hasattr(e, 'message') else str(e))
-            except Exception as e:
-                self.cb_gemini_2.record_error(500)
-                logger.warning("Gemini API (Key 2) failed with unexpected error: %s", e)
-
-        # 3. Try Fallback: Groq (Llama 3)
-        if self.groq_client and self.cb_groq.can_execute():
-            try:
-                messages = []
-                if system_instruction:
-                    messages.append({"role": "system", "content": system_instruction})
-                messages.append({"role": "user", "content": prompt})
-
-                chat_completion = self.groq_client.chat.completions.create(
-                    messages=messages,
-                    model="llama-3.3-70b-versatile",
-                    temperature=0.7,
-                )
-                if chat_completion.choices:
-                    res = chat_completion.choices[0].message.content.strip()
-                    self.cb_groq.record_success()
-                    return res
             except GroqAPIError as e:
-                status_code = e.status_code if hasattr(e, 'status_code') else 500
-                self.cb_groq.record_error(status_code)
-                logger.error("Groq API fallback failed (HTTP %s): %s", status_code, str(e))
+                status_code = e.status_code if hasattr(e, "status_code") else 500
+                self.cb_groq_1.record_error(status_code)
+                logger.warning("Groq API (Key 1) failed (HTTP %s): %s", status_code, str(e))
             except Exception as e:
-                self.cb_groq.record_error(500)
-                logger.error("Groq API fallback failed with unexpected error: %s", e)
-                
+                self.cb_groq_1.record_error(500)
+                logger.warning("Groq API (Key 1) failed with unexpected error: %s", e)
+
+        # 2. Try Secondary: Groq Key 2
+        if self.groq_client_2 and self.cb_groq_2.can_execute():
+            try:
+                now = time.time()
+                if (now - self._last_fallback_log_time) >= 60:
+                    logger.info("Groq key 1 unavailable/rate-limited; routing request to Groq key 2.")
+                    self._last_fallback_log_time = now
+
+                res = self._call_groq(self.groq_client_2, prompt, system_instruction)
+                self.cb_groq_2.record_success()
+                return res
+            except GroqAPIError as e:
+                status_code = e.status_code if hasattr(e, "status_code") else 500
+                self.cb_groq_2.record_error(status_code)
+                logger.warning("Groq API (Key 2) failed (HTTP %s): %s", status_code, str(e))
+            except Exception as e:
+                self.cb_groq_2.record_error(500)
+                logger.warning("Groq API (Key 2) failed with unexpected error: %s", e)
+
+        logger.error("All configured Groq clients are unavailable. Returning empty insight.")
         return ""
 
