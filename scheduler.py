@@ -539,9 +539,9 @@ class PostMatchWorker:
                     cur.execute(f"REFRESH MATERIALIZED VIEW CONCURRENTLY {mv}")
                     conn.commit()
                     self.log.info("✓ Refreshed %s", mv)
-                except Exception:
+                except Exception as exc:
                     conn.rollback()
-                    self.log.debug("  MV %s does not exist yet, skipping", mv)
+                    self.log.error("❌ Failed to refresh %s: %s", mv, exc)
 
             cur.close()
             conn.close()
@@ -653,9 +653,9 @@ class DailyMaintenance:
                     cur.execute(f"REFRESH MATERIALIZED VIEW CONCURRENTLY {mv}")
                     conn.commit()
                     self.log.info("✓ Refreshed %s", mv)
-                except Exception:
+                except Exception as exc:
                     conn.rollback()
-                    self.log.debug("  MV %s does not exist yet, skipping", mv)
+                    self.log.error("❌ Failed to refresh %s: %s", mv, exc)
             cur.close()
             conn.close()
         except Exception as exc:

@@ -2013,14 +2013,15 @@ class DailyMaintenance:
             for mv in ("mv_tm_player_candidates",
                        "mv_player_profiles",
                        "mv_team_profiles",
+                       "mv_shot_agg",
                        "mv_player_complete_stats"):
                 try:
                     cur.execute(f"REFRESH MATERIALIZED VIEW CONCURRENTLY {mv}")
                     conn.commit()
                     self.log.info("✓ Refreshed %s", mv)
-                except Exception:
+                except Exception as exc:
                     conn.rollback()
-                    self.log.debug("  MV %s not found, skipping", mv)
+                    self.log.error("❌ Failed to refresh %s: %s", mv, exc)
             cur.close()
             conn.close()
         except Exception as exc:

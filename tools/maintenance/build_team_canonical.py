@@ -296,16 +296,22 @@ def build_team_canonical(cur, league_id: str, dry_run: bool = False) -> dict:
                     entry["fbref_name"] = ft["fbref_name"]
                 break
 
+    # Keep track of used IDs to avoid unique constraint violations
+    used_ss_ids = set()
+    used_tm_ids = set()
+
     # Step 3: Match SofaScore by normalized name
     ss_teams = _fetch_sofascore_teams(cur, league_id)
     for ss in ss_teams:
         norm = normalize_team_name(ss["sofascore_name"])
-        if norm in canonical_map:
+        ss_id = ss["sofascore_team_id"]
+        if norm in canonical_map and ss_id not in used_ss_ids:
             canonical_map[norm]["sofascore_name"] = ss["sofascore_name"]
-            canonical_map[norm]["sofascore_team_id"] = ss["sofascore_team_id"]
+            canonical_map[norm]["sofascore_team_id"] = ss_id
             canonical_map[norm]["matched_by"] = "auto_exact"
+            used_ss_ids.add(ss_id)
             stats["ss_matched"] += 1
-        else:
+        elif norm not in canonical_map:
             stats["unresolved"].append(("sofascore", ss["sofascore_name"], norm))
 
     # Step 4: Match Understat by normalized name
@@ -322,11 +328,13 @@ def build_team_canonical(cur, league_id: str, dry_run: bool = False) -> dict:
     tm_teams = _fetch_tm_teams(cur, league_id)
     for tm in tm_teams:
         norm = normalize_team_name(tm["tm_name"])
-        if norm in canonical_map:
+        tm_id = tm["tm_team_id"]
+        if norm in canonical_map and tm_id not in used_tm_ids:
             canonical_map[norm]["tm_name"] = tm["tm_name"]
-            canonical_map[norm]["tm_team_id"] = tm["tm_team_id"]
+            canonical_map[norm]["tm_team_id"] = tm_id
+            used_tm_ids.add(tm_id)
             stats["tm_matched"] += 1
-        else:
+        elif norm not in canonical_map:
             stats["unresolved"].append(("transfermarkt", tm["tm_name"], norm))
 
     # Summary log
@@ -343,6 +351,19 @@ def build_team_canonical(cur, league_id: str, dry_run: bool = False) -> dict:
         logger.info("[DRY] Would upsert %d rows into team_canonical", len(canonical_map))
         return stats
 
+    # Clear constraints from old canonical records to allow reassignment to new canonical names
+    for e in canonical_map.values():
+        if e.get("sofascore_team_id"):
+            cur.execute(
+                "UPDATE team_canonical SET sofascore_team_id = NULL WHERE league_id = %s AND sofascore_team_id = %s",
+                (league_id, e["sofascore_team_id"])
+            )
+        if e.get("tm_team_id"):
+            cur.execute(
+                "UPDATE team_canonical SET tm_team_id = NULL WHERE league_id = %s AND tm_team_id = %s",
+                (league_id, e["tm_team_id"])
+            )
+
     # Step 6: Upsert into team_canonical
     sql = """
         INSERT INTO team_canonical
@@ -350,7 +371,7 @@ def build_team_canonical(cur, league_id: str, dry_run: bool = False) -> dict:
              fbref_name, understat_name, sofascore_name, tm_name,
              sofascore_team_id, tm_team_id, matched_by)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT ON CONSTRAINT uq_team_canonical_league_name DO UPDATE SET
+        ON CONFLICT (league_id, canonical_name) DO UPDATE SET
             fbref_team_id      = EXCLUDED.fbref_team_id,
             canonical_name    = EXCLUDED.canonical_name,
             fbref_name        = EXCLUDED.fbref_name,

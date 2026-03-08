@@ -398,6 +398,27 @@ def build_match_crossref(cur, league_id: str, dry_run: bool = False) -> dict:
                     100.0 * linked / len(crossref_rows) if crossref_rows else 0)
         return stats
 
+    # Clear secondary IDs from old crossref records to prevent UniqueViolation during reassignment
+    if stats["anchor"] == "fbref":
+        for r in crossref_rows.values():
+            if r.get("understat_match_id"):
+                cur.execute(
+                    "UPDATE match_crossref SET understat_match_id = NULL WHERE league_id = %s AND understat_match_id = %s",
+                    (league_id, r["understat_match_id"])
+                )
+            if r.get("sofascore_event_id"):
+                cur.execute(
+                    "UPDATE match_crossref SET sofascore_event_id = NULL WHERE league_id = %s AND sofascore_event_id = %s",
+                    (league_id, r["sofascore_event_id"])
+                )
+    else:
+        for r in crossref_rows.values():
+            if r.get("sofascore_event_id"):
+                cur.execute(
+                    "UPDATE match_crossref SET sofascore_event_id = NULL WHERE league_id = %s AND sofascore_event_id = %s",
+                    (league_id, r["sofascore_event_id"])
+                )
+
     # Upsert — use source-specific conflict key based on anchor.
     if stats["anchor"] == "fbref":
         conflict_clause = (

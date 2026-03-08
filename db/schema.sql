@@ -1231,6 +1231,22 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_team_profiles_id
 
 
 -- ──────────────────────────────────────────────────────────
+-- 31b. mv_shot_agg: pre-aggregated Understat shots
+-- ──────────────────────────────────────────────────────────
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_shot_agg AS
+SELECT
+    s.player_id  AS understat_player_id,
+    s.league_id,
+    s.season     AS shot_season,
+    SUM(s.xg)                                         AS total_xg,
+    COUNT(*) FILTER (WHERE s.result = 'Goal')         AS goals_from_shots
+FROM shots s
+GROUP BY s.player_id, s.league_id, s.season;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_shot_agg_pk
+    ON mv_shot_agg(understat_player_id, league_id, shot_season);
+
+-- ──────────────────────────────────────────────────────────
 -- 32. mv_player_complete_stats: single source of truth cho player comparison
 --     Grain: 1 row per (player_id, league_id, season)
 --     Sources: player_season_stats + crossref + shots(Understat) +
@@ -1258,17 +1274,6 @@ WITH base AS (
     FROM player_season_stats pss
     ORDER BY pss.player_id, pss.league_id, pss.season,
              pss.minutes_90s DESC NULLS LAST
-),
-shot_agg AS (
-    -- Aggregate Understat shots per player/league/season
-    SELECT
-        s.player_id  AS understat_player_id,
-        s.league_id,
-        s.season     AS shot_season,
-        SUM(s.xg)                                         AS total_xg,
-        COUNT(*) FILTER (WHERE s.result = 'Goal')         AS goals_from_shots
-    FROM shots s
-    GROUP BY s.player_id, s.league_id, s.season
 )
 SELECT
     -- Identity / profile
@@ -1339,7 +1344,7 @@ LEFT JOIN player_crossref cx
    AND cx.league_id       = b.league_id
 
 -- Understat shot aggregates
-LEFT JOIN shot_agg sa
+LEFT JOIN mv_shot_agg sa
     ON sa.understat_player_id = cx.understat_player_id
    AND sa.league_id           = b.league_id
    AND sa.shot_season         = SPLIT_PART(b.season, '-', 1)::INTEGER
