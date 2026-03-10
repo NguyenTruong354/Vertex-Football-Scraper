@@ -12,7 +12,13 @@ Usage:
 
 import json
 import logging
+import sys
+from pathlib import Path
 from typing import Optional
+
+# Thêm project root vào sys.path để nhận diện 'services' package
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from services.llm_client import LLMClient
 
 log = logging.getLogger(__name__)
@@ -171,3 +177,45 @@ def _format_incidents(incidents: list, home_team: str) -> str:
         elif inc_type == "varDecision":
             lines.append(f"- VAR phút {minute} ({team})")
     return "\n".join(lines) if lines else "Không có sự kiện đáng chú ý."
+
+
+if __name__ == "__main__":
+    # Quick Test Block
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    
+    print("\n" + "="*60)
+    print("      VERTEX FOOTBALL - MATCH STORY QUICK TEST")
+    print("="*60)
+    
+    # Mock data: Liverpool vs Man City
+    mock_stats = {
+        "Ball possession": {"home": 45, "away": 55},
+        "Total shots": {"home": 12, "away": 18},
+        "Shots on target": {"home": 5, "away": 8},
+        "Expected goals": {"home": 1.45, "away": 2.15},
+        "Big chances": {"home": 2, "away": 4},
+    }
+    mock_incidents = [
+        {"time": 23, "incidentType": "goal", "player": {"name": "Haaland"}, "isHome": False},
+        {"time": 45, "incidentType": "goal", "player": {"name": "Salah"}, "isHome": True},
+        {"time": 68, "incidentType": "card", "incidentClass": "red", "player": {"name": "Rodri"}, "isHome": False},
+        {"time": 89, "incidentType": "goal", "player": {"name": "Luis Diaz"}, "isHome": True},
+    ]
+    
+    story = generate_story(
+        event_id=999,
+        league="EPL",
+        home_team="Liverpool",
+        away_team="Man City",
+        home_score=2,
+        away_score=1,
+        statistics=mock_stats,
+        incidents=mock_incidents
+    )
+    
+    print("-" * 60)
+    if story:
+        print(f"✨ AI MATCH STORY:\n{story}")
+    else:
+        print("❌ Test failed.")
+    print("="*60 + "\n")

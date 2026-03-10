@@ -9,7 +9,13 @@ and generates a short AI-written explanation saved to `player_insights`.
 
 import json
 import logging
+import sys
+from pathlib import Path
 from typing import Optional
+
+# Thêm project root vào sys.path để nhận diện 'services' package
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from services.llm_client import LLMClient
 
 log = logging.getLogger(__name__)
@@ -282,3 +288,42 @@ def run_and_save(league: str) -> int:
         log.error("Failed to save player insights: %s", exc)
 
     return saved
+
+
+if __name__ == "__main__":
+    # Quick Test Block
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    
+    print("\n" + "="*60)
+    print("      VERTEX FOOTBALL - PLAYER TREND QUICK TEST")
+    print("="*60)
+    
+    # Mock data: Jude Bellingham (Rising form)
+    mock_p_name = "Jude Bellingham"
+    mock_trend = "GREEN"
+    mock_goals = [0, 0, 1, 1, 1]  # 3 goals in last 3
+    mock_assists = [0, 1, 0, 1, 0] # 2 assists in 5
+    mock_xg = [0.12, 0.45, 0.68, 0.55, 0.92]
+    mock_xa = [0.05, 0.35, 0.10, 0.40, 0.15]
+    
+    # Manually calculate scoring momentum score
+    from services.player_trend import _calculate_trend
+    # Just for illustration, mock needs list of shots/keypass
+    mock_shots = [1, 2, 3, 2, 4]
+    mock_kp = [1, 3, 1, 4, 1]
+    calculated_trend, score = _calculate_trend(mock_goals, mock_assists, mock_xg, mock_xa, mock_shots, mock_kp)
+    
+    print(f"Analyzing player: {mock_p_name}")
+    print(f"Calculated Momentum: {calculated_trend} ({score}%)")
+    
+    insight = _generate_insight_text(
+        mock_p_name, mock_trend,
+        mock_goals, mock_assists, mock_xg, mock_xa, len(mock_goals)
+    )
+    
+    print("-" * 60)
+    if insight:
+        print(f"✨ AI PLAYER INSIGHT:\n{insight}")
+    else:
+        print("❌ Test failed.")
+    print("="*60 + "\n")

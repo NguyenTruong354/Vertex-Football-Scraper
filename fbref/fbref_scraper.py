@@ -505,7 +505,7 @@ def parse_squad_page(
         result["gk_stats"].append(g)
 
     logger.info(
-        "  %s: %d players, %d with shooting data, %d def, %d poss, %d gk",
+        "  %s: %d players, %d with shooting data, %d gk",
         team_name,
         len(result["profiles"]),
         len(shoot_lookup),

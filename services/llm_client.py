@@ -191,3 +191,45 @@ class LLMClient:
         logger.error("All configured Groq clients are unavailable. Returning empty insight.")
         return ""
 
+
+if __name__ == "__main__":
+    # Quick Test Block
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)-8s | %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    
+    print("\n" + "="*50)
+    print("      VERTEX FOOTBALL - LLM QUICK TEST")
+    print("="*50)
+    
+    client = LLMClient()
+    
+    if not client.groq_key_1:
+        print("❌ GROQ_API_KEY không tồn tại trong .env")
+    else:
+        print(f"✅ Groq Key 1: Found (...{client.groq_key_1[-4:]})")
+        
+    if not client.groq_key_2:
+        print("⚠️  GROQ_API_KEY_2 không tồn tại trong .env (chế độ dự phòng sẽ không hoạt động)")
+    else:
+        print(f"✅ Groq Key 2: Found (...{client.groq_key_2[-4:]})")
+
+    print("-" * 50)
+    test_prompt = "Viết một câu nhận xét ngắn (dưới 20 từ) về việc Erling Haaland ghi hat-trick trong trận derby Manchester."
+    print(f"Testing Groq with prompt: '{test_prompt}'")
+    
+    start_time = time.time()
+    result = client.generate_insight(test_prompt)
+    duration = time.time() - start_time
+    
+    print("-" * 50)
+    if result:
+        print(f"✨ RESULT:\n{result}")
+        print(f"\n⏱️ Latency: {duration:.2f}s")
+        print("="*50 + "\n")
+    else:
+        print("❌ TEST FAILED. Vui lòng kiểm tra logs hoặc API Quota.")
+        print("="*50 + "\n")
+
