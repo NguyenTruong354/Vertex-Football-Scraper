@@ -12,10 +12,10 @@
 | 1 | ✅ ~~🔴 Critical~~ | ~~Tier C trigger không bao giờ kích hoạt~~ | `_poll_one()` | **DONE 2026-03-10** |
 | 2 | ✅ ~~🔴 Critical~~ | ~~`asyncio.Lock` giữ suốt retry loop — block toàn bộ polling~~ | `CurlCffiClient.get_json()` | **DONE 2026-03-10** |
 | 3 | ✅ ~~🔴 Critical~~ | ~~`post_match.run()` block async event loop~~ | `MasterScheduler._cycle()` | **DONE 2026-03-10** |
-| 4 | 🟠 High | Daily scrapes toàn bộ mùa giải thay vì chỉ hôm qua/hôm nay | `DailyMaintenance.run()` |
-| 5 | 🟠 High | DB connection leak trong `_check_drift()` | `LiveTrackingPool._check_drift()` |
-| 6 | 🟡 Medium | `AttributeError` khi chạy `--test-notify` | `main()` |
-| 7 | 🟡 Medium | Standings update fire-and-forget — lỗi im lặng hoàn toàn | `PostMatchWorker.run()` |
+| 4 | ✅ ~~🟠 High~~ | ~~Daily scrapes toàn bộ mùa giải thay vì giới hạn 3 ngày gần nhất~~ | `DailyMaintenance.run()` | **DONE 2026-03-11** |
+| 5 | ✅ ~~🔴 Critical (slow burn)~~ | ~~DB connection leak trong `_check_drift()`~~ | `LiveTrackingPool._check_drift()` | **DONE 2026-03-11** |
+| 6 | ✅ ~~🟡 Medium~~ | ~~`AttributeError` khi chạy `--test-notify`~~ | `main()` | **DONE 2026-03-11** |
+| 7 | ✅ ~~🟡 Medium~~ | ~~Standings update fire-and-forget — lỗi im lặng hoàn toàn~~ | `PostMatchWorker.run()` | **DONE 2026-03-11** |
 | 8 | ✅ ~~🔵 Low~~ | ~~`_last_tier_b_ts` khởi tạo bằng `hasattr` ngoài dataclass~~ | `_poll_one()` | **DONE 2026-03-10** |
 
 ---
@@ -87,165 +87,208 @@ if inc_data and state.poll_count > 1:
 
 ---
 
-### 🔴 Issue #2 — `asyncio.Lock` giữ suốt retry loop
+### ✅ Issue #2 — [HOÀN THÀNH] `asyncio.Lock` giữ suốt retry loop
 
 **Vị trí:** `CurlCffiClient.get_json()` và `CurlCffiClient.get_schedule_json()`
 
-**Vấn đề cũ:** Lock bao trùm toàn bộ retry loop và toàn bộ thời gian sleep. Khi bị 429 với backoff 60s, toàn bộ Polling của các trận đấu khác bị đóng băng hoàn toàn.
+**Vấn đề cũ:** Lock bao trùm toàn bộ retry loop và toàn bộ thời gian sleep. Khi bị 429 với backoff 60s, toàn bộ polling của các trận đấu khác bị đóng băng hoàn toàn.
 
-**Giải pháp mới (Narrow Scope + Anti-Bot Jitter):**
-Chúng ta vẫn giữ tính chất **Serialized Requests** (1 request tại 1 thời điểm để mô phỏng người dùng thật) nhưng thu hẹp phạm vi của Lock và thêm khoảng nghỉ tự nhiên (Jitter) **trước khi** vào Lock.
+**Giải pháp (Narrow Scope + Anti-Bot Jitter):**
+Vẫn giữ tính chất **Serialized Requests** (1 request tại 1 thời điểm để mô phỏng người dùng thật) nhưng thu hẹp phạm vi của Lock và thêm khoảng nghỉ tự nhiên (Jitter) **trước khi** vào Lock.
 
 ```python
 async def get_json(self, endpoint, *, tier="A"):
     url = f"{cfg.SS_API_BASE}{endpoint}"
     for attempt in range(self.MAX_RETRIES):
-        # 1. JITTER NGOÀI LOCK: Tránh việc nhiều match cùng xếp hàng 
-        # và bắn request liên tiếp ngay khi Lock mở.
-        # Điều này tạo ra khoảng cách tự nhiên giữa các request (như người thật).
+        # 1. JITTER NGOÀI LOCK: Tránh nhiều match cùng xếp hàng và bắn
+        #    request liên tiếp ngay khi Lock mở — mô phỏng hành vi người thật.
         jitter = random.uniform(1.0, 2.5) * (self.antiban.global_sleep_multiplier if self.antiban else 1.0)
         await asyncio.sleep(jitter)
 
-        # 2. LOCK SCOPE THU HẸP: Chỉ bọc đúng hành động Networking
-        async with self._lock: 
+        # 2. LOCK SCOPE THU HẸP: Chỉ bọc đúng hành động networking
+        async with self._lock:
             try:
                 if not self._session: await self.start()
                 self._last_request = time.monotonic()
                 resp = await self._session.get(url, timeout=15)
                 sc = resp.status_code
-                
                 # ... cập nhật antiban, metrics ...
-                
                 if sc == 200:
                     return resp.json()
             except Exception as exc:
                 self.log.debug("Fail: %s", exc)
 
-        # 3. BACKOFF NGOÀI LOCK: Nếu bị 429/403, đi ngủ mà KHÔNG giữ Lock,
-        # cho phép các match khác vẫn có cửa Polling (nhưng vẫn phải xếp hàng qua Lock).
+        # 3. BACKOFF NGOÀI LOCK: sleep mà KHÔNG giữ Lock — các match khác
+        #    vẫn có thể poll trong thời gian này.
         if sc in (429, 403) and attempt < self.MAX_RETRIES - 1:
             backoff = self.RETRY_BACKOFF[attempt] * (3 if sc == 429 else 2)
             await asyncio.sleep(backoff)
-            
+
     return None
 ```
 
-**Lợi ích:**
-- **Không còn Bottleneck:** Một trận bị 429 không làm "chết chùm" các trận khác.
-- **Anti-ban tốt hơn:** Các request bắn ra có độ trễ ngẫu nhiên (Jitter trước Lock), mô phỏng hoàn hảo hành vi duyệt web thủ công.
-- **Duy trì Serialized:** Không bao giờ có 2 request bắn ra đồng thời từ cùng một Client.
-
-> **Lưu ý:** Áp dụng tương tự cho `get_schedule_json()`.
+> Áp dụng tương tự cho `get_schedule_json()`.
 
 ---
 
-### ✅ Issue #3 — [HOÀN THÀNH] post_match.run() block async event loop
+### ✅ Issue #3 — [HOÀN THÀNH] `post_match.run()` block async event loop
 
 **Vị trí:** `MasterScheduler._cycle()` — vòng lặp `for fm in finished_matches`
 
-**Mô tả vấn đề:**
+**Vấn đề cũ:**
 
 ```python
-# _cycle() là async coroutine
 async def _cycle(self) -> None:
     ...
     for fm in finished_matches:
-        self.post_match.run(fm)  # ← Synchronous! Chạy nhiều subprocess, mỗi cái vài phút
+        self.post_match.run(fm)  # ← Synchronous! Có thể mất 5-15 phút
 ```
 
-`post_match.run()` là hàm **synchronous** gọi nhiều `run_with_retry()` có thể mất 5-15 phút tổng cộng. Gọi trực tiếp trong `async _cycle()` sẽ **block toàn bộ event loop** — mọi coroutine khác (kể cả `poll_all()`) bị đóng băng.
-
-**Hậu quả:** Nếu 2-3 match kết thúc cùng lúc, live polling dừng 20-30 phút.
+`post_match.run()` là hàm **synchronous** gọi nhiều `run_with_retry()`. Gọi trực tiếp trong `async _cycle()` block toàn bộ event loop — mọi coroutine khác (kể cả `poll_all()`) bị đóng băng. Nếu 2-3 match kết thúc cùng lúc, live polling dừng 20-30 phút.
 
 **Cách sửa:**
 
 ```python
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
-
 # Trong MasterScheduler.__init__():
 self._executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="post_match")
 
 # Trong _cycle():
 for fm in finished_matches:
-    # Chạy non-blocking trong thread pool, không block event loop
     asyncio.get_event_loop().run_in_executor(
         self._executor,
         self.post_match.run,
         fm
     )
-    # Không cần await — fire-and-forget trong thread riêng
 
 # Trong run() khi shutdown:
 finally:
     await self.browser.stop()
-    self._executor.shutdown(wait=False)  # Không block shutdown
+    self._executor.shutdown(wait=False)
 ```
 
 ---
 
-### 🟠 Issue #4 — Daily scrapes toàn bộ mùa giải
+### ✅ Issue #4 — [HOÀN THÀNH] Daily scrapes toàn bộ mùa giải
 
 **Vị trí:** `DailyMaintenance.run()` — build commands cho `fbref_scraper.py` và `tm_scraper.py`
 
-**Mô tả vấn đề:**
+**Những gì đã implement (2026-03-11):**
+
+**Vấn đề cũ:**
 
 ```python
 fbref_cmd = [PYTHON, "fbref_scraper.py", "--league", league]
-# Không có --since-date → scraper quét từ đầu mùa giải
+# Không có --since-date → STEP 4 quét lại toàn bộ match reports cả mùa
 ```
 
-Với FBref và Transfermarkt, mỗi lần chạy sẽ crawl lại toàn bộ match reports của cả mùa — hàng trăm HTTP request, có thể mất vài tiếng mỗi đêm và tăng nguy cơ bị rate-limit/ban.
+Với FBref, mỗi lần chạy STEP 4 crawl lại toàn bộ match reports của cả mùa — hàng trăm HTTP request, có thể mất vài tiếng mỗi đêm và tăng nguy cơ bị rate-limit/ban.
 
-**Cách sửa:**
+**Thay đổi 1 — `fbref_scraper.py`:**
 
-**Phần 1 — Trong `DailyMaintenance.run()`:**
+Thêm param `since_date: str | None = None` vào `main()`. Trong STEP 4, filter `matches_with_reports` theo ngày **trước khi** apply `match_limit` (để limit đếm trên set đã filtered):
 
 ```python
-from datetime import datetime, timezone, timedelta
+async def main(
+    ...,
+    since_date: str | None = None,   # ← thêm mới
+) -> dict[str, list]:
 
+    # STEP 4: Match Reports
+    matches_with_reports = [
+        f for f in all_fixtures if f.match_report_url and f.match_id
+    ]
+
+    # Filter by since_date: FBref date format "YYYY-MM-DD"
+    # → so sánh string ISO hoạt động đúng vì lexicographic = chronological.
+    if since_date:
+        before_count = len(matches_with_reports)
+        matches_with_reports = [
+            f for f in matches_with_reports
+            if f.date and f.date >= since_date
+        ]
+        logger.info(
+            "--since-date %s: %d → %d match reports (skipped %d older)",
+            since_date, before_count, len(matches_with_reports),
+            before_count - len(matches_with_reports),
+        )
+
+    if match_limit > 0:
+        matches_with_reports = matches_with_reports[:match_limit]
+```
+
+CLI: thêm `--since-date YYYY-MM-DD` argument, pass vào `asyncio.run(main(..., since_date=args.since_date))`.
+
+**Thay đổi 2 — Thêm Understat + SofaScore vào daily maintenance:**
+
+**Vấn đề phát hiện:** Daily maintenance chỉ chạy FBref + TM, bỏ qua Understat + SofaScore. Nếu daemon restart/down → missed matches không được compensate tự động (chỉ có post-match worker chạy SAU trận kết thúc).
+
+**Fix:** Thêm Understat + SofaScore vào đầu vòng lặp league trong `DailyMaintenance.run()`, TRƯỚC FBref:
+
+```python
+for league in self.leagues:
+    sources = LEAGUE_SOURCES.get(league, {})
+    
+    # Understat: limit 10 trận gần nhất (compensate missed matches)
+    if sources.get("understat"):
+        run_with_retry(
+            [PYTHON, "async_scraper.py", "--league", league, "--limit", "10"],
+            ROOT / "understat", f"Daily/Understat [{league}]", ...
+        )
+    
+    # SofaScore: limit 10 trận (lineup + passing + advanced stats)
+    if sources.get("sofascore"):
+        run_with_retry(
+            [PYTHON, "sofascore_client.py", "--league", league, "--match-limit", "10"],
+            ROOT / "sofascore", f"Daily/SofaScore [{league}]", ...
+        )
+```
+
+**Thay đổi 3 — `DailyMaintenance.run()` — FBref + TM optimization:**
+
+`--since-date` không áp dụng được cho Transfermarkt vì TM scrape current state (không có match-level data). Thay vào đó: daily TM dùng `--metadata-only` để chỉ scrape team overview pages (bỏ kader/market value pages). Market values được cập nhật ~1 lần/tuần qua `run_pipeline.py`.
+
+```python
 def run(self) -> bool:
-    # Tính ngày hôm qua để giới hạn scrape
-    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+    # Window 3 ngày: safety margin.
+    _LOOKBACK_DAYS = 3
+    since_date = (
+        datetime.now(timezone.utc) - timedelta(days=_LOOKBACK_DAYS)
+    ).strftime("%Y-%m-%d")
+    self.log.info("  since_date: %s (lookback=%d days)", since_date, _LOOKBACK_DAYS)
 
     for league in self.leagues:
         if sources.get("fbref"):
-            fbref_cmd = [PYTHON, "fbref_scraper.py", "--league", league,
-                         "--since-date", yesterday]  # ← CHỈ quét từ hôm qua
-            # Giữ các flags khác như --standings-only, --limit, v.v.
+            fbref_cmd = [PYTHON, "fbref_scraper.py", "--league", league]
             if self.fbref_standings_only:
                 fbref_cmd.append("--standings-only")
-            ...
+                # --standings-only không chạy STEP 4 → --since-date không cần
+            else:
+                if self.fbref_no_match_passing:
+                    fbref_cmd.append("--no-match-passing")
+                else:
+                    fbref_cmd.extend(["--since-date", since_date])  # ← thêm mới
+                ...
 
         if sources.get("transfermarkt"):
-            tm_cmd = [PYTHON, "tm_scraper.py", "--league", league,
-                      "--since-date", yesterday]  # ← Tương tự
+            # --metadata-only: bỏ kader pages (20 đội × 30+ cầu thủ)
+            # Market values → run_pipeline.py weekly
+            run_with_retry(
+                [PYTHON, "tm_scraper.py", "--league", league, "--metadata-only"],
+                ...
+            )
 ```
 
-**Phần 2 — Trong `fbref_scraper.py` và `tm_scraper.py` cần thêm:**
-
-```python
-import argparse
-from datetime import datetime
-
-parser.add_argument("--since-date", type=str, default=None,
-                    help="Chỉ scrape matches có date >= YYYY-MM-DD")
-
-args = parser.parse_args()
-since_dt = datetime.strptime(args.since_date, "%Y-%m-%d") if args.since_date else None
-
-# Khi iterate qua match list, filter theo date:
-for match in all_matches:
-    if since_dt and match.date < since_dt:
-        continue  # Bỏ qua match cũ
-    scrape_match(match)
-```
-
-**Hiệu quả:** Giảm 90%+ thời gian chạy daily. Từ vài giờ → vài phút.
+**Hiệu quả:**
+- **Understat**: daily compensate 10 trận gần nhất (thay vì chỉ rely vào post-match). Nếu daemon down → tự catch up.
+- **SofaScore**: daily compensate 10 trận lineup/passing/advanced (tương tự Understat).
+- **FBref**: từ vài trăm → ~3-10 match reports/ngày. Từ vài giờ → vài phút.
+- **TM**: bỏ kader pages, chỉ scrape 20 team overview pages. Nhanh hơn ~10×.
+- Window 3 ngày (FBref) đảm bảo không miss data khi FBref cập nhật muộn.
+- **Tổng thể**: Daily maintenance từ vài giờ → ~10-20 phút. Tự động catch up missed matches.
 
 ---
 
-### 🟠 Issue #5 — DB connection leak trong `_check_drift()`
+### ✅ Issue #5 — [HOÀN THÀNH] DB connection leak trong `_check_drift()` *(Critical — slow burn)*
 
 **Vị trí:** `LiveTrackingPool._check_drift()`
 
@@ -262,7 +305,7 @@ def _check_drift(self, state):
 
         if row is None:
             return  # ← conn không được close!
-        
+
         # ... xử lý ...
         conn.close()
     except Exception as exc:
@@ -270,13 +313,21 @@ def _check_drift(self, state):
         # conn cũng không được close nếu exception xảy ra trước conn.close()
 ```
 
-Với drift check chạy 5 phút/lần trên mỗi match đang live, connection pool sẽ cạn kiệt sau vài ngày → toàn bộ DB calls fail.
+**Tại sao là Critical (dù không crash ngay):**
 
-**Cách sửa:**
+Đây là **slow burn** — daemon sẽ chạy bình thường trong 1-2 ngày đầu, sau đó DB connection pool cạn dần. Khi pool cạn, exception bắt đầu xuất hiện ở nhiều chỗ cùng lúc trông giống nhiều loại bug khác nhau (timeout, DB unreachable, query fail...) — không trỏ thẳng vào connection leak. Debug lúc đó rất tốn thời gian.
+
+**Quy mô rò rỉ thực tế:**
+- Drift check chạy mỗi **5 phút** × mỗi **trận đang live**
+- 10 trận live × 12 checks/giờ × 24 giờ = **~2,880 leaked connections/ngày**
+- PostgreSQL default `max_connections=100` → pool cạn trong **vài giờ** nếu có nhiều trận live cùng lúc
+
+**Cách sửa — `try-finally` đảm bảo luôn close:**
 
 ```python
 def _check_drift(self, state: LiveMatchState) -> None:
     conn = None
+    cur = None
     try:
         conn = get_connection()
         cur = conn.cursor()
@@ -288,10 +339,9 @@ def _check_drift(self, state: LiveMatchState) -> None:
             WHERE ls.event_id = %s
         """, (state.event_id,))
         row = cur.fetchone()
-        cur.close()
 
         if row is None:
-            return  # ← conn sẽ được close trong finally
+            return  # finally sẽ close conn
 
         ls_hs, ls_as, ls_st, ls_min = row[0], row[1], row[2], row[3]
         lm_hs, lm_as, lm_st, lm_min = row[4], row[5], row[6], row[7]
@@ -306,37 +356,40 @@ def _check_drift(self, state: LiveMatchState) -> None:
     except Exception as exc:
         self.log.warning("Drift check failed for event %d: %s", state.event_id, exc)
     finally:
+        if cur:
+            cur.close()   # Close cursor trước
         if conn:
-            conn.close()  # ← Luôn được gọi dù return sớm hay exception
+            conn.close()  # Luôn được gọi dù return sớm hay exception
 ```
 
 ---
 
-### 🟡 Issue #6 — `AttributeError` khi chạy `--test-notify`
+### ✅ Issue #6 — [HOÀN THÀNH] `AttributeError` khi chạy `--test-notify`
 
 **Vị trí:** `main()` — block `if args.test_notify`
 
 **Mô tả vấn đề:**
+**Vấn đề cũ:**
 
 ```python
 if args.test_notify:
     log = setup_logging()
     n = Notifier(log)
     if not n.webhook_url:   # ← AttributeError: Notifier không có attribute 'webhook_url'
-        ...                 #   Chỉ có 'default_webhook'
+        ...                 #   Chỉ có property 'is_enabled'
 ```
 
-**Cách sửa:**
+**Đã fix (2026-03-11):**
 
 ```python
 if args.test_notify:
     log = setup_logging()
     n = Notifier(log)
     if not n.is_enabled:   # ← Dùng property is_enabled đã có sẵn trong class
-        print("Không có DISCORD_WEBHOOK nào được cấu hình trong .env")
+        print("❌ Không có DISCORD_WEBHOOK nào được cấu hình trong .env")
         sys.exit(1)
-    n.send("info", "🧪 Test từ scheduler_master.py — OK!")
-    print("✓ Đã gửi")
+    n.send("test", "🧪 Test notification from scheduler_master.py — OK!")
+    print("✅ Test notification sent successfully!")
     sys.exit(0)
 ```
 
@@ -356,42 +409,85 @@ if loop.is_running():
     # Không track result → exception/lỗi mạng/DB sẽ biến mất hoàn toàn
 ```
 
-Nếu standings update fail, không có log, không có retry, không có Discord alert — standings có thể sai mà không ai biết.
+Nếu standings update fail, không có log, không có Discord alert — standings có thể sai mà không ai biết.
 
-**Cách sửa:**
+**Thiết kế giải pháp:**
+
+Standings **không phải real-time critical** — sai 1 trận hay delay vài tiếng không ảnh hưởng đến live tracking. Thêm retry tự động vào một `ensure_future` task sẽ tạo complexity không cần thiết và có thể góp thêm request pressure ngay lúc hệ thống đang bận nhất (ngay sau khi nhiều trận kết thúc cùng lúc). Thay vào đó: **log rõ + Discord alert** để người vận hành biết và manual trigger lại nếu cần.
+
+**Đã implement (2026-03-11):**
+
+**Bước 1 — Thêm `_run_standings_safe()` wrapper:**
 
 ```python
 async def _run_standings_safe(self, league: str, tournament_id: int) -> None:
-    """Wrapper để log lỗi khi standings update fail."""
+    """
+    Safe wrapper cho standings update với error boundary.
+    Log rõ + Discord alert thay vì để exception biến mất im lặng.
+    """
     try:
         await self._update_standings_from_sofascore(league, tournament_id)
+        self.log.info("✓ Standings updated: %s", league)
     except Exception as exc:
-        self.log.warning("Standings update failed for %s: %s", league, exc)
-        # Tuỳ chọn: gửi Discord alert nếu muốn
-        # self.notifier.send("error", f"Standings update failed: {league} — {exc}")
-
-# Trong run():
-if loop.is_running():
-    task = asyncio.ensure_future(self._run_standings_safe(league, tournament_id))
-    # Gắn callback để prevent "Task exception was never retrieved" warning
-    task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+        # Log đủ thông tin để debug: league, tournament_id, error message
+        self.log.error(
+            "⚠ Standings update FAILED — league=%s tournament_id=%d — %s",
+            league, tournament_id, exc
+        )
+        # Discord alert để người vận hành biết cần manual check
+        self.notifier.send(
+            "error",
+            f"⚠ Standings update failed: `{league}` (tournament={tournament_id})\n"
+            f"```{exc}```\n"
+            f"Manual trigger: `python run_pipeline.py --league {league} --load-only`"
+        )
 ```
+
+**Bước 2 — Update `run()` để dùng wrapper + callback:**
+
+```python
+# Trong PostMatchWorker.run():
+if loop.is_running():
+    # Fire-and-forget với error boundary wrapper
+    task = asyncio.ensure_future(
+        self._run_standings_safe(league, tournament_id)
+    )
+    
+    # Prevent "Task exception was never retrieved" warning.
+    # Dùng named function: t.exception() trong lambda sẽ re-raise,
+    # named function chỉ mark as retrieved mà không re-raise.
+    def _swallow_task_exc(t: asyncio.Task) -> None:
+        if not t.cancelled():
+            t.exception()  # mark as retrieved, không re-raise
+    
+    task.add_done_callback(_swallow_task_exc)
+else:
+    loop.run_until_complete(
+        self._run_standings_safe(league, tournament_id)
+    )
+```
+
+**Hiệu quả:**
+- Exception trong standings update không còn "biến mất" — log ERROR rõ ràng
+- Discord alert kèm lệnh manual trigger để ops dễ dàng re-run
+- Không block post-match worker — vẫn là fire-and-forget
+- Không retry tự động — tránh spam requests lúc hệ thống bận
 
 ---
 
-### ✅ Issue #8 — [HOÀN THÀNH] _last_tier_b_ts khởi tạo bằng hasattr ngoài dataclass
+### ✅ Issue #8 — [HOÀN THÀNH] `_last_tier_b_ts` khởi tạo bằng `hasattr` ngoài dataclass
 
 **Vị trí:** `LiveTrackingPool._poll_one()` — đầu block Statistics (Tier B)
 
-**Mô tả vấn đề:**
+**Vấn đề cũ:**
 
 ```python
-# Pattern anti-pattern: thêm attribute vào instance NGOÀI class definition
+# Anti-pattern: thêm attribute vào instance NGOÀI class definition
 if not hasattr(state, '_last_tier_b_ts'):
     state._last_tier_b_ts = 0.0
 ```
 
-`LiveMatchState` là dataclass nhưng `_last_tier_b_ts` không được khai báo trong đó. Dễ gây bug khi serialize state, reset, hoặc thêm logic mới.
+`LiveMatchState` là dataclass nhưng `_last_tier_b_ts` không được khai báo trong đó — dễ gây bug khi serialize state, reset, hoặc thêm logic mới.
 
 **Cách sửa:**
 
@@ -415,18 +511,7 @@ class LiveMatchState:
     last_drift_check: float = 0.0
     _last_tier_c_ts: float = 0.0
     _tier_c_pending: bool = False
-    _last_tier_b_ts: float = 0.0    # ← Thêm vào đây, xoá hasattr check trong _poll_one()
-```
-
-Sau đó trong `_poll_one()`, xoá block `hasattr`:
-
-```python
-# XOÁ:
-# if not hasattr(state, '_last_tier_b_ts'):
-#     state._last_tier_b_ts = 0.0
-
-# Dùng trực tiếp — đã có trong dataclass:
-should_fetch_stats = (tier_b_interval > 0) and (now_mono - state._last_tier_b_ts >= tier_b_interval)
+    _last_tier_b_ts: float = 0.0    # ← Đã thêm vào đây, xoá hasattr check trong _poll_one()
 ```
 
 ---
@@ -434,29 +519,39 @@ should_fetch_stats = (tier_b_interval > 0) and (now_mono - state._last_tier_b_ts
 ## Thứ tự ưu tiên thực hiện
 
 ```
-Tuần 1 (Critical — ảnh hưởng trực tiếp đến production):
-  ✅ #1  Sửa Tier C trigger (bug logic) — DONE 2026-03-10
-       → Lưu old_incidents trước khi update state.incidents
-       → Cả Discord alerts và Tier C detection đều dùng old_incidents
-  ⬜ #5  Sửa connection leak _check_drift (24/7 daemon — rò rỉ chậm nhưng chắc)
-  ✅ #2  Refactor asyncio.Lock scope — DONE 2026-03-10
-       → Lock chỉ bọc HTTP call, jitter TRƯỚC lock, backoff SAU lock
-       → Áp dụng cho cả get_json() và get_schedule_json()
-  ✅ #3  Thread pool cho post_match.run() — DONE 2026-03-10
-       → ThreadPoolExecutor(max_workers=3) trong MasterScheduler
-       → run_in_executor() thay vì gọi trực tiếp
+TUẦN NÀY — Fix trước khi deploy:
 
-Tuần 2 (High — hiệu năng và ổn định):
-  ⬜ #4  Thêm --since-date vào daily scrapers (cần sửa fbref + tm scraper)
-  ⬜ #6  Sửa --test-notify AttributeError
-  ⬜ #7  Wrap standings update với error boundary
+  ✅ #1  Tier C trigger logic          — DONE 2026-03-10
+  ✅ #2  asyncio.Lock narrow scope     — DONE 2026-03-10
+  ✅ #3  post_match thread pool        — DONE 2026-03-10
+  ✅ #8  _last_tier_b_ts vào dataclass — DONE 2026-03-10
 
-Tuần 3 (Low — code quality):
-  ✅ #8  Chuyển _last_tier_b_ts vào dataclass — DONE 2026-03-10
-       → Thêm field vào LiveMatchState, xóa hasattr check trong _poll_one()
+  ✅ #5  DB connection leak            — DONE 2026-03-11
+         try-finally trong _check_drift(): conn=None/cur=None trước try,
+         xoá manual close() trong try body, finally luôn close cả cur lẫn conn.
+
+TUẦN SAU — Optimize và polish:
+
+  ✅ #4  Daily scraper --since-date    — DONE 2026-03-11
+         fbref_scraper.py: thêm since_date param + filter STEP 4 trước match_limit.
+         scheduler_master.py DailyMaintenance: thêm Understat/SofaScore (--limit 10),
+         FBref since_date=now-3d, TM --metadata-only.
+         Tổng daily time: vài giờ → 10-20 phút, tự catch up missed matches.
+
+  ✅ #6  --test-notify AttributeError  — DONE 2026-03-11
+         Dùng n.is_enabled thay vì n.webhook_url (không tồn tại).
+  
+  ✅ #7  Standings error boundary      — DONE 2026-03-11
+         Thêm _run_standings_safe() wrapper: log.error + Discord alert,
+         callback _swallow_task_exc() prevent asyncio warning.
+         Không retry tự động — manual trigger nếu cần.
 ```
 
 ---
 
 *Tạo ngày: 2026-03-10 · Dựa trên phân tích tĩnh `scheduler_master.py`*
 *Cập nhật: 2026-03-10 · Issues #1, #2, #3, #8 — DONE*
+*Cập nhật: 2026-03-11 · #5 lên 🔴 Critical (slow burn), #4 window 3 ngày, #7 bỏ retry giữ log+alert*
+*Cập nhật: 2026-03-11 · Issue #5 — DONE (try-finally guarantee trong _check_drift)*
+*Cập nhật: 2026-03-11 · Issue #4 — DONE (--since-date fbref + Understat/SofaScore vào daily + TM metadata-only)*
+*Cập nhật: 2026-03-11 · Issues #6, #7 — DONE (test-notify fix + standings error boundary)*

@@ -51,10 +51,9 @@ import time
 from pathlib import Path
 from typing import Any
 
+import config_fbref as cfg
 import pandas as pd
 from bs4 import BeautifulSoup, Comment
-
-import config_fbref as cfg
 from config_fbref import FBrefLeagueConfig, get_fbref_config
 from schemas_fbref import (
     FixtureRow,
@@ -71,7 +70,11 @@ from schemas_fbref import (
 
 # League registry (project root)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from services.league_registry import get_fbref_leagues, get_league, list_leagues  # noqa: E402
+from services.league_registry import (  # noqa: E402
+    get_fbref_leagues,
+    get_league,
+    list_leagues,
+)
 
 
 # ────────────────────────────────────────────────────────────
@@ -86,6 +89,7 @@ def _setup_logging() -> logging.Logger:
     handler.setLevel(cfg.LOG_LEVEL)
     try:
         import colorlog
+
         fmt = colorlog.ColoredFormatter(
             "%(log_color)s%(asctime)s | %(levelname)-8s | %(name)s | %(message)s%(reset)s",
             datefmt="%H:%M:%S",
@@ -106,6 +110,7 @@ logger = _setup_logging()
 # ────────────────────────────────────────────────────────────
 # BROWSER SESSION – nodriver
 # ────────────────────────────────────────────────────────────
+
 
 class FBrefBrowser:
     """
@@ -128,20 +133,21 @@ class FBrefBrowser:
         self._last_fetch_time: float = 0.0
 
     async def __aenter__(self) -> "FBrefBrowser":
-        import nodriver as uc
         import os
         import sys
-        
-        is_linux = sys.platform.startswith('linux')
-        
+
+        import nodriver as uc
+
+        is_linux = sys.platform.startswith("linux")
+
         if is_linux:
             logger.info("▶ Khởi động Chrome browser (Linux Headless mode)…")
             self._browser = await uc.start(
                 headless=True,
                 sandbox=False,
                 browser_args=[
-                    '--disable-dev-shm-usage',
-                    '--disable-gpu',
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
                 ],
             )
         else:
@@ -230,9 +236,7 @@ class FBrefBrowser:
                 logger.warning("  ⚠ Không tìm thấy tables trên %s", url)
 
             # Lấy full HTML
-            html = await self._page.evaluate(
-                "document.documentElement.outerHTML"
-            )
+            html = await self._page.evaluate("document.documentElement.outerHTML")
             logger.info("  ✓ HTML: %d bytes, tables=%s", len(html), has_tables)
             return html
 
@@ -244,6 +248,7 @@ class FBrefBrowser:
 # ────────────────────────────────────────────────────────────
 # HTML PARSERS – Extract data từ FBref HTML tables
 # ────────────────────────────────────────────────────────────
+
 
 def _parse_table_rows(
     soup: BeautifulSoup,
@@ -329,17 +334,20 @@ def _extract_team_links(soup: BeautifulSoup) -> list[dict[str, str]]:
         if link:
             href = link["href"]
             m = re.search(r"/squads/([^/]+)/", href)
-            teams.append({
-                "name": link.text.strip(),
-                "team_id": m.group(1) if m else "",
-                "url": cfg.FBREF_BASE + href,
-            })
+            teams.append(
+                {
+                    "name": link.text.strip(),
+                    "team_id": m.group(1) if m else "",
+                    "url": cfg.FBREF_BASE + href,
+                }
+            )
     return teams
 
 
 # ────────────────────────────────────────────────────────────
 # STEP 1: Parse League Page → Standings + Squad Stats
 # ────────────────────────────────────────────────────────────
+
 
 def parse_league_page(html: str) -> dict[str, Any]:
     """
@@ -360,9 +368,7 @@ def parse_league_page(html: str) -> dict[str, Any]:
     }
 
     # 1. Standings table
-    standings_rows, _ = _parse_table_rows(
-        soup, table_id_pattern=r"results.*_overall"
-    )
+    standings_rows, _ = _parse_table_rows(soup, table_id_pattern=r"results.*_overall")
     # Enrich with team_id from links
     for row in standings_rows:
         if "_team_id" in row:
@@ -375,9 +381,7 @@ def parse_league_page(html: str) -> dict[str, Any]:
     logger.info("  Standings: %d teams parsed", len(standings_rows))
 
     # 2. Squad standard stats
-    squad_rows, _ = _parse_table_rows(
-        soup, table_id="stats_squads_standard_for"
-    )
+    squad_rows, _ = _parse_table_rows(soup, table_id="stats_squads_standard_for")
     for row in squad_rows:
         if "_team_id" in row:
             row["team_id"] = row.pop("_team_id")
@@ -397,6 +401,7 @@ def parse_league_page(html: str) -> dict[str, Any]:
 # ────────────────────────────────────────────────────────────
 # STEP 2: Parse Squad Page → Player Profiles + Stats
 # ────────────────────────────────────────────────────────────
+
 
 def parse_squad_page(
     html: str,
@@ -429,9 +434,19 @@ def parse_squad_page(
     }
 
     # Resolve table IDs (dynamic hoặc legacy)
-    std_table_id = league_cfg.squad_standard_table_id if league_cfg else cfg.SQUAD_STANDARD_TABLE_ID
-    shoot_table_id = league_cfg.squad_shooting_table_id if league_cfg else cfg.SQUAD_SHOOTING_TABLE_ID
-    gk_table_id = league_cfg.squad_gk_table_id if league_cfg else cfg.SQUAD_KEEPER_TABLE_ID
+    std_table_id = (
+        league_cfg.squad_standard_table_id
+        if league_cfg
+        else cfg.SQUAD_STANDARD_TABLE_ID
+    )
+    shoot_table_id = (
+        league_cfg.squad_shooting_table_id
+        if league_cfg
+        else cfg.SQUAD_SHOOTING_TABLE_ID
+    )
+    gk_table_id = (
+        league_cfg.squad_gk_table_id if league_cfg else cfg.SQUAD_KEEPER_TABLE_ID
+    )
     season = league_cfg.season if league_cfg else cfg.FBREF_SEASON
 
     # ── Standard stats table (player-level) ──
@@ -518,6 +533,7 @@ def parse_squad_page(
 # STEP 2.5: Parse League-wide Defensive and Possession
 # ────────────────────────────────────────────────────────────
 
+
 def parse_league_defense_page(
     html: str,
     *,
@@ -527,7 +543,7 @@ def parse_league_defense_page(
     soup = BeautifulSoup(html, "html.parser")
     # Trên trang League-wide, bảng cầu thủ thường có id="stats_defense" (không có comp_id)
     table_id = "stats_defense"
-    
+
     rows, _ = _parse_table_rows(soup, table_id=table_id)
     if not rows:
         comments = soup.find_all(string=lambda t: isinstance(t, Comment))
@@ -539,13 +555,13 @@ def parse_league_defense_page(
                     break
 
     season = league_cfg.season if league_cfg else cfg.FBREF_SEASON
-    
+
     result = []
     for row in rows:
         player_name = row.get("player", "")
         if not player_name or player_name.lower() == "squad total":
             continue
-            
+
         # Only add players who actually played
         mins = str(row.get("minutes_90s", "")).replace(",", "")
         try:
@@ -554,21 +570,22 @@ def parse_league_defense_page(
             val = 0.0
         if val <= 0:
             continue
-            
+
         d = dict(row)
         d["player_id"] = d.pop("_player_id", None)
-        # League-wide table usually has a 'squad' column 
+        # League-wide table usually has a 'squad' column
         squad_name = row.get("team", "") or row.get("squad", "")
         d["team_name"] = squad_name
         d["team_id"] = d.pop("_team_id", None)
         d["season"] = season
-        
+
         for k in ("_player_url", "_team_url"):
             d.pop(k, None)
-            
+
         result.append(d)
-        
+
     return result
+
 
 def parse_league_possession_page(
     html: str,
@@ -579,7 +596,7 @@ def parse_league_possession_page(
     soup = BeautifulSoup(html, "html.parser")
     # Trên trang League-wide, bảng cầu thủ thường có id="stats_possession" (không có comp_id)
     table_id = "stats_possession"
-    
+
     rows, _ = _parse_table_rows(soup, table_id=table_id)
     if not rows:
         comments = soup.find_all(string=lambda t: isinstance(t, Comment))
@@ -591,13 +608,13 @@ def parse_league_possession_page(
                     break
 
     season = league_cfg.season if league_cfg else cfg.FBREF_SEASON
-    
+
     result = []
     for row in rows:
         player_name = row.get("player", "")
         if not player_name or player_name.lower() == "squad total":
             continue
-            
+
         mins = str(row.get("minutes_90s", "")).replace(",", "")
         try:
             val = float(mins) if mins else 0.0
@@ -605,25 +622,26 @@ def parse_league_possession_page(
             val = 0.0
         if val <= 0:
             continue
-            
+
         p = dict(row)
         p["player_id"] = p.pop("_player_id", None)
         squad_name = row.get("team", "") or row.get("squad", "")
         p["team_name"] = squad_name
         p["team_id"] = p.pop("_team_id", None)
         p["season"] = season
-        
+
         for k in ("_player_url", "_team_url"):
             p.pop(k, None)
-            
+
         result.append(p)
-        
+
     return result
 
 
 # ────────────────────────────────────────────────────────────
 # STEP 3: Parse Fixture Schedule Page
 # ────────────────────────────────────────────────────────────
+
 
 def parse_fixtures_page(
     html: str,
@@ -712,6 +730,7 @@ def parse_fixtures_page(
 # STEP 4: Parse Match Report → Passing Stats
 # ────────────────────────────────────────────────────────────
 
+
 def parse_match_report(
     html: str,
     match_id: str,
@@ -754,9 +773,13 @@ def parse_match_report(
         team_name_for_table = ""
         caption = table.find("caption")
         if caption:
-            team_name_for_table = caption.text.strip().replace(" Passing Stats", "").strip()
+            team_name_for_table = (
+                caption.text.strip().replace(" Passing Stats", "").strip()
+            )
             # Clean up: "Arsenal Passing Stats Table" → "Arsenal"
-            team_name_for_table = re.sub(r"\s*(Passing|Stats|Table).*", "", team_name_for_table).strip()
+            team_name_for_table = re.sub(
+                r"\s*(Passing|Stats|Table).*", "", team_name_for_table
+            ).strip()
 
         tbody = table.find("tbody")
         if not tbody:
@@ -799,14 +822,19 @@ def parse_match_report(
 
             all_passing.append(row)
 
-    logger.info("  Match %s: %d passing records from %d tables",
-                match_id[:8], len(all_passing), len(passing_tables))
+    logger.info(
+        "  Match %s: %d passing records from %d tables",
+        match_id[:8],
+        len(all_passing),
+        len(passing_tables),
+    )
     return all_passing
 
 
 # ────────────────────────────────────────────────────────────
 # STEP 5: Export → CSV
 # ────────────────────────────────────────────────────────────
+
 
 def export_fbref_data(
     standings: list,
@@ -829,7 +857,11 @@ def export_fbref_data(
     standings_csv = league_cfg.standings_csv if league_cfg else cfg.STANDINGS_CSV
     squad_stats_csv = league_cfg.squad_stats_csv if league_cfg else cfg.SQUAD_STATS_CSV
     roster_csv = league_cfg.squad_roster_csv if league_cfg else cfg.SQUAD_ROSTER_CSV
-    player_csv = league_cfg.player_season_stats_csv if league_cfg else cfg.PLAYER_SEASON_STATS_CSV
+    player_csv = (
+        league_cfg.player_season_stats_csv
+        if league_cfg
+        else cfg.PLAYER_SEASON_STATS_CSV
+    )
 
     # Standings
     if standings:
@@ -866,7 +898,9 @@ def export_fbref_data(
     # Defensive stats
     if defensive_stats:
         df = pd.DataFrame([d.model_dump(by_alias=False) for d in defensive_stats])
-        path = output_dir / (league_cfg.defensive_stats_csv if league_cfg else cfg.DEFENSIVE_STATS_CSV)
+        path = output_dir / (
+            league_cfg.defensive_stats_csv if league_cfg else cfg.DEFENSIVE_STATS_CSV
+        )
         df.to_csv(path, index=False, encoding="utf-8-sig")
         logger.info("Exported defensive stats → %s (%d rows)", path, len(df))
         exported.append(str(path))
@@ -874,7 +908,9 @@ def export_fbref_data(
     # Possession stats
     if possession_stats:
         df = pd.DataFrame([p.model_dump(by_alias=False) for p in possession_stats])
-        path = output_dir / (league_cfg.possession_stats_csv if league_cfg else cfg.POSSESSION_STATS_CSV)
+        path = output_dir / (
+            league_cfg.possession_stats_csv if league_cfg else cfg.POSSESSION_STATS_CSV
+        )
         df.to_csv(path, index=False, encoding="utf-8-sig")
         logger.info("Exported possession stats → %s (%d rows)", path, len(df))
         exported.append(str(path))
@@ -882,7 +918,9 @@ def export_fbref_data(
     # GK stats
     if gk_stats:
         df = pd.DataFrame([g.model_dump(by_alias=False) for g in gk_stats])
-        path = output_dir / (league_cfg.gk_stats_csv if league_cfg else cfg.GK_STATS_CSV)
+        path = output_dir / (
+            league_cfg.gk_stats_csv if league_cfg else cfg.GK_STATS_CSV
+        )
         df.to_csv(path, index=False, encoding="utf-8-sig")
         logger.info("Exported GK stats → %s (%d rows)", path, len(df))
         exported.append(str(path))
@@ -898,7 +936,9 @@ def export_fbref_data(
     # Match passing
     if match_passing:
         df = pd.DataFrame([m.model_dump(by_alias=False) for m in match_passing])
-        path = output_dir / (league_cfg.match_passing_csv if league_cfg else cfg.MATCH_PASSING_CSV)
+        path = output_dir / (
+            league_cfg.match_passing_csv if league_cfg else cfg.MATCH_PASSING_CSV
+        )
         df.to_csv(path, index=False, encoding="utf-8-sig")
         logger.info("Exported match passing → %s (%d rows)", path, len(df))
         exported.append(str(path))
@@ -910,22 +950,27 @@ def export_fbref_data(
 # MAIN PIPELINE
 # ────────────────────────────────────────────────────────────
 
+
 async def main(
     standings_only: bool = False,
     team_limit: int = 0,
     league_id: str = "EPL",
     no_match_passing: bool = False,
     match_limit: int = 0,
+    since_date: str | None = None,
 ) -> dict[str, list]:
     """
     FBref Data Pipeline – entry point chính.
 
     Args:
-        standings_only: Chỉ scrape standings (không scrape squad pages).
-        team_limit:     Giới hạn số đội scrape (0 = tất cả).
-        league_id:      League ID từ registry (VD: "EPL", "LALIGA").
+        standings_only:   Chỉ scrape standings (không scrape squad pages).
+        team_limit:       Giới hạn số đội scrape (0 = tất cả).
+        league_id:        League ID từ registry (VD: "EPL", "LALIGA").
         no_match_passing: Bỏ qua match passing data (tiết kiệm thời gian).
-        match_limit:    Giới hạn số match reports để scrape (0 = tất cả).
+        match_limit:      Giới hạn số match reports để scrape (0 = tất cả).
+        since_date:       Chỉ scrape match reports có date >= "YYYY-MM-DD".
+                          None = không filter (scrape tất cả).
+                          Dùng cho daily maintenance để tránh re-scrape cả mùa.
 
     Returns:
         dict với keys: "standings", "squad_stats", "profiles", "player_stats",
@@ -969,8 +1014,11 @@ async def main(
             league_data["standings"],
             context_label="standings",
         )
-        logger.info("✓ Standings: %d/%d teams validated",
-                     len(all_standings), len(league_data["standings"]))
+        logger.info(
+            "✓ Standings: %d/%d teams validated",
+            len(all_standings),
+            len(league_data["standings"]),
+        )
 
         # Validate squad stats — inject season
         for row in league_data["squad_stats"]:
@@ -999,7 +1047,7 @@ async def main(
         if not standings_only:
             # ── STEP 2.5: League-wide Defensive & Possession ──
             logger.info("━━ STEP 2.5: Scrape League-wide Defensive & Possession ━━")
-            
+
             # Defense
             def_html = await browser.fetch(league_cfg.league_defense_url)
             if def_html:
@@ -1016,7 +1064,9 @@ async def main(
             # Possession
             poss_html = await browser.fetch(league_cfg.league_possession_url)
             if poss_html:
-                poss_data = parse_league_possession_page(poss_html, league_cfg=league_cfg)
+                poss_data = parse_league_possession_page(
+                    poss_html, league_cfg=league_cfg
+                )
                 all_possession = safe_parse_list(
                     PlayerPossessionStats,
                     poss_data,
@@ -1033,15 +1083,15 @@ async def main(
             team_links = league_data["team_links"]
             if team_limit > 0:
                 team_links = team_links[:team_limit]
-                logger.info("Giới hạn: %d/%d đội", team_limit, len(league_data["team_links"]))
+                logger.info(
+                    "Giới hạn: %d/%d đội", team_limit, len(league_data["team_links"])
+                )
 
             total_teams = len(team_links)
             logger.info("━━ STEP 3: Scrape %d Squad Pages ━━", total_teams)
 
             for idx, team in enumerate(team_links, 1):
-                logger.info(
-                    "── [%d/%d] %s ──", idx, total_teams, team["name"]
-                )
+                logger.info("── [%d/%d] %s ──", idx, total_teams, team["name"])
                 squad_html = await browser.fetch(team["url"])
                 if not squad_html:
                     logger.warning("  ✗ Không tải được squad page cho %s", team["name"])
@@ -1082,7 +1132,9 @@ async def main(
 
                 logger.info(
                     "  ✓ %s: %d profiles, %d stats, %d gk",
-                    team["name"], len(valid_profiles), len(valid_stats),
+                    team["name"],
+                    len(valid_profiles),
+                    len(valid_stats),
                     len(valid_gk),
                 )
 
@@ -1090,9 +1142,27 @@ async def main(
             if not no_match_passing and all_fixtures:
                 # Lọc matches đã có match_report_url
                 matches_with_reports = [
-                    f for f in all_fixtures
-                    if f.match_report_url and f.match_id
+                    f for f in all_fixtures if f.match_report_url and f.match_id
                 ]
+
+                # Filter by since_date: chỉ scrape match reports từ N ngày gần nhất.
+                # FBref date format là "YYYY-MM-DD" → so sánh string ISO đúng thứ tự.
+                # Áp dụng TRƯỚC match_limit để limit đếm trên set đã filtered.
+                if since_date:
+                    before_count = len(matches_with_reports)
+                    matches_with_reports = [
+                        f
+                        for f in matches_with_reports
+                        if f.date and f.date >= since_date
+                    ]
+                    logger.info(
+                        "--since-date %s: %d → %d match reports (skipped %d older)",
+                        since_date,
+                        before_count,
+                        len(matches_with_reports),
+                        before_count - len(matches_with_reports),
+                    )
+
                 if match_limit > 0:
                     matches_with_reports = matches_with_reports[:match_limit]
 
@@ -1102,14 +1172,17 @@ async def main(
                     for idx, fixture in enumerate(matches_with_reports, 1):
                         logger.info(
                             "── [%d/%d] %s vs %s (%s) ──",
-                            idx, total_matches,
+                            idx,
+                            total_matches,
                             fixture.home_team or "?",
                             fixture.away_team or "?",
                             fixture.date or "?",
                         )
                         match_html = await browser.fetch(fixture.match_report_url)
                         if not match_html:
-                            logger.warning("  ✗ Không tải được match report %s", fixture.match_id)
+                            logger.warning(
+                                "  ✗ Không tải được match report %s", fixture.match_id
+                            )
                             continue
 
                         passing_data = parse_match_report(
@@ -1133,7 +1206,10 @@ async def main(
     # ── STEP 5: Export ──
     logger.info("━━ STEP 5: Export CSV ━━")
     exported = export_fbref_data(
-        all_standings, all_squad_stats, all_profiles, all_player_stats,
+        all_standings,
+        all_squad_stats,
+        all_profiles,
+        all_player_stats,
         defensive_stats=all_defensive,
         possession_stats=all_possession,
         gk_stats=all_gk,
@@ -1177,6 +1253,7 @@ async def main(
 # CLI
 # ────────────────────────────────────────────────────────────
 
+
 def cli() -> None:
     """Command-line interface cho FBref scraper."""
     import argparse
@@ -1187,7 +1264,7 @@ def cli() -> None:
         description="FBref Data Pipeline – Multi-League Standings, Rosters, Player Stats, Defensive, Possession, GK, Fixtures, Match Passing",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=f"""
-Giải đấu hỗ trợ (FBref): {', '.join(supported)}
+Giải đấu hỗ trợ (FBref): {", ".join(supported)}
 
 Dữ liệu thu thập:
   • Standings, Squad Stats, Player Profiles, Player Season Stats
@@ -1198,13 +1275,14 @@ Dữ liệu thu thập:
   • Match Passing Data (pass types, progressive, key passes)
 
 Ví dụ:
-  python fbref_scraper.py                              # EPL (mặc định)
-  python fbref_scraper.py --league LALIGA              # La Liga
-  python fbref_scraper.py --league BUNDESLIGA --limit 3  # Bundesliga, 3 đội
-  python fbref_scraper.py --standings-only             # Chỉ BXH + Fixtures
-  python fbref_scraper.py --no-match-passing           # Bỏ qua match reports
-  python fbref_scraper.py --match-limit 10             # Chỉ 10 match reports
-  python fbref_scraper.py --list-leagues               # Xem tất cả giải
+  python fbref_scraper.py                                    # EPL (mặc định)
+  python fbref_scraper.py --league LALIGA                    # La Liga
+  python fbref_scraper.py --league BUNDESLIGA --limit 3      # Bundesliga, 3 đội
+  python fbref_scraper.py --standings-only                   # Chỉ BXH + Fixtures
+  python fbref_scraper.py --no-match-passing                 # Bỏ qua match reports
+  python fbref_scraper.py --match-limit 10                   # Chỉ 10 match reports
+  python fbref_scraper.py --since-date 2025-03-08            # Chỉ match reports từ ngày này
+  python fbref_scraper.py --list-leagues                     # Xem tất cả giải
         """,
     )
     parser.add_argument(
@@ -1235,6 +1313,17 @@ Ví dụ:
         help="Giới hạn số match reports để scrape passing data (0 = tất cả)",
     )
     parser.add_argument(
+        "--since-date",
+        type=str,
+        default=None,
+        metavar="YYYY-MM-DD",
+        help=(
+            "Chỉ scrape match reports có date >= YYYY-MM-DD. "
+            "Dùng cho daily maintenance (VD: --since-date 2025-03-08). "
+            "Không ảnh hưởng đến standings/squad pages."
+        ),
+    )
+    parser.add_argument(
         "--list-leagues",
         action="store_true",
         help="Liệt kê tất cả giải đấu hỗ trợ",
@@ -1251,19 +1340,25 @@ Ví dụ:
     try:
         league_cfg_check = get_league(league_id)
         if not league_cfg_check.has_fbref:
-            logger.error("League '%s' không có trên FBref. Dùng --list-leagues để xem.", league_id)
+            logger.error(
+                "League '%s' không có trên FBref. Dùng --list-leagues để xem.",
+                league_id,
+            )
             return
     except KeyError as e:
         logger.error(str(e))
         return
 
-    asyncio.run(main(
-        standings_only=args.standings_only,
-        team_limit=args.limit,
-        league_id=league_id,
-        no_match_passing=args.no_match_passing,
-        match_limit=args.match_limit,
-    ))
+    asyncio.run(
+        main(
+            standings_only=args.standings_only,
+            team_limit=args.limit,
+            league_id=league_id,
+            no_match_passing=args.no_match_passing,
+            match_limit=args.match_limit,
+            since_date=args.since_date,
+        )
+    )
 
 
 if __name__ == "__main__":
