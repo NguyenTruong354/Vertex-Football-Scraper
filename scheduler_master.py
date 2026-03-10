@@ -36,6 +36,7 @@ import sys
 import tempfile
 import time
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from enum import Enum
 from services import live_insight
@@ -515,21 +516,24 @@ class CurlCffiClient:
         return self._request_count >= BROWSER_RECYCLE_EVERY
 
     async def get_json(self, endpoint: str, *, tier: str = "A") -> dict | list | None:
-        """Fetch JSON from SofaScore API with retry and jitter. Serialized by Lock."""
+        """Fetch JSON from SofaScore API with retry and jitter.
+        Lock scope narrowed: only wraps the actual HTTP call.
+        Jitter before lock + backoff after lock = anti-bot natural spacing."""
         if self.dry_run:
             return None
 
-        async with self._lock:
-            url = f"{cfg.SS_API_BASE}{endpoint}"
+        url = f"{cfg.SS_API_BASE}{endpoint}"
+        sc = 0  # track last status code for backoff decisions outside lock
 
-            for attempt in range(self.MAX_RETRIES):
-                # Rate limit with randomized jitter (2-4s) to look human
-                elapsed = time.monotonic() - self._last_request
-                mult = self.antiban.global_sleep_multiplier if self.antiban else 1.0
-                jitter = random.uniform(2.0, 4.0) * mult
-                if elapsed < jitter:
-                    await asyncio.sleep(jitter - elapsed)
+        for attempt in range(self.MAX_RETRIES):
+            # 1. JITTER OUTSIDE LOCK: natural spacing between requests
+            #    prevents bot-like burst when multiple matches queue up
+            mult = self.antiban.global_sleep_multiplier if self.antiban else 1.0
+            jitter = random.uniform(1.5, 3.5) * mult
+            await asyncio.sleep(jitter)
 
+            # 2. NARROW LOCK: only wraps the actual HTTP request
+            async with self._lock:
                 try:
                     if not self._session:
                         await self.start()
@@ -564,49 +568,53 @@ class CurlCffiClient:
                         self.log.warning("HTTP 403 Forbidden (attempt %d/%d): %s",
                                          attempt + 1, self.MAX_RETRIES, url)
                         self._check_block_alert(url, 403)
-                        if attempt < self.MAX_RETRIES - 1:
-                            backoff = self.RETRY_BACKOFF[attempt] * 2
-                            self.log.info("  ⏳ Backoff %ds before retry...", backoff)
-                            await asyncio.sleep(backoff)
 
                     elif sc == 429:
                         self._consecutive_429 += 1
                         self.log.warning("HTTP 429 Rate Limited (attempt %d/%d): %s",
                                          attempt + 1, self.MAX_RETRIES, url)
                         self._check_block_alert(url, 429)
-                        if attempt < self.MAX_RETRIES - 1:
-                            backoff = self.RETRY_BACKOFF[attempt] * 3
-                            self.log.info("  ⏳ Rate limit backoff %ds...", backoff)
-                            await asyncio.sleep(backoff)
 
                     else:
                         self.log.warning("HTTP %d: %s", sc, url)
-                        if attempt < self.MAX_RETRIES - 1:
-                            await asyncio.sleep(self.RETRY_BACKOFF[attempt])
 
                 except Exception as exc:
                     self.log.debug("Request failed (attempt %d): %s — %s",
                                    attempt + 1, endpoint, exc)
-                    if attempt < self.MAX_RETRIES - 1:
-                        await asyncio.sleep(self.RETRY_BACKOFF[attempt])
+                    sc = 0  # mark as failed for backoff logic below
 
-            return None
+            # 3. BACKOFF OUTSIDE LOCK: sleep without blocking other matches
+            if attempt < self.MAX_RETRIES - 1:
+                if sc == 429:
+                    backoff = self.RETRY_BACKOFF[attempt] * 3
+                    self.log.info("  ⏳ Rate limit backoff %ds...", backoff)
+                    await asyncio.sleep(backoff)
+                elif sc == 403:
+                    backoff = self.RETRY_BACKOFF[attempt] * 2
+                    self.log.info("  ⏳ Backoff %ds before retry...", backoff)
+                    await asyncio.sleep(backoff)
+                elif sc != 200:
+                    await asyncio.sleep(self.RETRY_BACKOFF[attempt])
+
+        return None
 
     async def get_schedule_json(self, date_str: str) -> dict:
-        """Fetch scheduled-events for a date with retry."""
+        """Fetch scheduled-events for a date with retry.
+        Lock scope narrowed: same pattern as get_json."""
         if self.dry_run:
             return {}
 
-        async with self._lock:
-            url = f"https://api.sofascore.com/api/v1/sport/football/scheduled-events/{date_str}"
+        url = f"https://api.sofascore.com/api/v1/sport/football/scheduled-events/{date_str}"
+        sc = 0
 
-            for attempt in range(self.MAX_RETRIES):
-                elapsed = time.monotonic() - self._last_request
-                mult = self.antiban.global_sleep_multiplier if self.antiban else 1.0
-                jitter = random.uniform(2.0, 4.0) * mult
-                if elapsed < jitter:
-                    await asyncio.sleep(jitter - elapsed)
+        for attempt in range(self.MAX_RETRIES):
+            # 1. JITTER OUTSIDE LOCK
+            mult = self.antiban.global_sleep_multiplier if self.antiban else 1.0
+            jitter = random.uniform(1.5, 3.5) * mult
+            await asyncio.sleep(jitter)
 
+            # 2. NARROW LOCK: only the HTTP call
+            async with self._lock:
                 try:
                     if not self._session:
                         await self.start()
@@ -619,7 +627,7 @@ class CurlCffiClient:
 
                     # ── anti-ban + metrics ──
                     if self.antiban:
-                        self.antiban.record_response(sc, "A")  # schedule = tier A
+                        self.antiban.record_response(sc, "A")
                         self.antiban.check_timeout()
                         if self.antiban.needs_recycle:
                             self.log.info("♻️  Anti-ban triggered session recycle (schedule)")
@@ -635,22 +643,26 @@ class CurlCffiClient:
                         self._consecutive_403 += 1
                         self.log.warning("HTTP 403 on schedule fetch (attempt %d): %s", attempt + 1, url)
                         self._check_block_alert(url, 403)
-                        if attempt < self.MAX_RETRIES - 1:
-                            await asyncio.sleep(self.RETRY_BACKOFF[attempt] * 2)
                     elif sc == 429:
                         self._consecutive_429 += 1
                         self.log.warning("HTTP 429 on schedule fetch (attempt %d): %s", attempt + 1, url)
                         self._check_block_alert(url, 429)
-                        if attempt < self.MAX_RETRIES - 1:
-                            await asyncio.sleep(self.RETRY_BACKOFF[attempt] * 3)
 
                 except Exception as exc:
                     self.log.warning("Schedule fetch failed for %s (attempt %d): %s",
                                      date_str, attempt + 1, exc)
-                    if attempt < self.MAX_RETRIES - 1:
-                        await asyncio.sleep(self.RETRY_BACKOFF[attempt])
+                    sc = 0
 
-            return {}
+            # 3. BACKOFF OUTSIDE LOCK
+            if attempt < self.MAX_RETRIES - 1:
+                if sc == 429:
+                    await asyncio.sleep(self.RETRY_BACKOFF[attempt] * 3)
+                elif sc == 403:
+                    await asyncio.sleep(self.RETRY_BACKOFF[attempt] * 2)
+                elif sc != 200:
+                    await asyncio.sleep(self.RETRY_BACKOFF[attempt])
+
+        return {}
 
 
 # ════════════════════════════════════════════════════════════
@@ -818,6 +830,8 @@ class LiveMatchState:
     # Tier C tracking (plan_live Step 3)
     _last_tier_c_ts: float = 0.0
     _tier_c_pending: bool = False
+    # Tier B tracking (statistics fetch interval)
+    _last_tier_b_ts: float = 0.0
 
 
 # ════════════════════════════════════════════════════════════
@@ -1021,12 +1035,16 @@ class LiveTrackingPool:
 
         # 2. Incidents (Tier A — always)
         inc_data = await self.browser.get_json(f"/event/{state.event_id}/incidents", tier="A")
+        # FIX Issue #1: Save old_incidents BEFORE updating state.incidents
+        # so both Discord alerts AND Tier C detection use the correct old list.
+        old_incidents = state.incidents  # snapshot before overwrite
+
         if inc_data:
             current_incidents = inc_data.get("incidents", [])
-            
-            # Detect new incidents for Discord alerts
-            if state.poll_count > 1 and state.incidents:
-                old_ids = {i.get("id") for i in state.incidents if i.get("id")}
+
+            # Detect new incidents for Discord alerts (using old_incidents)
+            if state.poll_count > 1 and old_incidents:
+                old_ids = {i.get("id") for i in old_incidents if i.get("id")}
                 for inc in current_incidents:
                     iid = inc.get("id")
                     if iid and iid not in old_ids:
@@ -1038,23 +1056,20 @@ class LiveTrackingPool:
                             time_str += f"+{inc.get('addedTime')}'"
 
                         if inc_type == "card" and inc_class in ("red", "yellowRed"):
-                            self.notifier.send("match_event", 
+                            self.notifier.send("match_event",
                                 f"🟥 **RED CARD** [{state.league}] {state.home_team} vs {state.away_team} | {player} ({time_str})")
                         elif inc_type == "varDecision":
-                            self.notifier.send("match_event", 
+                            self.notifier.send("match_event",
                                 f"📺 **VAR DECISION** [{state.league}] {state.home_team} vs {state.away_team} | {time_str}")
                         elif inc_type == "penalty":
-                            self.notifier.send("match_event", 
+                            self.notifier.send("match_event",
                                 f"🎯 **PENALTY** [{state.league}] {state.home_team} vs {state.away_team} | {time_str}")
-            
+
             state.incidents = current_incidents
 
         # 3. Statistics — Tier B (interval driven by anti-ban state + capacity)
         n_active = len(self._matches)
         tier_b_interval = ab.capacity_adjusted_interval("B", n_active) if ab else 180
-        # Use _last_tier_b_ts on the state to track when we last fetched
-        if not hasattr(state, '_last_tier_b_ts'):
-            state._last_tier_b_ts = 0.0
         should_fetch_stats = (tier_b_interval > 0) and (now_mono - state._last_tier_b_ts >= tier_b_interval)
         if should_fetch_stats:
             stat_data = await self.browser.get_json(f"/event/{state.event_id}/statistics", tier="B")
@@ -1076,9 +1091,9 @@ class LiveTrackingPool:
         tier_c_cooldown = ab.tier_c_cooldown() if ab else 90
         tier_c_fetched = False
         if tier_c_cooldown > 0:  # 0 = Tier C paused
-            # Detect triggers from new incidents
-            if inc_data and state.poll_count > 1 and state.incidents:
-                old_ids = {i.get("id") for i in state.incidents if i.get("id")}
+            # FIX Issue #1: Detect triggers using old_incidents (saved before overwrite)
+            if inc_data and state.poll_count > 1 and old_incidents:
+                old_ids = {i.get("id") for i in old_incidents if i.get("id")}
                 for inc in (inc_data.get("incidents") or []):
                     iid = inc.get("id")
                     if iid and iid not in old_ids and _is_tier_c_trigger(inc):
@@ -2066,6 +2081,9 @@ class MasterScheduler:
         self.post_match = PostMatchWorker(self.log, self.notifier,
                                            browser=self.browser, dry_run=dry_run,
                                            shutdown_event=self._shutdown)
+        # FIX Issue #3: Thread pool so post-match subprocesses don't block event loop
+        self._post_match_executor = ThreadPoolExecutor(
+            max_workers=3, thread_name_prefix="post_match")
         self.daily = DailyMaintenance(self.leagues, self.log, self.notifier,
                                        dry_run=dry_run, shutdown_event=self._shutdown,
                                        skip_crossref_build=skip_crossref_build,
@@ -2204,9 +2222,13 @@ class MasterScheduler:
             except Exception as exc:
                 self.log.debug("Insight worker error: %s", exc)
 
-            # Run post-match for each finished match
+            # FIX Issue #3: Run post-match in thread pool to avoid blocking event loop.
+            # Each post_match.run() can take 5-15 minutes (subprocess calls).
             for fm in finished_matches:
-                self.post_match.run(fm)
+                asyncio.get_event_loop().run_in_executor(
+                    self._post_match_executor,
+                    self.post_match.run, fm
+                )
 
             # Sleep based on number of active matches
             if not self.pool.is_empty:
