@@ -1,72 +1,79 @@
-# VERTEX FOOTBALL — PROJECT DASHBOARD
-> **Mục tiêu:** Cung cấp context nhanh cho AI về kiến trúc, trạng thái và lộ trình phát triển của dự án.
-> **Lưu ý:** Đọc file này trước khi bắt đầu bất kỳ hội thoại mới nào để tiết kiệm token và đảm bảo tính nhất quán.
+# VERTEX FOOTBALL — PROJECT COMPREHENSIVE DASHBOARD
+> **Mục tiêu:** Bản đồ toàn diện về hệ thống Vertex Football Scraper. 
+> **Tài liệu tham khảo:** Dùng file này để nắm bắt nhanh "cái gì làm gì" trong toàn bộ codebase.
 
 ---
 
-## 🏗 1. KIẾN TRÚC HỆ THỐNG (SYSTEM ARCHITECTURE)
+## 🚀 1. CORE RUNNERS & DAEMONS (TRÌNH ĐIỀU KHIỂN CHÍNH)
 
-Hệ thống hoạt động theo mô hình **Single-Browser Multi-League Daemon**.
-
-### 核心 (Core Components):
-- **`scheduler_master.py`**: "Đầu não" điều khiển chính. Quản lý 1 instance `curl_cffi` duy nhất cho tất cả các giải đấu.
-  - **LiveTrackingPool**: Quản lý các trận đang diễn ra bằng cơ chế round-robin polling.
-  - **PostMatchWorker**: Chạy hậu xử lý (scrapers FBRef/Understat/TM) trong ThreadPool sau khi trận kết thúc.
-  - **DailyMaintenance**: Chạy bảo trì hàng đêm (cập nhật BXH, chuyển nhượng, dọn dẹp DB).
-- **`CurlCffiClient`**: Client HTTP chính, sử dụng TLS Impersonation (Chrome) để vượt qua Cloudflare.
-  - **Anti-Ban logic**: Sử dụng `asyncio.Lock` thu hẹp scope, Jitter trước khi request và Backoff khi bị rate-limit.
-
-### 🤖 AI Insight Pipeline (Producer-Worker Pattern):
-- **`insight_producer.py`**: Lọc dữ liệu, kiểm tra cooldown và "đặt hàng" Job AI vào bảng `ai_insight_jobs`.
-- **`insight_worker.py`**: Chạy ngầm trong `scheduler_master`, lấy Job, gọi LLM (Groq) và lưu kết quả.
-- **Dịch vụ AI**: `match_story.py` (tóm tắt trận), `player_trend.py` (phân tích cầu thủ), `live_insight.py` (badge tức thời).
+| File | Chức năng chính |
+|---|---|
+| `scheduler_master.py` | **Đầu não điều khiển 24/7.** Quản lý 1 browser duy nhất, polling tất cả các giải đấu đang trực tiếp, điều phối Post-match worker và Daily maintenance. |
+| `run_pipeline.py` | CLI tool để chạy pipeline cào dữ liệu cho một giải đấu cụ thể (bao gồm cào, load DB, tạo MV). |
+| `run_daemon.py` | Phiên bản cũ của trình điều hành (dần được thay thế bởi `scheduler_master.py`). |
+| `run_simulate_epl.py` | Script giả lập một ngày thi đấu Ngoại hạng Anh để test logic polling/post-match. |
+| `live_match.py` | Định nghĩa các lớp trạng thái và logic cốt lõi cho việc theo dõi trận đấu trực tiếp. |
 
 ---
 
-## 📊 2. CẤU TRÚC DỮ LIỆU (DATABASE SNAPSHOT)
+## 🕷️ 2. SCRAPER MODULES (CÁC BỘ CÀO DỮ LIỆU)
 
-- **Database**: PostgreSQL.
-- **Bảng quan trọng**:
-  - `matches` / `player_match_stats`: Dữ liệu lịch sử.
-  - `live_snapshots` / `live_match_state`: Dữ liệu realtime cho Live App.
-  - `ai_insight_jobs`: Quản lý lifecycle của các nhận định AI.
-  - `ai_insight_feedback`: Lưu đánh giá (upvote/downvote) để tối ưu Prompt.
-  - `team_canonical`: Map tên CLB giữa các nguồn (SofaScore, FBRef...).
+### ⚽ SofaScore (`/sofascore`)
+- **`sofascore_client.py`**: Cào dữ liệu chi tiết trận đấu, đội hình, chỉ số cầu thủ sau trận.
+- **`config_sofascore.py`**: Quản lý Season IDs, Tournament IDs và logic tra cứu mùa giải động.
+- **`heatmaps_scraper.py`**: Chuyên biệt cào dữ liệu heatmap của từng cầu thủ.
 
----
+### 📊 FBRef (`/fbref`)
+- **`fbref_scraper.py`**: Cào dữ liệu chuyên sâu (Match Reports, Shooting, Passing, GCA) bằng cách parse HTML.
+- **`config_fbref.py` / `schemas_fbref.py`**: Cấu hình URL và định nghĩa schema dữ liệu.
 
-## 🛠 3. CÔNG NGHỆ CHÍNH (TECH STACK)
+### 📈 Understat (`/understat`)
+- **`async_scraper.py`**: Cào dữ liệu xG thời gian thực và lịch sử của Understat bằng cơ chế async.
+- **`extractor.py`**: Parse dữ liệu JSON từ các biến JavaScript nhúng trong web Understat.
 
-- **Language**: Python 3.10+ (Asyncio-heavy).
-- **Scraping**: `curl_cffi` (impersonate Chrome), `nodriver` (chỉ dùng khi cần render JS nặng).
-- **LLM**: Groq API (Llama-3 models).
-- **Notification**: Discord Webhooks.
-- **Database**: `psycopg2` / `SQLAlchemy` (dần chuyển sang async).
-
----
-
-## 📝 4. TRẠNG THÁI HIỆN TẠI & NHỮNG GÌ ĐÃ FIX
-
-### ✅ Đã hoàn thành (Recently Done):
-- **SofaScore Dynamic Season**: Tự động tra cứu `season_id` thay vì hardcode.
-- **Fix Scheduler Bottleneck**: 
-  - Thu hẹp Lock scope trong `get_json`.
-  - Thêm ThreadPool cho PostMatch để tránh block Event Loop.
-  - Sửa lỗi Tier C trigger (Lineup refresh sau bàn thắng).
-- **AI Quick Test**: Thêm block `if __name__ == "__main__"` cho các dịch vụ AI để test nhanh với mock data.
-
-### 🔴 Vấn đề đang xử lý (Ongoing Issues):
-- **Issue #5 (Plan Fix Scheduler)**: Rò rỉ kết nối DB (Connection leak) trong `_check_drift`.
-- **AI Pipeline Improvement**: Đang tiến hành refactor các dịch vụ AI sang mô hình Prompts Registry và Context Awareness.
-- **News Radar**: Cần cải thiện việc gán nhãn League cho tin tức (tránh gán sai khi cầu thủ chuyển nhượng).
+### 💰 Transfermarkt (`/transfermarkt`)
+- **`tm_scraper.py`**: Cào dữ liệu chuyển nhượng, giá trị cầu thủ và hồ sơ chấn thương.
+- **`config_tm.py`**: Quản lý ID của CLB và giải đấu trên Transfermarkt.
 
 ---
 
-## 🚀 5. LỘ TRÌNH (ROADMAP)
+## 🤖 3. AI INSIGHT & SERVICES (`/services`)
 
-1. **Phase A (Fix Production)**: Hoàn thành nốt bản kế hoạch `Fix_plan_scheduler_master.md`.
-2. **Phase B (AI Refactor)**: Triển khai `prompt_registry.py` và đưa `player_trend` hoàn toàn vào queue.
-3. **Phase C (Frontend Sync)**: Đồng bộ dữ liệu AI Insight lên giao diện người dùng.
+| Component | Chức năng |
+|---|---|
+| `llm_client.py` | Interface chung kết nối Groq/LLM, có cơ chế Circuit Breaker chống treo và chuyển đổi API Key linh hoạt. |
+| `insight_producer.py` | "Bộ lọc" quyết định khi nào nên tạo Job AI dựa trên diễn biến trận đấu (Goal, Red Card, Cooldown). |
+| `insight_worker.py` | Tiến trình chạy ngầm thực hiện gọi LLM và lưu kết quả vào DB. |
+| `match_story.py` | Tạo bài viết tóm tắt trận đấu (Narrative story). |
+| `player_trend.py` | Phân tích phong độ 5 trận gần nhất để đưa ra nhận xét cầu thủ "Thăng hoa" hay "Sa sút". |
+| `live_insight.py` | Tạo các câu Badge ngắn (mô tả nhanh) cho các trận đang trực tiếp. |
+| `news_radar.py` | RSS Crawler cào tin tức từ BBC/Sky Sports và tự động tag nhãn giải đấu. |
+| `league_registry.py` | "Danh bạ" tập trung quản lý ID của tất cả các giải đấu trên mọi nguồn dữ liệu. |
+
+---
+
+## � 4. DATABASE LAYER (`/db`)
+
+- **`schema.sql`**: Định nghĩa toàn bộ cấu trúc DB (Bảng, Materialized Views, Triggers).
+- **`loader.py`**: Module chịu trách nhiệm insert/update dữ liệu từ các Scraper vào DB.
+- **`config_db.py`**: Quản lý Connection Pool kết nối PostgreSQL.
+- **`queries.py`**: Tập hợp các câu truy vấn phức tạp (SQL) dùng chung cho hệ thống.
+
+---
+
+## 🛠️ 5. TOOLS & MAINTENANCE (`/tools`)
+
+- **`/maintenance/build_match_crossref.py`**: Quan trọng nhất — Mapping ID trận đấu giữa 4 nguồn khác nhau.
+- **`/maintenance/refresh_mv.py`**: Script điều khiển việc làm mới các Materialized Views.
+- **`verify_missing_stats.py`**: Kiểm tra các trận đấu bị thiếu dữ liệu để cào bù.
+
+---
+
+## � 6. TỔ CHỨC THƯ MỤC CÒN LẠI
+- **`/docs/plans`**: Chứa tất cả các bản kế hoạch chi tiết (AI, Live, DB Improvements).
+- **`/systemd`**: Chứa các file cấu hình dịch vụ để treo Project trên Linux VM.
+- **`/output`**: Nơi lưu tạm các file CSV/JSON trong quá trình cào dữ liệu thô.
+- **`/logs`**: Nhật ký vận hành hệ thống.
 
 ---
 *Cập nhật lần cuối: 2026-03-10*
