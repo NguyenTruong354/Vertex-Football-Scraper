@@ -24,17 +24,8 @@ from services.llm_client import LLMClient
 log = logging.getLogger(__name__)
 llm = LLMClient()
 
-SYSTEM_PROMPT = (
-    "Bạn là chuyên gia bình luận bóng đá hàng đầu Việt Nam, "
-    "nổi tiếng với lối viết sắc bén, giàu cảm xúc và có chiều sâu chiến thuật.\n"
-    "Nhiệm vụ: Viết một đoạn tóm tắt trận đấu ngắn gọn (3-4 câu, tối đa 80 từ) bằng tiếng Việt.\n"
-    "Yêu cầu:\n"
-    "- Câu mở đầu nêu tỷ số và bối cảnh (ai thắng/thua/hòa)\n"
-    "- Câu giữa phân tích lý do (xG, kiểm soát bóng, thẻ đỏ, cầu thủ nổi bật)\n"
-    "- Câu cuối đánh giá tổng thể hoặc bất ngờ nếu có\n"
-    "- KHÔNG dùng emoji, gạch đầu dòng, hay markdown\n"
-    "- Viết liền mạch như một bình luận viên đang kể chuyện"
-)
+from services.prompt_registry import get_prompt
+SYSTEM_PROMPT = get_prompt("match_story")
 
 
 def generate_story(
@@ -105,40 +96,24 @@ def generate_and_save(
     statistics: Optional[dict] = None,
     incidents: Optional[list] = None,
 ) -> bool:
-    """Generate a story and save it to the match_summaries table."""
-    story = generate_story(
+    """Enqueue a match story job to AI pipeline."""
+    from services.insight_producer import enqueue_match_story
+    job_id = enqueue_match_story(
         event_id=event_id,
-        league=league,
+        league_id=league,
         home_team=home_team,
         away_team=away_team,
         home_score=home_score,
         away_score=away_score,
-        statistics=statistics,
-        incidents=incidents,
+        statistics=statistics or {},
+        incidents=incidents or [],
     )
-    if not story:
-        return False
-    
-    try:
-        from db.config_db import get_connection
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO match_summaries
-                (event_id, league_id, home_team, away_team, home_score, away_score, summary_text)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (event_id) DO UPDATE SET
-                summary_text = EXCLUDED.summary_text,
-                loaded_at = NOW()
-        """, (event_id, league, home_team, away_team, home_score, away_score, story))
-        conn.commit()
-        cur.close()
-        conn.close()
-        log.info("✓ Match story saved to DB for event %d", event_id)
+    if job_id:
+        log.info("✓ Match story generation enqueued for event %d (job=%d)", event_id, job_id)
         return True
-    except Exception as exc:
-        log.error("✗ Failed to save match story: %s", exc)
-        return False
+    
+    log.warning("✗ Failed or skipped enqueueing match story for event %d", event_id)
+    return False
 
 
 def _format_statistics(stats: dict) -> str:

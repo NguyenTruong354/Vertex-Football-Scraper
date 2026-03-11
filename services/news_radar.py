@@ -37,28 +37,46 @@ def send_alert(message: str) -> None:
     except Exception as exc:
         log.warning("Failed to send discord alert: %s", exc)
 
-def detect_league(title: str, summary: str) -> Optional[str]:
-    text = f"{title} {summary}".lower()
+_STABLE_LEAGUE_KEYWORDS: dict[str, list[str]] = {
+    "EPL":        ["premier league", "epl", "man united", "manchester united", 
+                   "man city", "manchester city", "liverpool", "arsenal", "chelsea", "tottenham"],
+    "LALIGA":     ["la liga", "laliga", "real madrid", "barcelona", "atletico madrid"],
+    "BUNDESLIGA": ["bundesliga", "bayern munich", "borussia dortmund", "bvb"],
+    "SERIEA":     ["serie a", "juventus", "inter milan", "ac milan", "napoli"],
+    "LIGUE1":     ["ligue 1", "psg", "paris saint-germain", "marseille"],
+    "UCL":        ["champions league", "ucl"],
+    "UEL":        ["europa league", "uel"],
+}
 
-    # 1. UCL / UEL Priority
-    if any(k in text for k in ["champions league", "ucl"]):
-        return "UCL"
-    if any(k in text for k in ["europa league", "uel"]):
-        return "UEL"
+def _load_player_league_map() -> dict[str, str]:
+    """Query DB lấy mapping {player_name_lower: league_id} mùa hiện tại."""
+    try:
+        from db.config_db import get_connection
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT DISTINCT ON (player_id) LOWER(player), league_id
+            FROM player_match_stats
+            ORDER BY player_id, match_id DESC
+        """)
+        res = {row[0]: row[1] for row in cur.fetchall()}
+        conn.close()
+        return res
+    except Exception as exc:
+        log.warning("Could not load player_league_map: %s", exc)
+        return {}
 
-    # 2. League Rules
-    if any(k in text for k in ["premier league", "epl", "arsenal", "chelsea", "liverpool", "manchester", "tottenham", "aston villa", "newcastle", "everton"]):
-        return "EPL"
-    if any(k in text for k in ["la liga", "laliga", "madrid", "barcelona", "atletico", "sevilla", "valencia"]):
-        return "LALIGA"
-    if any(k in text for k in ["bundesliga", "bayern", "dortmund", "leverkusen", "leipzig"]):
-        return "BUNDESLIGA"
-    if any(k in text for k in ["serie a", "juventus", "milan", "inter", "napoli", "roma", "lazio"]):
-        return "SERIEA"
-    if any(k in text for k in ["ligue 1", "psg", "marseille", "monaco", "lyon"]):
-        return "LIGUE1"
-
-    # 3. Fallback
+def _detect_league_from_title(title: str, player_map: dict) -> str | None:
+    t_lower = title.lower()
+    # Lớp 1: UCL/UEL Priority
+    if any(k in t_lower for k in ["champions league", "ucl"]): return "UCL"
+    if any(k in t_lower for k in ["europa league", "uel"]): return "UEL"
+    # Lớp 2: Stable keywords
+    for lid, kws in _STABLE_LEAGUE_KEYWORDS.items():
+        if any(kw in t_lower for kw in kws): return lid
+    # Lớp 3: Dynamic player map
+    for p_name, lid in player_map.items():
+        if p_name in t_lower: return lid
     return None
 
 
@@ -77,6 +95,7 @@ RSS_FEEDS = [
 def fetch_news() -> List[Dict]:
     """Fetch and parse RSS feeds, returning a list of news items."""
     all_news = []
+    player_league_map = _load_player_league_map()
     
     # Only keep news from the last 24 hours
     cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
@@ -122,12 +141,14 @@ def fetch_news() -> List[Dict]:
                 summary = entry.get('summary', '').strip()
                 
                 if title and link:
+                    detected_league = _detect_league_from_title(title, player_league_map)
                     all_news.append({
                         "title": title,
                         "link": link,
                         "summary": summary,
                         "published_at": pub_date,
-                        "source": source
+                        "source": source,
+                        "league_id": detected_league
                     })
         except Exception as exc:
             log.warning("Failed to fetch RSS from %s: %s", source, exc)
@@ -153,8 +174,6 @@ def run_and_save() -> int:
         cur = conn.cursor()
         
         for item in news_items:
-            league_id = detect_league(item["title"], item["summary"])
-            
             # Using ON CONFLICT DO NOTHING to prevent duplicate links
             cur.execute("""
                 INSERT INTO news_feed
@@ -167,7 +186,7 @@ def run_and_save() -> int:
                 item["summary"],
                 item["published_at"],
                 item["source"],
-                league_id
+                item.get("league_id")
             ))
             # rowcount is 1 if inserted, 0 if conflict
             saved += cur.rowcount

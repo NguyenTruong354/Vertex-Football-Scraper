@@ -119,12 +119,6 @@ def _has_priority_bypass(payload: dict) -> bool:
             return True
         if inc_type == "card" and inc_class in ("red", "yellowRed"):
             return True
-    # Late-goal check (minute >= 80)
-    minute = payload.get("minute", 0)
-    if minute >= 80:
-        for inc in incidents:
-            if inc.get("incidentType") == "goal" and (inc.get("time", 0) >= 80):
-                return True
     return False
 
 
@@ -143,6 +137,7 @@ def enqueue_live_badge(
     statistics: dict,
     incidents: list,
     momentum_score: int,
+    prompt_version: str = "v1",
 ) -> Optional[int]:
     """
     Pre-gate + enqueue a live_badge job.
@@ -202,7 +197,7 @@ def enqueue_live_badge(
                  dedupe_key, fingerprint, payload_json, prompt_version)
             VALUES
                 ('live_badge', %s, %s, %s, 'queued', %s,
-                 %s, %s, %s, 'v1')
+                 %s, %s, %s, %s)
             ON CONFLICT (dedupe_key) WHERE status IN ('queued', 'running')
             DO NOTHING
             RETURNING id
@@ -210,6 +205,7 @@ def enqueue_live_badge(
             event_id, league_id, home_team,
             priority, dedupe_key, fingerprint,
             json.dumps(payload, ensure_ascii=False),
+            prompt_version,
         ))
 
         row = cur.fetchone()
@@ -241,6 +237,7 @@ def enqueue_match_story(
     away_score: int,
     statistics: dict,
     incidents: list,
+    prompt_version: str = "v1",
 ) -> Optional[int]:
     """
     Enqueue a match_story job (post-match).
@@ -271,7 +268,7 @@ def enqueue_match_story(
                  dedupe_key, fingerprint, payload_json, prompt_version)
             VALUES
                 ('match_story', %s, %s, %s, 'queued', 100,
-                 %s, %s, %s, 'v1')
+                 %s, %s, %s, %s)
             ON CONFLICT (dedupe_key) WHERE status IN ('queued', 'running')
             DO NOTHING
             RETURNING id
@@ -279,6 +276,7 @@ def enqueue_match_story(
             event_id, league_id, home_team,
             dedupe_key, fingerprint,
             json.dumps(payload, ensure_ascii=False),
+            prompt_version,
         ))
         row = cur.fetchone()
         conn.commit()
@@ -309,6 +307,7 @@ def enqueue_player_trend(
     xg_arr: list,
     xa_arr: list,
     match_count: int,
+    prompt_version: str = "v1",
 ) -> Optional[int]:
     """
     Enqueue a player_trend job (nightly).
@@ -341,7 +340,7 @@ def enqueue_player_trend(
                  dedupe_key, fingerprint, payload_json, prompt_version)
             VALUES
                 ('player_trend', NULL, %s, %s, 'queued', 100,
-                 %s, %s, %s, 'v1')
+                 %s, %s, %s, %s)
             ON CONFLICT (dedupe_key) WHERE status IN ('queued', 'running')
             DO NOTHING
             RETURNING id
@@ -349,6 +348,7 @@ def enqueue_player_trend(
             league_id, player_name,
             dedupe_key, fingerprint,
             json.dumps(payload, ensure_ascii=False),
+            prompt_version,
         ))
         row = cur.fetchone()
         conn.commit()

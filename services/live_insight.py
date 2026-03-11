@@ -23,6 +23,32 @@ def _safe_int(val: Any) -> int:
     except (ValueError, TypeError):
         return 0
 
+def _get_last_published_insight(event_id: int) -> str | None:
+    """
+    Lấy insight text của live_badge job được publish gần nhất cho event này.
+    Dùng để inject vào prompt tránh lặp nội dung.
+    Returns insight_text string hoặc None nếu không có.
+    """
+    try:
+        from db.config_db import get_connection
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT result_text
+            FROM ai_insight_jobs
+            WHERE event_id = %s
+              AND job_type = 'live_badge'
+              AND status = 'succeeded'
+              AND is_published = TRUE
+            ORDER BY published_at DESC
+            LIMIT 1
+        """, (event_id,))
+        row = cur.fetchone()
+        conn.close()
+        return row[0] if row else None
+    except Exception:
+        return None
+
 def analyze(
     home_team: str,
     away_team: str,
@@ -30,7 +56,8 @@ def analyze(
     home_score: int,
     away_score: int,
     statistics: Dict[str, Dict[str, Any]],
-    incidents: list[dict]
+    incidents: list[dict],
+    event_id: int | None = None,
 ) -> Tuple[int, str]:
     """
     Analyzes match state and returns a (momentum_score, insight_text) tuple.
@@ -95,12 +122,15 @@ def analyze(
     if momentum_score < 60:
         return 0, ""
 
-    # 2. Build the LLM Prompt
-    system_prompt = (
-        "Bạn là một chuyên gia phân tích dữ liệu bóng đá trực tiếp (Live Data Analyst). "
-        "Dựa vào thống kê trận đấu truyền vào, hãy viết MỘT câu nhận định (tối đa 25 từ) bằng tiếng Anh."
-        "Câu này sẽ được hiển thị dạng thẻ Badge 'Live Insight' trên App. "
-        "Hãy viết thật thu hút, mạch lạc, vừa có chuyên môn vừa có cảm xúc (không dùng emoji, không gạch đầu dòng)."
+    from services.prompt_registry import get_prompt
+    system_prompt = get_prompt("live_badge")
+    
+    # Lấy insight trước đó để tránh lặp
+    last_insight = _get_last_published_insight(event_id)
+    avoid_repeat_block = (
+        f"\nInsight VỪA ĐƯỢC PHÁT trước đó: \"{last_insight}\"\n"
+        f"KHÔNG được lặp lại ý này. Hãy nhấn mạnh khía cạnh KHÁC."
+        if last_insight else ""
     )
     
     user_prompt = f"""
@@ -110,14 +140,16 @@ Thống kê chính:
 - Sút trúng đích: {home_team} {shots_on_home} - {shots_on_away} {away_team}
 - xG (Bàn thắng kỳ vọng): {home_team} {xg_home:.2f} - {xg_away:.2f} {away_team}
 - Điểm nhấn trận đấu: {context_trigger}
-
+{avoid_repeat_block}
 Viết một câu nhận định siêu ngắn gọn (Dưới 25 chữ).
 """
     
     # 3. Call LLM Service Router
+    from services.text_utils import clean_insight
     insight_text = llm.generate_insight(user_prompt, system_instruction=system_prompt)
     if not insight_text:
-        # Fallback static text if all LLMs fail
         insight_text = context_trigger
+    else:
+        insight_text = clean_insight(insight_text, max_sentences=1)
 
     return momentum_score, insight_text

@@ -21,16 +21,8 @@ from services.llm_client import LLMClient
 log = logging.getLogger(__name__)
 llm = LLMClient()
 
-SYSTEM_PROMPT = (
-    "Bạn là chuyên gia phân tích phong độ cầu thủ bóng đá.\n"
-    "Nhiệm vụ: Viết MỘT câu nhận xét ngắn gọn (tối đa 20 từ) bằng tiếng Việt "
-    "về phong độ gần đây của cầu thủ.\n"
-    "Yêu cầu:\n"
-    "- Ngắn gọn, sắc bén, dùng ngôn ngữ bình luận viên\n"
-    "- KHÔNG dùng emoji, gạch đầu dòng, hay markdown\n"
-    "- Nếu cầu thủ đang thăng hoa: nhấn mạnh điểm mạnh\n"
-    "- Nếu cầu thủ đang sa sút: chỉ ra vấn đề một cách khách quan"
-)
+from services.prompt_registry import get_prompt
+SYSTEM_PROMPT = get_prompt("player_trend")
 
 
 def analyze_all_players(league: str) -> list[dict]:
@@ -108,23 +100,44 @@ def analyze_all_players(league: str) -> list[dict]:
                 "insight_text": "",
             })
 
-        # Phase 2: Only call LLM for top 15 GREEN + top 15 RED (saves API quota)
+        # Phase 2: Enqueue top players vào queue thay vì gọi LLM trực tiếp
         LLM_BUDGET = 15
-        green_top = sorted([p for p in all_players if p["trend"] == "GREEN"], key=lambda x: -x["score"])[:LLM_BUDGET]
-        red_top = sorted([p for p in all_players if p["trend"] == "RED"], key=lambda x: x["score"])[:LLM_BUDGET]
+        green_top = sorted(
+            [p for p in all_players if p["trend"] == "GREEN"],
+            key=lambda x: -x["score"]
+        )[:LLM_BUDGET]
+        red_top = sorted(
+            [p for p in all_players if p["trend"] == "RED"],
+            key=lambda x: x["score"]
+        )[:LLM_BUDGET]
         llm_candidates = {p["player_id"] for p in green_top + red_top}
 
-        log.info("  🤖 Generating AI insights for %d notable players...", len(llm_candidates))
+        log.info("  📥 Enqueueing %d notable players into job queue...", len(llm_candidates))
 
+        from services.insight_producer import enqueue_player_trend
+
+        enqueued_count = 0
         insights = []
         for p in all_players:
+            # Với notable players: enqueue vào queue để worker xử lý async
             if p["player_id"] in llm_candidates:
-                p["insight_text"] = _generate_insight_text(
-                    p["player_name"], p["trend"],
-                    p["goals"], p["assists"], p["xg_arr"], p["xa_arr"], p["match_count"]
+                job_id = enqueue_player_trend(
+                    league_id=p["league_id"],
+                    player_id=p["player_id"],
+                    player_name=p["player_name"],
+                    trend=p["trend"],
+                    trend_score=p["score"],
+                    goals=p["goals"],
+                    assists=p["assists"],
+                    xg_arr=p["xg_arr"],
+                    xa_arr=p["xa_arr"],
+                    match_count=p["match_count"],
                 )
+                if job_id:
+                    enqueued_count += 1
+                # Dùng static insight tạm thời — worker sẽ update sau khi LLM xong
+                p["insight_text"] = _static_insight(p)
             else:
-                # Static fallback for non-notable players
                 p["insight_text"] = _static_insight(p)
 
             insights.append({
@@ -136,6 +149,7 @@ def analyze_all_players(league: str) -> list[dict]:
                 "insight_text": p["insight_text"],
             })
 
+        log.info("  ✓ Enqueued %d player_trend jobs for async LLM processing", enqueued_count)
         return insights
 
     except Exception as exc:
@@ -228,11 +242,12 @@ Thống kê {match_count} trận gần nhất: {total_goals} bàn, {total_assist
 
 Viết MỘT câu nhận xét ngắn gọn (dưới 20 từ)."""
 
+    from services.text_utils import clean_insight
     text = llm.generate_insight(prompt, system_instruction=SYSTEM_PROMPT)
     if not text:
-        # Fallback static text
         text = f"{player_name} {trend_label} với {total_goals} bàn trong {match_count} trận gần nhất."
-    return text
+        return text
+    return clean_insight(text, max_sentences=1)
 
 
 def _static_insight(player: dict) -> str:

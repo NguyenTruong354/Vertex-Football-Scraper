@@ -64,8 +64,14 @@ class CircuitBreaker:
                 return False
                 
         if self.state == "HALF_OPEN":
-            # The test request was already granted during the transition from OPEN -> HALF_OPEN.
-            # All subsequent requests should be blocked until the test request completes.
+            # Nếu đã quá 30s kể từ lần chuyển sang HALF_OPEN mà vẫn chưa có kết quả
+            # (tức là request test bị treo/timeout), cho phép retry để tránh bị kẹt mãi.
+            if current_time >= self.next_retry_time + 30:
+                logger.warning(
+                    "[CircuitBreaker-%s] HALF_OPEN test timed out after 30s. Allowing retry.",
+                    self.name
+                )
+                return True
             return False
 
     def record_success(self):
@@ -160,6 +166,10 @@ class LLMClient:
             try:
                 res = self._call_groq(self.groq_client_1, prompt, system_instruction)
                 self.cb_groq_1.record_success()
+                logger.debug(
+                    "LLM OK | provider=groq_1 | words=%d | preview=%.60s",
+                    len(res.split()), res
+                )
                 return res
             except GroqAPIError as e:
                 status_code = e.status_code if hasattr(e, "status_code") else 500
@@ -179,6 +189,10 @@ class LLMClient:
 
                 res = self._call_groq(self.groq_client_2, prompt, system_instruction)
                 self.cb_groq_2.record_success()
+                logger.debug(
+                    "LLM OK | provider=groq_2_fallback | words=%d | preview=%.60s",
+                    len(res.split()), res
+                )
                 return res
             except GroqAPIError as e:
                 status_code = e.status_code if hasattr(e, "status_code") else 500

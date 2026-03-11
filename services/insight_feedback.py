@@ -142,3 +142,48 @@ def get_quality_summary(days: int = 7) -> dict:
         }
     finally:
         conn.close()
+
+
+def get_prompt_version_stats(job_type: str = "live_badge", days: int = 7) -> list[dict]:
+    """
+    So sánh performance giữa các prompt versions.
+    Dùng để quyết định promote version nào lên production.
+
+    Returns list of dicts:
+        [{prompt_version, job_count, feedback_count, avg_score, upvote_rate}, ...]
+    """
+    from db.config_db import get_connection
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT
+                j.prompt_version,
+                COUNT(DISTINCT j.id)                                    AS job_count,
+                COUNT(f.id)                                             AS feedback_count,
+                ROUND(AVG(f.score)::numeric, 2)                        AS avg_score,
+                ROUND(
+                    100.0 * SUM(CASE WHEN f.feedback_type = 'upvote' THEN 1 ELSE 0 END)
+                    / NULLIF(COUNT(f.id), 0), 1
+                )                                                       AS upvote_rate
+            FROM ai_insight_jobs j
+            LEFT JOIN ai_insight_feedback f ON f.job_id = j.id
+            WHERE j.job_type = %s
+              AND j.status = 'succeeded'
+              AND j.created_at > NOW() - make_interval(days => %s)
+            GROUP BY j.prompt_version
+            ORDER BY avg_score DESC NULLS LAST
+        """, (job_type, days))
+
+        results = []
+        for row in cur.fetchall():
+            results.append({
+                "prompt_version": row[0],
+                "job_count": row[1],
+                "feedback_count": row[2],
+                "avg_score": float(row[3]) if row[3] else None,
+                "upvote_rate": float(row[4]) if row[4] else None,
+            })
+        return results
+    finally:
+        conn.close()
