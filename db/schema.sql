@@ -878,7 +878,11 @@ CREATE TABLE IF NOT EXISTS match_summaries (
     home_score      INTEGER,
     away_score      INTEGER,
     summary_text    TEXT,
-    loaded_at       TIMESTAMPTZ DEFAULT NOW()
+    summary_text_en TEXT,
+    summary_text_vi TEXT,
+    loaded_at       TIMESTAMPTZ DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ,
+    PRIMARY KEY (event_id)
 );
 
 -- ──────────────────────────────────────────────────────────
@@ -891,7 +895,10 @@ CREATE TABLE IF NOT EXISTS player_insights (
     trend           TEXT,            -- GREEN, RED, NEUTRAL
     trend_score     INTEGER,         -- -100 to 100
     insight_text    TEXT,
+    insight_text_en TEXT,
+    insight_text_vi TEXT,
     loaded_at       TIMESTAMPTZ DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ,
     PRIMARY KEY (player_id, league_id)
 );
 
@@ -1531,6 +1538,8 @@ CREATE TABLE IF NOT EXISTS ai_insight_jobs (
     lease_until      TIMESTAMPTZ,
     worker_id        TEXT,
     result_text      TEXT,
+    result_text_en   TEXT,
+    result_text_vi   TEXT,
     reason_code      TEXT,               -- near_duplicate | cooldown_block | low_signal | lease_expired
     is_published     BOOLEAN NOT NULL DEFAULT FALSE,
     published_at     TIMESTAMPTZ,
@@ -1657,6 +1666,22 @@ CREATE INDEX IF NOT EXISTS idx_ai_feedback_type_time
     ON ai_insight_feedback (feedback_type, created_at DESC);
 
 
+-- ──────────────────────────────────────────────────────────
+-- 33. CB_STATE_LOG — Circuit Breaker state change logs
+--     Used for system health monitoring and dashboard reporting.
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS cb_state_log (
+    id            SERIAL PRIMARY KEY,
+    breaker_name  TEXT NOT NULL,
+    old_state     TEXT NOT NULL,
+    new_state     TEXT NOT NULL,
+    reason        TEXT,
+    logged_at     TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_cb_state_log_time ON cb_state_log(logged_at DESC);
+
+
 -- ============================================================
 -- NHÓM J: UPDATED_AT TRIGGER + COLUMNS
 -- ============================================================
@@ -1690,7 +1715,10 @@ ALTER TABLE team_registry           ADD COLUMN IF NOT EXISTS updated_at TIMESTAM
 ALTER TABLE team_canonical          ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
 ALTER TABLE match_crossref          ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
 ALTER TABLE live_match_state        ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+ALTER TABLE match_summaries         ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+ALTER TABLE player_insights         ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
 ALTER TABLE ai_insight_jobs         ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+ALTER TABLE cb_state_log           ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
 
 -- Tạo trigger cho mỗi bảng (DROP IF EXISTS → idempotent)
 DO $$ 
@@ -1705,7 +1733,8 @@ BEGIN
         'match_passing_stats', 'match_player_advanced_stats',
         'market_values', 'player_crossref',
         'team_registry', 'team_canonical', 'match_crossref',
-        'live_match_state', 'ai_insight_jobs'
+        'live_match_state', 'ai_insight_jobs', 'match_summaries',
+        'player_insights', 'cb_state_log'
     ])
     LOOP
         EXECUTE format(
