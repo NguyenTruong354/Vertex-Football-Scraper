@@ -728,6 +728,7 @@ async def main(
     league_id: str = "EPL",
     match_limit: int = 5,
     skip_heatmaps: bool = False,
+    season: str | None = None,
 ) -> dict[str, list]:
     """
     SofaScore Heatmap Pipeline – entry point chính.
@@ -737,11 +738,23 @@ async def main(
         match_limit:   Số trận tối đa (default: 5, 0 = tất cả).
                        Mỗi trận có ~22-30 cầu thủ → nhiều API calls.
         skip_heatmaps: Chỉ lấy avg positions (bỏ heatmap points).
+        season:        Năm bắt đầu mùa giải (VD: "2024").
 
     Returns:
         dict với keys: "events", "heatmaps", "avg_positions"
     """
     league_cfg = get_ss_config(league_id)
+    if season:
+        try:
+            from sofascore.config_sofascore import resolve_season_id, SS_TOURNAMENT_IDS
+            if league_id in SS_TOURNAMENT_IDS:
+                season_id = await resolve_season_id(SS_TOURNAMENT_IDS[league_id], str(season), league_id)
+                if season_id:
+                    league_cfg.season_id = season_id
+                    league_cfg.season = f"{season}/{str(int(season)+1)[-2:]}"
+        except Exception as e:
+            logger.error(f"Khong the resolve season {season}: {e}")
+
 
     t_start = time.perf_counter()
     logger.info("=" * 60)
@@ -986,6 +999,12 @@ Lưu ý:
         help="Chỉ lấy average positions (bỏ heatmap points)",
     )
     parser.add_argument(
+        "--season",
+        type=str,
+        default=None,
+        help="Năm bắt đầu mùa giải (VD: 2024 cho mùa 24/25). Nếu bỏ qua, sẽ dùng mùa giải default trong config.",
+    )
+    parser.add_argument(
         "--list-leagues",
         action="store_true",
         help="Liệt kê tất cả giải đấu hỗ trợ",
@@ -1013,6 +1032,7 @@ Lưu ý:
             league_id=league_id,
             match_limit=args.match_limit,
             skip_heatmaps=args.skip_heatmaps,
+            season=args.season,
         ))
     except KeyboardInterrupt:
         logger.info("Script bị ngừng bởi người dùng (Ctrl+C).")

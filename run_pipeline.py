@@ -69,35 +69,45 @@ def _run(cmd: list[str], cwd: Path, label: str) -> bool:
 # Scraper runners
 # ────────────────────────────────────────────────────────────
 
-def scrape_understat(league: str, *, limit: int = 0) -> bool:
+def scrape_understat(league: str, *, limit: int = 0, season: str | None = None) -> bool:
     cmd = [PYTHON, "async_scraper.py", "--league", league]
     if limit > 0:
         cmd += ["--limit", str(limit)]
+    if season:
+        cmd += ["--season", season]
     return _run(cmd, ROOT / "understat", f"Understat [{league}]")
 
 
-def scrape_fbref(league: str, *, limit: int = 0, match_limit: int = 0) -> bool:
+def scrape_fbref(league: str, *, limit: int = 0, match_limit: int = 0, season: str | None = None) -> bool:
     cmd = [PYTHON, "fbref_scraper.py", "--league", league]
     if limit > 0:
         cmd += ["--limit", str(limit)]
     if match_limit > 0:
         cmd += ["--match-limit", str(match_limit)]
+    if season:
+        cmd += ["--season", season]
     return _run(cmd, ROOT / "fbref", f"FBref [{league}]")
 
 
-def scrape_sofascore(league: str, *, match_limit: int = 0) -> bool:
+def scrape_sofascore(league: str, *, match_limit: int = 0, season: str | None = None, skip_heatmaps: bool = False) -> bool:
     cmd = [PYTHON, "sofascore_client.py", "--league", league]
     if match_limit > 0:
         cmd += ["--match-limit", str(match_limit)]
     else:
         cmd += ["--match-limit", "0"]
+    if season:
+        cmd += ["--season", season]
+    if skip_heatmaps:
+        cmd += ["--skip-heatmaps"]
     return _run(cmd, ROOT / "sofascore", f"SofaScore [{league}]")
 
 
-def scrape_transfermarkt(league: str, *, limit: int = 0) -> bool:
+def scrape_transfermarkt(league: str, *, limit: int = 0, season: str | None = None) -> bool:
     cmd = [PYTHON, "tm_scraper.py", "--league", league]
     if limit > 0:
         cmd += ["--limit", str(limit)]
+    if season:
+        cmd += ["--season", season]
     return _run(cmd, ROOT / "transfermarkt", f"Transfermarkt [{league}]")
 
 
@@ -184,7 +194,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
         if not args.load_only:
             # Understat
             if not args.skip_understat and sources.get("understat"):
-                ok = scrape_understat(league, limit=us_limit)
+                ok = scrape_understat(league, limit=us_limit, season=args.season)
                 results[league]["understat"] = "OK" if ok else "FAIL"
             elif not sources.get("understat"):
                 logger.info("⏭ Understat — không hỗ trợ %s", league)
@@ -192,7 +202,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
 
             # FBref
             if not args.skip_fbref and sources.get("fbref"):
-                ok = scrape_fbref(league, limit=fb_limit, match_limit=fb_match)
+                ok = scrape_fbref(league, limit=fb_limit, match_limit=fb_match, season=args.season)
                 results[league]["fbref"] = "OK" if ok else "FAIL"
             elif not sources.get("fbref"):
                 logger.info("⏭ FBref — không hỗ trợ %s", league)
@@ -200,7 +210,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
 
             # SofaScore
             if not args.skip_sofascore and sources.get("sofascore"):
-                ok = scrape_sofascore(league, match_limit=ss_match)
+                ok = scrape_sofascore(league, match_limit=ss_match, season=args.season, skip_heatmaps=args.skip_sofascore_heatmaps)
                 results[league]["sofascore"] = "OK" if ok else "FAIL"
             elif not sources.get("sofascore"):
                 logger.info("⏭ SofaScore — không hỗ trợ %s", league)
@@ -208,7 +218,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
 
             # Transfermarkt
             if not args.skip_transfermarkt and sources.get("transfermarkt"):
-                ok = scrape_transfermarkt(league, limit=tm_limit)
+                ok = scrape_transfermarkt(league, limit=tm_limit, season=args.season)
                 results[league]["transfermarkt"] = "OK" if ok else "FAIL"
             elif not sources.get("transfermarkt"):
                 logger.info("⏭ Transfermarkt — không hỗ trợ %s", league)
@@ -277,6 +287,10 @@ Ví dụ:
         help="League IDs (default: EPL). VD: EPL LALIGA BUNDESLIGA",
     )
     parser.add_argument(
+        "--season", type=str, default=None,
+        help="Mùa giải muốn cào (VD: 2023, 2024). Default lấy từ config từng source.",
+    )
+    parser.add_argument(
         "--scrape-only", action="store_true",
         help="Chỉ scrape CSV, không load vào DB",
     )
@@ -294,7 +308,11 @@ Ví dụ:
     )
     parser.add_argument(
         "--skip-sofascore", action="store_true",
-        help="Bỏ qua SofaScore scraper",
+        help="Bỏ qua SofaScore scraper (ko chạy API nào)",
+    )
+    parser.add_argument(
+        "--skip-sofascore-heatmaps", action="store_true",
+        help="Cào điểm số/lineups SofaScore nhưng KHÔNG kéo Heatmap (tiết kiệm 20.000 API calls)",
     )
     parser.add_argument(
         "--skip-transfermarkt", action="store_true",
