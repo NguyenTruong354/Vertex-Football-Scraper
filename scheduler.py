@@ -138,7 +138,10 @@ class Notifier:
             payload = json.dumps({"content": full_msg}).encode()
             req = urllib.request.Request(
                 self.webhook_url, data=payload,
-                headers={"Content-Type": "application/json"},
+                headers={
+                    "Content-Type": "application/json",
+                    "User-Agent": "VertexFootballScraper/2.0",
+                },
                 method="POST",
             )
             urllib.request.urlopen(req, timeout=10)
