@@ -328,7 +328,7 @@ def _novelty_gate(event_id: int, job_type: str,
     try:
         cur = conn.cursor()
         cur.execute("""
-            SELECT result_text
+            SELECT COALESCE(result_text_en, result_text)
             FROM ai_insight_jobs
             WHERE event_id = %s
               AND job_type = %s
@@ -386,7 +386,7 @@ def _template_diversity_gate(event_id: int, job_type: str,
 
         # 1. Consecutive repeat check: last N published insights
         cur.execute("""
-            SELECT result_text
+            SELECT COALESCE(result_text_en, result_text)
             FROM ai_insight_jobs
             WHERE event_id = %s
               AND job_type = %s
@@ -484,16 +484,23 @@ def execute_job(job: dict, *, shadow_mode: bool = True) -> bool:
                            "All LLM providers returned empty")
             return True
 
+        # Parse dual language
+        from services.text_utils import clean_json_insight
+        max_s = 3 if job_type == "match_story" else 1
+        parsed = clean_json_insight(result_text, max_sentences=max_s)
+        text_en = parsed.get("en", "")
+        text_vi = parsed.get("vi", "")
+
         # 3. Post-LLM gate: Novelty (skip for one-shot types)
         if job_type == "live_badge" and event_id is not None:
-            if not _novelty_gate(event_id, job_type, result_text):
-                _drop_job(job_id, "near_duplicate", result_text, latency_ms)
+            if not _novelty_gate(event_id, job_type, text_en):
+                _drop_job(job_id, "near_duplicate", result_text, text_en, text_vi, latency_ms)
                 return True
 
         # 4. Post-LLM gate: Template diversity (live_badge only)
         if job_type == "live_badge" and event_id is not None:
-            if not _template_diversity_gate(event_id, job_type, result_text):
-                _drop_job(job_id, "template_repeat", result_text, latency_ms)
+            if not _template_diversity_gate(event_id, job_type, text_en):
+                _drop_job(job_id, "template_repeat", result_text, text_en, text_vi, latency_ms)
                 return True
 
         # 5. Success — update job row
@@ -505,6 +512,8 @@ def execute_job(job: dict, *, shadow_mode: bool = True) -> bool:
                 UPDATE ai_insight_jobs
                 SET status = 'succeeded',
                     result_text = %s,
+                    result_text_en = %s,
+                    result_text_vi = %s,
                     is_published = %s,
                     published_at = CASE WHEN %s THEN NOW() ELSE NULL END,
                     latency_ms = %s,
@@ -512,12 +521,12 @@ def execute_job(job: dict, *, shadow_mode: bool = True) -> bool:
                     lease_until = NULL,
                     worker_id = NULL
                 WHERE id = %s
-            """, (result_text, is_published, is_published,
+            """, (result_text, text_en, text_vi, is_published, is_published,
                   latency_ms, job_id))
 
             # 6. Write to destination tables (when published)
             if is_published:
-                _write_destination(cur, job_type, job, result_text)
+                _write_destination(cur, job_type, job, result_text, text_en, text_vi)
 
             conn.commit()
         finally:
@@ -538,7 +547,7 @@ def execute_job(job: dict, *, shadow_mode: bool = True) -> bool:
 # ════════════════════════════════════════════════════════════
 
 def _write_destination(cur, job_type: str, job: dict,
-                       result_text: str) -> None:
+                       result_text: str, text_en: str, text_vi: str) -> None:
     """Write LLM result to the appropriate destination table.
     Called within the same transaction as the job status update."""
     payload = job["payload"]
@@ -547,16 +556,19 @@ def _write_destination(cur, job_type: str, job: dict,
         cur.execute("""
             INSERT INTO match_summaries
                 (event_id, league_id, home_team, away_team,
-                 home_score, away_score, summary_text)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+                 home_score, away_score, summary_text,
+                 summary_text_en, summary_text_vi)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (event_id) DO UPDATE SET
                 summary_text = EXCLUDED.summary_text,
+                summary_text_en = EXCLUDED.summary_text_en,
+                summary_text_vi = EXCLUDED.summary_text_vi,
                 loaded_at = NOW()
         """, (
             job["event_id"], job["league_id"],
             payload["home_team"], payload["away_team"],
             payload["home_score"], payload["away_score"],
-            result_text,
+            result_text, text_en, text_vi
         ))
         log.info("Job %d: wrote match_summaries event=%d",
                  job["id"], job["event_id"])
@@ -565,18 +577,20 @@ def _write_destination(cur, job_type: str, job: dict,
         cur.execute("""
             INSERT INTO player_insights
                 (player_id, player_name, league_id, trend,
-                 trend_score, insight_text)
-            VALUES (%s, %s, %s, %s, %s, %s)
+                 trend_score, insight_text, insight_text_en, insight_text_vi)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (player_id, league_id) DO UPDATE SET
                 player_name = EXCLUDED.player_name,
                 trend = EXCLUDED.trend,
                 trend_score = EXCLUDED.trend_score,
                 insight_text = EXCLUDED.insight_text,
+                insight_text_en = EXCLUDED.insight_text_en,
+                insight_text_vi = EXCLUDED.insight_text_vi,
                 loaded_at = NOW()
         """, (
             payload["player_id"], payload["player_name"],
             job["league_id"], payload["trend"],
-            payload["trend_score"], result_text,
+            payload["trend_score"], result_text, text_en, text_vi
         ))
         log.info("Job %d: wrote player_insights player=%s",
                  job["id"], payload["player_name"])
@@ -589,7 +603,7 @@ def _write_destination(cur, job_type: str, job: dict,
 # ════════════════════════════════════════════════════════════
 
 def _drop_job(job_id: int, reason: str,
-              result_text: str, latency_ms: int) -> None:
+              result_text: str, text_en: str, text_vi: str, latency_ms: int) -> None:
     """Mark job as dropped with reason."""
     from db.config_db import get_connection
     conn = get_connection()
@@ -600,12 +614,14 @@ def _drop_job(job_id: int, reason: str,
             SET status = 'dropped',
                 reason_code = %s,
                 result_text = %s,
+                result_text_en = %s,
+                result_text_vi = %s,
                 latency_ms = %s,
                 finished_at = NOW(),
                 lease_until = NULL,
                 worker_id = NULL
             WHERE id = %s
-        """, (reason, result_text, latency_ms, job_id))
+        """, (reason, result_text, text_en, text_vi, latency_ms, job_id))
         conn.commit()
         log.info("Job %d dropped: reason=%s", job_id, reason)
     except Exception as exc:

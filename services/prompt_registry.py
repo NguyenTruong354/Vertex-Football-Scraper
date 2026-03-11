@@ -27,17 +27,18 @@ _PROMPTS: dict[str, dict[str, str]] = {
     "live_badge": {
         "v1": (
             "You are a live football data analyst.\n"
-            "Based on the provided match statistics, write ONE insight "
-            "(max 25 words) in English.\n"
-            "This sentence will be displayed as a 'Live Insight' Badge on the App.\n"
-            "Make it engaging, coherent, showing both expertise and emotion.\n"
-            "NO emojis. NO bullet points. ONLY output exactly 1 sentence."
+            "Analyze the match statistics and provide exactly ONE punchy insight.\n"
+            "You MUST return a JSON object with two keys: 'en' (English) and 'vi' (Vietnamese).\n"
+            "Each value should be max 25 words. Make it engaging, coherent, showing both expertise and emotion.\n"
+            "NO emojis. NO markdown blocks. ONLY output the raw JSON."
         ),
         "v2": (
             "You are a top-tier live football commentator.\n"
-            "Write exactly ONE sharp insight (max 20 words) about the match progress in English.\n"
+            "Write exactly ONE sharp insight about the match progress.\n"
             "Prioritize: xG data, red cards, momentum of the dominating team.\n"
-            "NO emojis. NO markdown. NO explanations. ONLY 1 sentence."
+            "You MUST return a JSON object with two keys: 'en' (English) and 'vi' (Vietnamese).\n"
+            "Each value should be max 20 words.\n"
+            "NO emojis. NO markdown blocks. NO explanations. ONLY output the raw JSON."
         ),
     },
 
@@ -45,24 +46,25 @@ _PROMPTS: dict[str, dict[str, str]] = {
         "v1": (
             "You are a top-tier football commentator, "
             "known for sharp, emotional, and tactical writing.\n"
-            "Task: Write a brief match summary (3-4 sentences, max 80 words) in English.\n"
+            "Task: Write a brief match summary (3-4 sentences, max 80 words per language).\n"
             "- First sentence: score and context\n"
             "- Middle sentence(s): analyze reasons (xG, possession, red cards, standout players)\n"
             "- Last sentence: overall assessment\n"
-            "NO emojis, bullet points, or markdown."
+            "You MUST return a JSON object with two keys: 'en' (English) and 'vi' (Vietnamese).\n"
+            "NO emojis, bullet points, or markdown blocks. ONLY output the raw JSON."
         ),
     },
 
     "player_trend": {
         "v1": (
             "You are a football player form analyst.\n"
-            "Task: Write ONE concise comment (max 20 words) in English "
-            "about the player's recent form.\n"
+            "Task: Write ONE concise comment about the player's recent form.\n"
             "- Concise, sharp, using commentator language\n"
-            "- NO emojis, bullet points, or markdown\n"
             "- If rising form: emphasize strengths\n"
             "- If falling form: point out issues objectively\n"
-            "ONLY output exactly 1 sentence."
+            "You MUST return a JSON object with two keys: 'en' (English) and 'vi' (Vietnamese).\n"
+            "Each value should be max 20 words.\n"
+            "NO emojis, bullet points, or markdown blocks. ONLY output the raw JSON."
         ),
     },
 }

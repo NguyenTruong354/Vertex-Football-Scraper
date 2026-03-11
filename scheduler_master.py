@@ -2359,6 +2359,13 @@ class DailyMaintenance:
             self.log.info("⏹ Daily maintenance aborted after cleanup (shutdown)")
             return False
 
+        # Disk space cleanup: remove old output files
+        self._cleanup_disk_space()
+
+        if self._shutdown and self._shutdown.is_set():
+            self.log.info("⏹ Daily maintenance aborted after disk cleanup (shutdown)")
+            return False
+
         # AI insight jobs retention cleanup
         self._cleanup_old_insight_jobs()
 
@@ -2559,6 +2566,78 @@ class DailyMaintenance:
             conn.close()
         except Exception as exc:
             self.log.warning("MV refresh error: %s", exc)
+
+    # ── Disk space management ──────────────────────────────
+    _OUTPUT_DIRS = [
+        "understat/output",
+        "fbref/output",
+        "sofascore/output",
+        "transfermarkt/output",
+    ]
+    _RETENTION_DAYS = 7
+    _LARGE_FILE_THRESHOLD_MB = 50
+
+    def _cleanup_disk_space(self) -> None:
+        """Delete output CSV/JSON files older than _RETENTION_DAYS.
+        Logs per-directory breakdown and warns about large files."""
+        if self.dry_run:
+            self.log.info("[DRY-RUN] Would cleanup disk space")
+            return
+
+        cutoff = time.time() - (self._RETENTION_DAYS * 86400)
+        total_files = 0
+        total_bytes = 0
+
+        for rel_dir in self._OUTPUT_DIRS:
+            dir_path = ROOT / rel_dir
+            if not dir_path.exists():
+                continue
+
+            dir_files = 0
+            dir_bytes = 0
+
+            for f in dir_path.rglob("*"):
+                if not f.is_file():
+                    continue
+                if f.suffix.lower() not in (".csv", ".json", ".html"):
+                    continue
+
+                try:
+                    fstat = f.stat()
+                    size = fstat.st_size
+
+                    # Safety check: warn about large files still remaining
+                    size_mb = size / (1024 * 1024)
+                    if size_mb > self._LARGE_FILE_THRESHOLD_MB:
+                        self.log.warning(
+                            "[DiskCleanup] ⚠ Large file detected: %s (%.1f MB)",
+                            f.relative_to(ROOT), size_mb,
+                        )
+
+                    # Delete if older than retention period
+                    if fstat.st_mtime < cutoff:
+                        f.unlink()
+                        dir_files += 1
+                        dir_bytes += size
+                except Exception as exc:
+                    self.log.debug("[DiskCleanup] Cannot process %s: %s", f, exc)
+
+            if dir_files > 0:
+                mb_freed = dir_bytes / (1024 * 1024)
+                self.log.info(
+                    "[DiskCleanup] %s: %d files deleted, %.1f MB freed",
+                    rel_dir, dir_files, mb_freed,
+                )
+            total_files += dir_files
+            total_bytes += dir_bytes
+
+        if total_files > 0:
+            self.log.info(
+                "[DiskCleanup] TOTAL: %d files, %.1f MB freed",
+                total_files, total_bytes / (1024 * 1024),
+            )
+        else:
+            self.log.info("[DiskCleanup] No old output files to clean.")
 
 
 # ════════════════════════════════════════════════════════════
