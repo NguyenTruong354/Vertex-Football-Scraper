@@ -2828,8 +2828,12 @@ class MasterScheduler:
             else:
                 try:
                     from services import news_radar
-
-                    news_radar.run_and_save()
+                    self.log.info("📰 Starting RSS news radar fetch...")
+                    saved = news_radar.run_and_save()
+                    if saved > 0:
+                        self.log.info("✓ RSS news radar fetch complete: %d items", saved)
+                    else:
+                        self.log.info("✓ RSS news radar fetch complete: 0 new items")
                 except Exception as exc:
                     self.log.error("News radar error: %s", exc)
             self.last_news_fetch = now

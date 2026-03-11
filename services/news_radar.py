@@ -9,10 +9,58 @@ even when no matches are playing.
 
 import logging
 import feedparser
+import os
+import sys
+import socket
+import json
+from pathlib import Path
 from datetime import datetime, timezone, timedelta
-from typing import List, Dict
+from typing import List, Dict, Optional
+from urllib import request as urllib_request
 
 log = logging.getLogger(__name__)
+
+_ERROR_COUNTS: Dict[str, int] = {}
+
+def send_alert(message: str) -> None:
+    webhook_url = os.environ.get("DISCORD_WEBHOOK")
+    if not webhook_url:
+        return
+    try:
+        payload = {"content": message}
+        req = urllib_request.Request(
+            webhook_url,
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json", "User-Agent": "NewsRadar/1.0"}
+        )
+        urllib_request.urlopen(req, timeout=5)
+    except Exception as exc:
+        log.warning("Failed to send discord alert: %s", exc)
+
+def detect_league(title: str, summary: str) -> Optional[str]:
+    text = f"{title} {summary}".lower()
+
+    # 1. UCL / UEL Priority
+    if any(k in text for k in ["champions league", "ucl"]):
+        return "UCL"
+    if any(k in text for k in ["europa league", "uel"]):
+        return "UEL"
+
+    # 2. League Rules
+    if any(k in text for k in ["premier league", "epl", "arsenal", "chelsea", "liverpool", "manchester", "tottenham", "aston villa", "newcastle", "everton"]):
+        return "EPL"
+    if any(k in text for k in ["la liga", "laliga", "madrid", "barcelona", "atletico", "sevilla", "valencia"]):
+        return "LALIGA"
+    if any(k in text for k in ["bundesliga", "bayern", "dortmund", "leverkusen", "leipzig"]):
+        return "BUNDESLIGA"
+    if any(k in text for k in ["serie a", "juventus", "milan", "inter", "napoli", "roma", "lazio"]):
+        return "SERIEA"
+    if any(k in text for k in ["ligue 1", "psg", "marseille", "monaco", "lyon"]):
+        return "LIGUE1"
+
+    # 3. Fallback
+    return None
+
 
 # List of RSS feeds to aggregate
 RSS_FEEDS = [
@@ -39,7 +87,23 @@ def fetch_news() -> List[Dict]:
         log.info("📰 Fetching RSS feed from %s...", source)
         
         try:
+            socket.setdefaulttimeout(15)
             feed = feedparser.parse(url)
+            
+            # Handle silent feed failure "bozo mode"
+            if getattr(feed, 'bozo', False):
+                _ERROR_COUNTS[source] = _ERROR_COUNTS.get(source, 0) + 1
+                log.warning("Feed error from %s: %s", source, getattr(feed, 'bozo_exception', 'Unknown bozo error'))
+                if _ERROR_COUNTS[source] >= 3:
+                    send_alert(f"⚠️ **News Radar Alert**: `{source}` failed 3 consecutive times due to feed error.")
+                    _ERROR_COUNTS[source] = 0  # Reset after spam
+            else:
+                _ERROR_COUNTS[source] = 0
+                
+            if not getattr(feed, 'entries', []):
+                log.info("No entries from %s", source)
+                continue
+
             for entry in feed.entries:
                 # Attempt to parse publication date, fallback to now
                 pub_date = datetime.now(timezone.utc)
@@ -67,6 +131,8 @@ def fetch_news() -> List[Dict]:
                     })
         except Exception as exc:
             log.warning("Failed to fetch RSS from %s: %s", source, exc)
+        finally:
+            socket.setdefaulttimeout(None)
 
     return all_news
 
@@ -79,12 +145,16 @@ def run_and_save() -> int:
         return 0
 
     saved = 0
+    conn = None
+    cur = None
     try:
         from db.config_db import get_connection
         conn = get_connection()
         cur = conn.cursor()
         
         for item in news_items:
+            league_id = detect_league(item["title"], item["summary"])
+            
             # Using ON CONFLICT DO NOTHING to prevent duplicate links
             cur.execute("""
                 INSERT INTO news_feed
@@ -97,14 +167,12 @@ def run_and_save() -> int:
                 item["summary"],
                 item["published_at"],
                 item["source"],
-                "EPL"  # Defaulting to EPL for English news
+                league_id
             ))
             # rowcount is 1 if inserted, 0 if conflict
             saved += cur.rowcount
 
         conn.commit()
-        cur.close()
-        conn.close()
         
         if saved > 0:
             log.info("✓ Saved %d new RSS items to news_feed table", saved)
@@ -113,9 +181,13 @@ def run_and_save() -> int:
     except Exception as exc:
         log.error("Failed to save news feed: %s", exc)
         return 0
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
 
     return saved
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     run_and_save()
