@@ -53,27 +53,27 @@ def generate_story(
         A narrative summary string, or "" if generation fails.
     """
     # Build context from available data
-    stats_block = _format_statistics(statistics) if statistics else "Không có dữ liệu thống kê chi tiết."
-    incidents_block = _format_incidents(incidents, home_team) if incidents else "Không có dữ liệu sự kiện."
+    stats_block = _format_statistics(statistics) if statistics else "No detailed statistics available."
+    incidents_block = _format_incidents(incidents, home_team) if incidents else "No key events recorded."
 
     # Determine match result
     if home_score > away_score:
-        result = f"{home_team} thắng {away_team}"
+        result = f"{home_team} wins against {away_team}"
     elif away_score > home_score:
-        result = f"{away_team} thắng {home_team}"
+        result = f"{away_team} wins against {home_team}"
     else:
-        result = f"{home_team} hòa {away_team}"
+        result = f"{home_team} draws with {away_team}"
 
-    user_prompt = f"""Trận đấu {league}: {home_team} {home_score}-{away_score} {away_team}
-Kết quả: {result}
+    user_prompt = f"""Match {league}: {home_team} {home_score}-{away_score} {away_team}
+Result: {result}
 
-Thống kê trận đấu:
+Match statistics:
 {stats_block}
 
-Sự kiện chính:
+Key incidents:
 {incidents_block}
 
-Hãy viết tóm tắt ngắn gọn (3-4 câu, tối đa 80 từ)."""
+Write a brief summary (3-4 sentences, max 80 words)."""
 
     log.info("📝 Generating match story for %s vs %s...", home_team, away_team)
     story = llm.generate_insight(user_prompt, system_instruction=SYSTEM_PROMPT)
@@ -130,7 +130,7 @@ def _format_statistics(stats: dict) -> str:
             home_val = stats[key].get("home", "?")
             away_val = stats[key].get("away", "?")
             lines.append(f"- {key}: {home_val} vs {away_val}")
-    return "\n".join(lines) if lines else "Không có dữ liệu."
+    return "\n".join(lines) if lines else "No detailed data."
 
 
 def _format_incidents(incidents: list, home_team: str) -> str:
@@ -141,17 +141,17 @@ def _format_incidents(incidents: list, home_team: str) -> str:
         minute = inc.get("time", "?")
         player = inc.get("player", {}).get("name", "")
         is_home = inc.get("isHome", False)
-        team = home_team if is_home else "Đội khách"
+        team = home_team if is_home else "Away data"
         
         if inc_type == "goal":
-            lines.append(f"- Bàn thắng phút {minute}: {player} ({team})")
+            lines.append(f"- Goal min {minute}: {player} ({team})")
         elif inc_type == "card":
             card_class = inc.get("incidentClass", "")
-            card_label = "Thẻ đỏ" if card_class == "red" else "Thẻ vàng"
-            lines.append(f"- {card_label} phút {minute}: {player} ({team})")
+            card_label = "Red card" if card_class == "red" else "Yellow card"
+            lines.append(f"- {card_label} min {minute}: {player} ({team})")
         elif inc_type == "varDecision":
-            lines.append(f"- VAR phút {minute} ({team})")
-    return "\n".join(lines) if lines else "Không có sự kiện đáng chú ý."
+            lines.append(f"- VAR min {minute} ({team})")
+    return "\n".join(lines) if lines else "No key events."
 
 
 if __name__ == "__main__":

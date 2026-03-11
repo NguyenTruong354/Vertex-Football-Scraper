@@ -230,22 +230,22 @@ def _generate_insight_text(
     total_xg = sum(xg)
 
     trend_label = {
-        "GREEN": "đang thăng hoa",
-        "RED": "đang sa sút",
-        "NEUTRAL": "phong độ ổn định"
+        "GREEN": "rising form",
+        "RED": "falling form",
+        "NEUTRAL": "stable form"
     }[trend]
 
-    prompt = f"""Cầu thủ: {player_name}
-Phong độ: {trend_label}
-Thống kê {match_count} trận gần nhất: {total_goals} bàn, {total_assists} kiến tạo, tổng xG {total_xg:.2f}
-2 trận gần nhất: {recent_goals} bàn, {recent_assists} kiến tạo, xG {recent_xg:.2f}
+    prompt = f"""Player: {player_name}
+Form: {trend_label}
+Stats last {match_count} matches: {total_goals} goals, {total_assists} assists, total xG {total_xg:.2f}
+Last 2 matches: {recent_goals} goals, {recent_assists} assists, xG {recent_xg:.2f}
 
-Viết MỘT câu nhận xét ngắn gọn (dưới 20 từ)."""
+Write ONE concise comment (under 20 words)."""
 
     from services.text_utils import clean_insight
     text = llm.generate_insight(prompt, system_instruction=SYSTEM_PROMPT)
     if not text:
-        text = f"{player_name} {trend_label} với {total_goals} bàn trong {match_count} trận gần nhất."
+        text = f"{player_name} is in {trend_label} with {total_goals} goals in the last {match_count} matches."
         return text
     return clean_insight(text, max_sentences=1)
 
@@ -259,11 +259,11 @@ def _static_insight(player: dict) -> str:
     n = player["match_count"]
 
     if trend == "GREEN":
-        return f"{name} đang có phong độ tốt với {goals} bàn, {assists} kiến tạo trong {n} trận gần nhất."
+        return f"{name} is in good form with {goals} goals and {assists} assists in the last {n} matches."
     elif trend == "RED":
-        return f"{name} chưa tìm lại phong độ tốt nhất trong {n} trận gần đây."
+        return f"{name} has not found their best form in the last {n} matches."
     else:
-        return f"{name} duy trì phong độ ổn định với {goals} bàn trong {n} trận gần nhất."
+        return f"{name} maintains a stable form with {goals} goals in the last {n} matches."
 
 
 def run_and_save(league: str) -> int:

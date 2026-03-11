@@ -186,16 +186,10 @@ def _derive_context_trigger(p: dict) -> str:
     return f"Momentum shift detected in {home} vs {away}."
 
 
-def _build_live_badge_prompt(payload: dict) -> tuple:
+def _build_live_badge_prompt(payload: dict, version: str = None) -> tuple:
     """Build (system_prompt, user_prompt) for live_badge job."""
-    system_prompt = (
-        "You are a live football data analyst. "
-        "Based on the match statistics provided, write ONE punchy insight "
-        "(max 25 words) in English. "
-        "This will appear as a 'Live Insight' badge on the App. "
-        "Be compelling, concise, expert-level with emotion "
-        "(no emoji, no bullet points)."
-    )
+    from services.prompt_registry import get_prompt
+    system_prompt = get_prompt("live_badge", version)
 
     ctx = _derive_context_trigger(payload)
 
@@ -252,19 +246,10 @@ def _format_incidents_block(incidents: list, home_team: str) -> str:
     return "\n".join(lines[:15]) if lines else "No key events recorded."
 
 
-def _build_match_story_prompt(payload: dict) -> tuple:
+def _build_match_story_prompt(payload: dict, version: str = None) -> tuple:
     """Build (system_prompt, user_prompt) for match_story job."""
-    system_prompt = (
-        "Bạn là chuyên gia bình luận bóng đá hàng đầu Việt Nam, "
-        "nổi tiếng với lối viết sắc bén, giàu cảm xúc và có chiều sâu chiến thuật.\n"
-        "Nhiệm vụ: Viết một đoạn tóm tắt trận đấu ngắn gọn (3-4 câu, tối đa 80 từ) bằng tiếng Việt.\n"
-        "Yêu cầu:\n"
-        "- Câu mở đầu nêu tỷ số và bối cảnh (ai thắng/thua/hòa)\n"
-        "- Câu giữa phân tích lý do (xG, kiểm soát bóng, thẻ đỏ, cầu thủ nổi bật)\n"
-        "- Câu cuối đánh giá tổng thể hoặc bất ngờ nếu có\n"
-        "- KHÔNG dùng emoji, gạch đầu dòng, hay markdown\n"
-        "- Viết liền mạch như một bình luận viên đang kể chuyện"
-    )
+    from services.prompt_registry import get_prompt
+    system_prompt = get_prompt("match_story", version)
 
     home = payload["home_team"]
     away = payload["away_team"]
@@ -272,11 +257,11 @@ def _build_match_story_prompt(payload: dict) -> tuple:
     as_ = payload["away_score"]
 
     if hs > as_:
-        result = f"{home} thắng {away}"
+        result = f"{home} wins against {away}"
     elif as_ > hs:
-        result = f"{away} thắng {home}"
+        result = f"{away} wins against {home}"
     else:
-        result = f"{home} hòa {away}"
+        result = f"{home} draws with {away}"
 
     stats_block = _format_stats_block(payload.get("statistics", {}))
     incidents_block = _format_incidents_block(
@@ -284,27 +269,19 @@ def _build_match_story_prompt(payload: dict) -> tuple:
     )
 
     user_prompt = (
-        f"Trận đấu: {home} {hs}-{as_} {away}\n"
-        f"Kết quả: {result}\n\n"
-        f"Thống kê trận đấu:\n{stats_block}\n\n"
-        f"Sự kiện chính:\n{incidents_block}\n\n"
-        f"Hãy viết tóm tắt ngắn gọn (3-4 câu, tối đa 80 từ)."
+        f"Match: {home} {hs}-{as_} {away}\n"
+        f"Result: {result}\n\n"
+        f"Match statistics:\n{stats_block}\n\n"
+        f"Key incidents:\n{incidents_block}\n\n"
+        f"Write a brief summary (3-4 sentences, max 80 words)."
     )
     return system_prompt, user_prompt
 
 
-def _build_player_trend_prompt(payload: dict) -> tuple:
+def _build_player_trend_prompt(payload: dict, version: str = None) -> tuple:
     """Build (system_prompt, user_prompt) for player_trend job."""
-    system_prompt = (
-        "Bạn là chuyên gia phân tích phong độ cầu thủ bóng đá.\n"
-        "Nhiệm vụ: Viết MỘT câu nhận xét ngắn gọn (tối đa 20 từ) bằng tiếng Việt "
-        "về phong độ gần đây của cầu thủ.\n"
-        "Yêu cầu:\n"
-        "- Ngắn gọn, sắc bén, dùng ngôn ngữ bình luận viên\n"
-        "- KHÔNG dùng emoji, gạch đầu dòng, hay markdown\n"
-        "- Nếu cầu thủ đang thăng hoa: nhấn mạnh điểm mạnh\n"
-        "- Nếu cầu thủ đang sa sút: chỉ ra vấn đề một cách khách quan"
-    )
+    from services.prompt_registry import get_prompt
+    system_prompt = get_prompt("player_trend", version)
 
     name = payload["player_name"]
     trend = payload["trend"]
@@ -321,19 +298,19 @@ def _build_player_trend_prompt(payload: dict) -> tuple:
     recent_xg = sum(xg[-2:]) if len(xg) >= 2 else sum(xg)
 
     trend_label = {
-        "GREEN": "đang thăng hoa",
-        "RED": "đang sa sút",
-        "NEUTRAL": "phong độ ổn định",
-    }.get(trend, "phong độ ổn định")
+        "GREEN": "rising form",
+        "RED": "falling form",
+        "NEUTRAL": "stable form",
+    }.get(trend, "stable form")
 
     user_prompt = (
-        f"Cầu thủ: {name}\n"
-        f"Phong độ: {trend_label}\n"
-        f"Thống kê {n} trận gần nhất: {total_g} bàn, {total_a} kiến tạo, "
-        f"tổng xG {total_xg:.2f}\n"
-        f"2 trận gần nhất: {recent_g} bàn, {recent_a} kiến tạo, "
+        f"Player: {name}\n"
+        f"Form: {trend_label}\n"
+        f"Stats last {n} matches: {total_g} goals, {total_a} assists, "
+        f"total xG {total_xg:.2f}\n"
+        f"Last 2 matches: {recent_g} goals, {recent_a} assists, "
         f"xG {recent_xg:.2f}\n\n"
-        f"Viết MỘT câu nhận xét ngắn gọn (dưới 20 từ)."
+        f"Write ONE concise comment (under 20 words)."
     )
     return system_prompt, user_prompt
 
@@ -483,12 +460,13 @@ def execute_job(job: dict, *, shadow_mode: bool = True) -> bool:
 
     try:
         # 1. Build prompt
+        pv = job.get("prompt_version")
         if job_type == "live_badge":
-            system_prompt, user_prompt = _build_live_badge_prompt(payload)
+            system_prompt, user_prompt = _build_live_badge_prompt(payload, pv)
         elif job_type == "match_story":
-            system_prompt, user_prompt = _build_match_story_prompt(payload)
+            system_prompt, user_prompt = _build_match_story_prompt(payload, pv)
         elif job_type == "player_trend":
-            system_prompt, user_prompt = _build_player_trend_prompt(payload)
+            system_prompt, user_prompt = _build_player_trend_prompt(payload, pv)
         else:
             _fail_job(job_id, "unknown_job_type",
                       f"Unsupported: {job_type}")

@@ -94,28 +94,28 @@ def analyze(
     
     if home_reds > 0 or away_reds > 0:
         team_down = home_team if home_reds > 0 else away_team
-        context_trigger = f"{team_down} đang phải chơi thiếu người do thẻ đỏ."
+        context_trigger = f"{team_down} is playing with fewer players due to a red card."
         momentum_score = 80
         
     elif possession_home >= 65:
-        context_trigger = f"{home_team} đang áp đảo hoàn toàn với {possession_home}% thời lượng kiểm soát bóng."
+        context_trigger = f"{home_team} is completely dominating with {possession_home}% ball possession."
         momentum_score = 60 + (possession_home - 65)
     elif possession_away >= 65:
-        context_trigger = f"{away_team} đang áp đảo hoàn toàn với {possession_away}% thời lượng kiểm soát bóng."
+        context_trigger = f"{away_team} is completely dominating with {possession_away}% ball possession."
         momentum_score = 60 + (possession_away - 65)
         
     elif (xg_home - xg_away) >= 1.0:
-        context_trigger = f"Chất lượng cơ hội của {home_team} (xG {xg_home:.2f}) hoàn toàn vượt trội so với {away_team} (xG {xg_away:.2f})."
+        context_trigger = f"Chance quality of {home_team} (xG {xg_home:.2f}) is vastly superior to {away_team} (xG {xg_away:.2f})."
         momentum_score = 75
     elif (xg_away - xg_home) >= 1.0:
-        context_trigger = f"Chất lượng cơ hội của {away_team} (xG {xg_away:.2f}) hoàn toàn vượt trội so với {home_team} (xG {xg_home:.2f})."
+        context_trigger = f"Chance quality of {away_team} (xG {xg_away:.2f}) is vastly superior to {home_team} (xG {xg_home:.2f})."
         momentum_score = 75
         
     elif shots_on_home >= 6 and shots_on_away <= 2:
-        context_trigger = f"{home_team} đang sút trúng đích dồn dập ({shots_on_home} lần) uy hiếp khung thành liên tục."
+        context_trigger = f"{home_team} is continuously threatening the goal with rapid shots on target ({shots_on_home} shots)."
         momentum_score = 70
     elif shots_on_away >= 6 and shots_on_home <= 2:
-        context_trigger = f"{away_team} đang sút trúng đích dồn dập ({shots_on_away} lần) uy hiếp khung thành liên tục."
+        context_trigger = f"{away_team} is continuously threatening the goal with rapid shots on target ({shots_on_away} shots)."
         momentum_score = 70
         
     # If no major momentum swing, return empty
@@ -128,20 +128,20 @@ def analyze(
     # Lấy insight trước đó để tránh lặp
     last_insight = _get_last_published_insight(event_id)
     avoid_repeat_block = (
-        f"\nInsight VỪA ĐƯỢC PHÁT trước đó: \"{last_insight}\"\n"
-        f"KHÔNG được lặp lại ý này. Hãy nhấn mạnh khía cạnh KHÁC."
+        f"\nPREVIOUSLY PUBLISHED insight: \"{last_insight}\"\n"
+        f"DO NOT repeat this idea. Emphasize a DIFFERENT aspect."
         if last_insight else ""
     )
     
     user_prompt = f"""
-Trận đấu phút {minute}. Tỷ số hiện tại: {home_team} {home_score}-{away_score} {away_team}.
-Thống kê chính:
-- Tỷ lệ cầm bóng: {home_team} {possession_home}% - {possession_away}% {away_team}
-- Sút trúng đích: {home_team} {shots_on_home} - {shots_on_away} {away_team}
-- xG (Bàn thắng kỳ vọng): {home_team} {xg_home:.2f} - {xg_away:.2f} {away_team}
-- Điểm nhấn trận đấu: {context_trigger}
+Match minute {minute}. Current score: {home_team} {home_score}-{away_score} {away_team}.
+Key statistics:
+- Ball possession: {home_team} {possession_home}% - {possession_away}% {away_team}
+- Shots on target: {home_team} {shots_on_home} - {shots_on_away} {away_team}
+- xG (Expected Goals): {home_team} {xg_home:.2f} - {xg_away:.2f} {away_team}
+- Match highlight: {context_trigger}
 {avoid_repeat_block}
-Viết một câu nhận định siêu ngắn gọn (Dưới 25 chữ).
+Write a super concise insight (Under 25 words).
 """
     
     # 3. Call LLM Service Router
