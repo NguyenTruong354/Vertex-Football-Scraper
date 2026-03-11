@@ -460,6 +460,23 @@ def build_match_crossref(cur, league_id: str, dry_run: bool = False) -> dict:
             notes              = EXCLUDED.notes,
             updated_at         = NOW()
     """
+    # Filter: only include rows whose teams exist in team_registry (prevents FK violation)
+    cur.execute(
+        "SELECT fbref_team_id FROM team_registry WHERE league_id = %s",
+        (league_id,),
+    )
+    registered_teams = {r[0] for r in cur.fetchall()}
+
+    all_rows = list(crossref_rows.values())
+    valid_rows = [
+        r for r in all_rows
+        if r["home_fbref_team_id"] in registered_teams
+        and r["away_fbref_team_id"] in registered_teams
+    ]
+    skipped = len(all_rows) - len(valid_rows)
+    if skipped:
+        logger.warning("  Skipped %d matches (team not in team_registry)", skipped)
+
     rows = [
         (
             r["fbref_match_id"], r["understat_match_id"], r["sofascore_event_id"],
@@ -467,12 +484,12 @@ def build_match_crossref(cur, league_id: str, dry_run: bool = False) -> dict:
             r["original_date"], r["is_rescheduled"],
             r["league_id"], r["season"], r["matched_by"], r["confidence"], r["notes"],
         )
-        for r in crossref_rows.values()
+        for r in valid_rows
     ]
     cur.executemany(sql, rows)
     stats["inserted"] = len(rows)
-    logger.info("match_crossref: %d rows upserted for %s (anchor=%s)",
-                len(rows), league_id, stats["anchor"])
+    logger.info("match_crossref: %d rows upserted for %s (anchor=%s, skipped=%d)",
+                len(rows), league_id, stats["anchor"], skipped)
     return stats
 
 

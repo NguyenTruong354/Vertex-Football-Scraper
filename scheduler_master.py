@@ -1542,14 +1542,20 @@ class LiveTrackingPool:
     def _save_to_db(
         self, state: LiveMatchState, *, flush_incomplete: bool = False
     ) -> None:
-        """Upsert to live_snapshots + live_match_state + live_incidents (dual-write)."""
-        try:
-            from db.config_db import get_connection
+        """Upsert to live_snapshots + live_match_state + live_incidents (dual-write).
 
+        Transaction strategy:
+          Phase 1: live_snapshots + live_incidents -> COMMIT (always succeeds)
+          Phase 2: auto-seed ss_events + live_match_state -> COMMIT (separate)
+        This ensures core live data is never lost if live_match_state FK fails.
+        """
+        from db.config_db import get_connection
+
+        # == Phase 1: live_snapshots + live_incidents (critical path) ==
+        try:
             conn = get_connection()
             cur = conn.cursor()
 
-            # ── 1. Legacy: live_snapshots (unchanged) ──
             cur.execute(
                 """
                 INSERT INTO live_snapshots
@@ -1582,7 +1588,6 @@ class LiveTrackingPool:
                 ),
             )
 
-            # ── 2. Incidents (seq auto-increments) ──
             for inc in state.incidents:
                 inc_type = inc.get("incidentType", "")
                 if inc_type not in ("goal", "card", "substitution", "varDecision"):
@@ -1618,8 +1623,28 @@ class LiveTrackingPool:
                     ),
                 )
 
-            # ── 3. New: live_match_state (lightweight, no blob) ──
-            # Build stats_core_json: only UI-critical subset.
+            conn.commit()
+            cur.close()
+            conn.close()
+        except Exception as exc:
+            self.log.warning("DB save Phase 1 failed for event %d: %s", state.event_id, exc)
+            return
+
+        # == Phase 2: live_match_state (separate transaction) ==
+        try:
+            conn = get_connection()
+            cur = conn.cursor()
+
+            # Auto-seed ss_events to satisfy FK constraint
+            cur.execute(
+                """
+                INSERT INTO ss_events (event_id, league_id, match_date, home_team, away_team)
+                VALUES (%s, %s, CURRENT_DATE, %s, %s)
+                ON CONFLICT (event_id, league_id) DO NOTHING
+                """,
+                (state.event_id, state.league, state.home_team, state.away_team),
+            )
+
             stats_core = {}
             _CORE_KEYS = (
                 "Ball possession",
@@ -1634,7 +1659,6 @@ class LiveTrackingPool:
                 json.dumps(stats_core, ensure_ascii=False) if stats_core else None
             )
 
-            # Compute last processed seq after incident upserts so cursor is current.
             cur.execute(
                 "SELECT MAX(seq) FROM live_incidents WHERE event_id = %s",
                 (state.event_id,),
@@ -1681,7 +1705,7 @@ class LiveTrackingPool:
             cur.close()
             conn.close()
         except Exception as exc:
-            self.log.warning("DB save failed for event %d: %s", state.event_id, exc)
+            self.log.warning("DB save Phase 2 (live_match_state) failed for event %d: %s", state.event_id, exc)
 
     def _upsert_lineup_from_data(self, state: LiveMatchState, data: dict) -> None:
         """Upsert lineup rows from Tier C /lineups response (plan_live Step 3)."""

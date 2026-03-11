@@ -1135,36 +1135,43 @@ async def main(
 
             # ── STEP 4: Match Reports → Passing Data ──
             if not no_match_passing and all_fixtures:
-                # Lọc matches đã có match_report_url
-                matches_with_reports = [
-                    f for f in all_fixtures if f.match_report_url and f.match_id
-                ]
-
-                # Filter by since_date: chỉ scrape match reports từ N ngày gần nhất.
-                # FBref date format là "YYYY-MM-DD" → so sánh string ISO đúng thứ tự.
-                # Áp dụng TRƯỚC match_limit để limit đếm trên set đã filtered.
-                if since_date:
-                    before_count = len(matches_with_reports)
-                    matches_with_reports = [
-                        f
-                        for f in matches_with_reports
-                        if f.date and f.date >= since_date
-                    ]
-                    logger.info(
-                        "--since-date %s: %d → %d match reports (skipped %d older)",
-                        since_date,
-                        before_count,
-                        len(matches_with_reports),
-                        before_count - len(matches_with_reports),
-                    )
-
-                if match_limit > 0:
-                    matches_with_reports = matches_with_reports[:match_limit]
+                # ── Note: FBref removed match passing data (Opta/StatsBomb licensing) ──
+                # Permanently skipping match report scraping to save time.
+                matches_with_reports = []
+                logger.info("  i FBref không còn cung cấp Match Passing data -> Bỏ qua cào Match Reports.")
 
                 total_matches = len(matches_with_reports)
                 if total_matches > 0:
                     logger.info("━━ STEP 4: Scrape %d Match Reports ━━", total_matches)
+
+                    # ── Dedup: Load existing match_ids from CSV ──
+                    existing_match_ids: set[str] = set()
+                    passing_csv_path = league_cfg.output_dir / league_cfg.match_passing_csv
+                    if passing_csv_path.exists():
+                        try:
+                            df_existing = pd.read_csv(passing_csv_path, usecols=["match_id"])
+                            existing_match_ids = set(df_existing["match_id"].dropna().unique())
+                            logger.info(
+                                "  📋 Đã có %d match reports trong CSV → sẽ skip",
+                                len(existing_match_ids),
+                            )
+                        except Exception:
+                            pass
+
+                    skipped = 0
                     for idx, fixture in enumerate(matches_with_reports, 1):
+                        # Skip if already scraped
+                        if fixture.match_id in existing_match_ids:
+                            logger.info(
+                                "── [%d/%d] SKIP %s vs %s (%s) (Đã lấy) ──",
+                                idx, total_matches,
+                                fixture.home_team or "?",
+                                fixture.away_team or "?",
+                                fixture.date or "?",
+                            )
+                            skipped += 1
+                            continue
+
                         logger.info(
                             "── [%d/%d] %s vs %s (%s) ──",
                             idx,
@@ -1193,6 +1200,9 @@ async def main(
                             context_label=f"passing_{fixture.match_id[:8]}",
                         )
                         all_match_passing.extend(valid_passing)
+
+                    if skipped > 0:
+                        logger.info("  ✓ Đã skip %d/%d match reports (đã cào trước đó)", skipped, total_matches)
                 else:
                     logger.info("Không có match reports để scrape.")
             elif no_match_passing:

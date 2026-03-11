@@ -87,17 +87,10 @@ class TMLeagueConfig:
     market_values_csv: str
 
 
-def get_tm_config(league_id: str = "EPL") -> TMLeagueConfig:
+def get_tm_config(league_id: str = "EPL", season_override: str | None = None) -> TMLeagueConfig:
     """
     Tạo TMLeagueConfig từ league_registry.
-
-    Usage:
-        cfg = get_tm_config("EPL")
-        cfg = get_tm_config("LALIGA")
-
-    Raises:
-        KeyError: nếu league_id không tồn tại
-        ValueError: nếu league không có TM comp_id
+    Hỗ trợ season_override (VD: "2024").
     """
     lg = get_league(league_id)
     if not lg.has_transfermarkt:
@@ -106,13 +99,20 @@ def get_tm_config(league_id: str = "EPL") -> TMLeagueConfig:
     prefix = lg.file_prefix()
     output_dir = OUTPUT_BASE / "transfermarkt" / prefix
     output_dir.mkdir(parents=True, exist_ok=True)
+    
+    season = season_override if season_override else lg.tm_season
+    league_url = (
+        f"https://www.transfermarkt.com/{lg.tm_slug}"
+        f"/startseite/wettbewerb/{lg.tm_comp_id}"
+        f"/saison_id/{season}"
+    )
 
     return TMLeagueConfig(
         league_id=lg.league_id,
         tm_comp_id=lg.tm_comp_id,
         tm_slug=lg.tm_slug,
-        season=lg.tm_season,
-        league_url=lg.tm_league_url,
+        season=season,
+        league_url=league_url,
         output_dir=output_dir,
         team_metadata_csv=f"dataset_{prefix}_team_metadata.csv",
         market_values_csv=f"dataset_{prefix}_market_values.csv",

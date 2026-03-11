@@ -146,13 +146,17 @@ def load_match_stats(conn, league_id: str = "EPL") -> int:
     return count
 
 
-def load_standings(conn, league_id: str = "EPL") -> int:
+def load_standings(conn, league_id: str = "EPL", season: str | None = None) -> int:
     path = _csv_path(league_id, "standings")
     if not path.exists():
         logger.warning("  File không tồn tại: %s", path)
         return 0
     df = pd.read_csv(path, on_bad_lines="skip")
-    df["season"] = "2025-2026"
+    
+    from fbref.config_fbref import get_fbref_config
+    cfg = get_fbref_config(league_id, season=season)
+    df["season"] = cfg.season
+    
     count = _upsert(conn, "standings", df, ["team_id", "league_id", "season"], league_id=league_id)
     logger.info("  standings: %d rows upserted ← %s", count, path.name)
     return count
@@ -473,13 +477,15 @@ LOADERS: dict[str, callable] = {
 }
 
 
-def load_all(league_id: str = "EPL", tables: list[str] | None = None) -> dict[str, int]:
+def load_all(league_id: str = "EPL", tables: list[str] | None = None, season: str | None = None) -> dict[str, int]:
     """
     Load tất cả (hoặc một số) tables vào PostgreSQL.
 
     Args:
         league_id: League ID (VD: "EPL").
         tables:    Danh sách tên bảng muốn load. None = tất cả.
+        season:    Mùa giải cần load (tùy chọn).
+
 
     Returns:
         dict tên_bảng → số rows đã upsert.
@@ -499,7 +505,10 @@ def load_all(league_id: str = "EPL", tables: list[str] | None = None) -> dict[st
             if not loader_fn:
                 logger.warning("Unknown table: %s", name)
                 continue
-            results[name] = loader_fn(conn, league_id)
+            if name == "standings":
+                results[name] = loader_fn(conn, league_id, season=season)
+            else:
+                results[name] = loader_fn(conn, league_id)
     finally:
         conn.close()
 
@@ -518,11 +527,12 @@ def cli() -> None:
     import argparse
     parser = argparse.ArgumentParser(description="Load CSVs into PostgreSQL")
     parser.add_argument("--league", default="EPL")
+    parser.add_argument("--season", default=None, help="Mùa giải ghi đè (VD: 2024)")
     parser.add_argument("--table", nargs="+", choices=list(LOADERS.keys()),
                         help="Chỉ load bảng cụ thể (mặc định: tất cả). Thứ tự: match_stats → standings → shots → ...")
     args = parser.parse_args()
 
-    load_all(league_id=args.league.upper(), tables=args.table)
+    load_all(league_id=args.league.upper(), tables=args.table, season=args.season)
 
 
 if __name__ == "__main__":

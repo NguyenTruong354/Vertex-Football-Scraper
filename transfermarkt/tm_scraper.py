@@ -240,8 +240,8 @@ def parse_league_page(html: str) -> list[dict[str, str]]:
     seen_ids: set[str] = set()
 
     # TM team links in the main table
-    # Pattern: /verein/{team_id}/saison_id/
-    for link in soup.find_all("a", href=re.compile(r"/startseite/verein/\d+/?")):
+    # Pattern: /verein/{team_id}/saison_id/... or /startseite/verein/...
+    for link in soup.find_all("a", href=re.compile(r"/verein/\d+")):
         href = link.get("href", "")
         m = re.search(r"/verein/(\d+)", href)
         if not m:
@@ -584,6 +584,7 @@ async def main(
     league_id: str = "EPL",
     team_limit: int = 0,
     metadata_only: bool = False,
+    season: str | None = None,
 ) -> dict[str, list]:
     """
     Transfermarkt Data Pipeline – entry point chính.
@@ -592,11 +593,12 @@ async def main(
         league_id:     League ID từ registry (VD: "EPL", "LALIGA").
         team_limit:    Giới hạn số đội scrape (0 = tất cả).
         metadata_only: Chỉ scrape team metadata (bỏ market values).
+        season:        Năm diễn ra mùa giải (VD: "2024").
 
     Returns:
         dict với keys: "team_metadata", "market_values"
     """
-    league_cfg = get_tm_config(league_id)
+    league_cfg = get_tm_config(league_id, season_override=season)
 
     t_start = time.perf_counter()
     logger.info("=" * 60)
@@ -736,6 +738,12 @@ Ví dụ:
         action="store_true",
         help="Liệt kê tất cả giải đấu hỗ trợ",
     )
+    parser.add_argument(
+        "--season",
+        type=str,
+        default=None,
+        help="Năm bắt đầu mùa giải (VD: 2023).",
+    )
     args = parser.parse_args()
 
     if args.list_leagues:
@@ -756,6 +764,7 @@ Ví dụ:
         league_id=league_id,
         team_limit=args.limit,
         metadata_only=args.metadata_only,
+        season=args.season,
     ))
 
 

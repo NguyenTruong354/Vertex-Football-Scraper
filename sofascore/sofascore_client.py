@@ -743,17 +743,7 @@ async def main(
     Returns:
         dict với keys: "events", "heatmaps", "avg_positions"
     """
-    league_cfg = get_ss_config(league_id)
-    if season:
-        try:
-            from sofascore.config_sofascore import resolve_season_id, SS_TOURNAMENT_IDS
-            if league_id in SS_TOURNAMENT_IDS:
-                season_id = resolve_season_id(SS_TOURNAMENT_IDS[league_id], str(season), league_id)
-                if season_id:
-                    league_cfg.season_id = season_id
-                    league_cfg.season = f"{season}/{str(int(season)+1)[-2:]}"
-        except Exception as e:
-            logger.error(f"Khong the resolve season {season}: {e}")
+    league_cfg = get_ss_config(league_id, season_override=season)
 
 
     t_start = time.perf_counter()

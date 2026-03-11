@@ -111,8 +111,10 @@ def scrape_transfermarkt(league: str, *, limit: int = 0, season: str | None = No
     return _run(cmd, ROOT / "transfermarkt", f"Transfermarkt [{league}]")
 
 
-def load_db(league: str) -> bool:
+def load_db(league: str, season: str | None = None) -> bool:
     cmd = [PYTHON, "-m", "db.loader", "--league", league]
+    if season:
+        cmd += ["--season", season]
     return _run(cmd, ROOT, f"DB Load [{league}]")
 
 
@@ -226,7 +228,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
 
         # ── DB load phase ────────────────────────────────────
         if not args.scrape_only:
-            ok = load_db(league)
+            ok = load_db(league, season=args.season)
             results[league]["db_load"] = "OK" if ok else "FAIL"
             
             if ok:
