@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=vertex
+User=nguyenhuutruong354
 WorkingDirectory=/opt/vertex-football-scraper
 ExecStart=/opt/vertex-football-scraper/.venv/bin/python scheduler_master.py
 Restart=always
