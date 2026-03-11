@@ -8,7 +8,7 @@
 
 | File | Chức năng chính |
 |---|---|
-| `scheduler_master.py` | **Đầu não điều khiển 24/7.** Quản lý 1 browser duy nhất, polling tất cả các giải đấu đang trực tiếp, điều phối Post-match worker và Daily maintenance. |
+| `scheduler_master.py` | **Đầu não điều khiển 24/7.** Quản lý 1 browser duy nhất, polling tất cả các giải đấu đang trực tiếp, điều phối Post-match worker và Daily maintenance. Hỗ trợ cơ chế **Daily Data Compensation** (bù dữ liệu thiếu nếu daemon gián đoạn). |
 | `run_pipeline.py` | CLI tool để chạy pipeline cào dữ liệu cho một giải đấu cụ thể (bao gồm cào, load DB, tạo MV). |
 | `run_daemon.py` | Phiên bản cũ của trình điều hành (dần được thay thế bởi `scheduler_master.py`). |
 | `run_simulate_epl.py` | Script giả lập một ngày thi đấu Ngoại hạng Anh để test logic polling/post-match. |
@@ -52,7 +52,7 @@
 
 ---
 
-## � 4. DATABASE LAYER (`/db`)
+## 💾 4. DATABASE LAYER (`/db`)
 
 - **`schema.sql`**: Định nghĩa toàn bộ cấu trúc DB (Bảng, Materialized Views, Triggers).
 - **`loader.py`**: Module chịu trách nhiệm insert/update dữ liệu từ các Scraper vào DB.
@@ -69,11 +69,31 @@
 
 ---
 
-## � 6. TỔ CHỨC THƯ MỤC CÒN LẠI
+## ✅ TRẠNG THÁI & CÁC CẢI TIẾN GẦN ĐÂY
+
+### Đã hoàn thành (Recently Done):
+- **Optimizer Daily Maintenance (2026-03-11)**: Giảm thời gian chạy từ vài giờ xuống 10-20 phút.
+  - **FBref**: Áp dụng `--since-date` với window 3 ngày (lookback safety margin).
+  - **Transfermarkt**: Dùng `--metadata-only` cho daily (bỏ qua kader/market value pages nặng).
+  - **Data Compensation**: Tự động quét bù 10 trận gần nhất cho Understat và SofaScore mỗi đêm để đảm bảo không miss dữ liệu nếu daemon bị tắt/crash during match.
+- **Fix Scheduler Bottleneck**: 
+  - Thu hẹp Lock scope trong `get_json` + Jitter/Backoff logic tinh vi.
+  - Thêm ThreadPool cho PostMatch để tránh block Event Loop.
+  - Sửa lỗi Tier C trigger (Lineup refresh sau bàn thắng) bằng cách so sánh snapshot incidents.
+- **DB Connection Integrity**: Fix lỗi rò rỉ (leak) connections trong `_check_drift` bằng mô hình `try-finally`.
+- **Standings Error Boundary**: Wrap cập nhật BXH bằng safe handler, log lỗi và gửi Discord alert kèm lệnh manual fix thay vì im lặng.
+
+### Vấn đề đang xử lý (Ongoing Issues):
+- **AI Pipeline Improvement**: Đang tiến hành refactor các dịch vụ AI sang mô hình Prompts Registry và Context Awareness.
+- **News Radar League Tagging**: Cải thiện việc gán nhãn League cho tin tức (tránh tag sai khi cầu thủ chuyển nhượng CLB khác giải).
+
+---
+
+## 📂 6. TỔ CHỨC THƯ MỤC CÒN LẠI
 - **`/docs/plans`**: Chứa tất cả các bản kế hoạch chi tiết (AI, Live, DB Improvements).
 - **`/systemd`**: Chứa các file cấu hình dịch vụ để treo Project trên Linux VM.
 - **`/output`**: Nơi lưu tạm các file CSV/JSON trong quá trình cào dữ liệu thô.
 - **`/logs`**: Nhật ký vận hành hệ thống.
 
 ---
-*Cập nhật lần cuối: 2026-03-10*
+*Cập nhật lần cuối: 2026-03-11*

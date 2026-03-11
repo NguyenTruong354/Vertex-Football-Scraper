@@ -63,6 +63,7 @@ TOURNAMENT_IDS = {
     "SERIEA": 23,
     "LIGUE1": 34,
     "UCL": 7,
+    "UEL": 677,  # ← thêm UEL
     "EREDIVISIE": 37,
     "LIGA_PORTUGAL": 238,
     "RFPL": 203,
@@ -92,6 +93,36 @@ LEAGUE_SOURCES = {
     "LIGUE1": {
         "understat": True,
         "fbref": True,
+        "sofascore": True,
+        "transfermarkt": True,
+    },
+    "UCL": {
+        "understat": False,
+        "fbref": True,
+        "sofascore": True,
+        "transfermarkt": True,
+    },
+    "UEL": {
+        "understat": False,
+        "fbref": True,
+        "sofascore": True,
+        "transfermarkt": True,
+    },
+    "EREDIVISIE": {
+        "understat": False,
+        "fbref": True,
+        "sofascore": True,
+        "transfermarkt": True,
+    },
+    "LIGA_PORTUGAL": {
+        "understat": False,
+        "fbref": True,
+        "sofascore": True,
+        "transfermarkt": True,
+    },
+    "RFPL": {
+        "understat": True,
+        "fbref": False,
         "sofascore": True,
         "transfermarkt": True,
     },
@@ -2941,7 +2972,7 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python scheduler_master.py                           # All 5 leagues
+  python scheduler_master.py                           # All 7 leagues
   python scheduler_master.py --leagues EPL LALIGA      # Subset
   python scheduler_master.py --dry-run
   python scheduler_master.py --test-notify
@@ -2950,8 +2981,8 @@ Examples:
     parser.add_argument(
         "--leagues",
         nargs="+",
-        default=["EPL", "LALIGA", "BUNDESLIGA", "SERIEA", "LIGUE1"],
-        help="Leagues to track (default: all 5)",
+        default=["EPL", "LALIGA", "BUNDESLIGA", "SERIEA", "LIGUE1", "UCL", "UEL"],
+        help="Leagues to track (default: all 7)",
     )
     parser.add_argument(
         "--dry-run",

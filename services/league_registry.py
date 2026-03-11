@@ -214,6 +214,18 @@ LEAGUES: dict[str, LeagueConfig] = {
         priority=6,
     ),
 
+    "UEL": LeagueConfig(
+        league_id="UEL",
+        display_name="Europa League",
+        country="Europe",
+        understat_name=None,
+        fbref_comp_id=19,
+        fbref_slug="Europa-League",
+        tm_comp_id="EL",
+        tm_slug="europa-league",
+        priority=7,
+    ),
+
     "EREDIVISIE": LeagueConfig(
         league_id="EREDIVISIE",
         display_name="Eredivisie",
