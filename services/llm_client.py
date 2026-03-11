@@ -44,6 +44,23 @@ class CircuitBreaker:
         self.current_cooldown = 0
         self._last_open_log_time = 0.0
 
+    @staticmethod
+    def _log_transition_to_db(name: str, old_state: str, new_state: str, reason: str = "") -> None:
+        """Persist CB state transition to DB for cross-process health monitoring."""
+        try:
+            from db.config_db import get_connection
+            conn = get_connection()
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO cb_state_log (breaker_name, old_state, new_state, reason) VALUES (%s, %s, %s, %s)",
+                (name, old_state, new_state, reason[:200] if reason else ""),
+            )
+            conn.commit()
+            cur.close()
+            conn.close()
+        except Exception:
+            pass  # fail-silent: logging should never break the main flow
+
     def can_execute(self) -> bool:
         current_time = time.time()
         if self.state == "CLOSED":
@@ -76,7 +93,9 @@ class CircuitBreaker:
 
     def record_success(self):
         if self.state != "CLOSED":
+            old = self.state
             logger.info("[CircuitBreaker-%s] SUCCESS — Circuit is now CLOSED.", self.name)
+            self._log_transition_to_db(self.name, old, "CLOSED", "recovery_success")
         self.state = "CLOSED"
         self.consecutive_failures = 0
         self.current_cooldown = self.base_cooldown
@@ -102,15 +121,19 @@ class CircuitBreaker:
         if self.state == "HALF_OPEN":
             # Exponential backoff on failed recovery test
             self.current_cooldown = min(self.current_cooldown * 2, 86400)
+            old = self.state
             self.state = "OPEN"
             self.next_retry_time = time.time() + self.current_cooldown
             logger.warning("[CircuitBreaker-%s] HALF_OPEN test failed (HTTP %s). Back to OPEN. Next retry in %ds.", self.name, status_code, self.current_cooldown)
+            self._log_transition_to_db(self.name, old, "OPEN", f"half_open_test_failed_http_{status_code}")
         elif self.state == "CLOSED":
             if self.consecutive_failures >= threshold:
+                old = self.state
                 self.state = "OPEN"
                 self.current_cooldown = self.base_cooldown
                 self.next_retry_time = time.time() + self.current_cooldown
                 logger.warning("[CircuitBreaker-%s] Tripped OPEN after %d failures (HTTP %s). Cooldown: %ds.", self.name, self.consecutive_failures, status_code, self.current_cooldown)
+                self._log_transition_to_db(self.name, old, "OPEN", f"tripped_after_{self.consecutive_failures}_failures_http_{status_code}")
 
 class LLMClient:
     def __init__(self):

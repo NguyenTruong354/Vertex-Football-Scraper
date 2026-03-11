@@ -470,6 +470,18 @@ class Notifier:
         "daily_done": "🔧",
         "info": "ℹ️",
         "recycle": "♻️",
+        "ai_insight": "🤖",
+    }
+
+    # Embed color map (decimal)
+    COLOR = {
+        "goal": 0x00FF00,        # Green
+        "match_start": 0x3498DB,  # Blue
+        "match_end": 0x95A5A6,   # Gray
+        "error": 0xFF0000,       # Red
+        "ai_insight": 0xFFA500,  # Orange
+        "info": 0x2ECC71,        # Emerald
+        "daily_done": 0x9B59B6,  # Purple
     }
 
     # Map event types to specific webhook environment variables
@@ -478,6 +490,7 @@ class Notifier:
         "goal": "DISCORD_WEBHOOK_LIVE",
         "match_event": "DISCORD_WEBHOOK_LIVE",
         "match_end": "DISCORD_WEBHOOK_LIVE",
+        "ai_insight": "DISCORD_WEBHOOK_LIVE",
         "error": "DISCORD_WEBHOOK_ERROR",
         "info": "DISCORD_WEBHOOK_INFO",
         "daily_done": "DISCORD_WEBHOOK_INFO",
@@ -497,38 +510,97 @@ class Notifier:
             or any(os.environ.get(env) for env in set(self.ROUTING.values()))
         )
 
+    def _get_webhook_url(self, event_type: str) -> str:
+        env_var = self.ROUTING.get(event_type, "")
+        webhook_url = os.environ.get(env_var) if env_var else ""
+        return webhook_url or self.default_webhook
+
+    def _post_webhook(self, webhook_url: str, payload: dict) -> bool:
+        """Post JSON to Discord webhook with 429 retry_after handling."""
+        if not webhook_url:
+            return False
+        import urllib.request
+        import urllib.error
+
+        data = json.dumps(payload).encode()
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "VertexFootballScraper/2.0",
+        }
+
+        for attempt in range(2):  # max 1 retry
+            try:
+                req = urllib.request.Request(
+                    webhook_url, data=data, headers=headers, method="POST"
+                )
+                resp = urllib.request.urlopen(req, timeout=10)
+                return True
+            except urllib.error.HTTPError as e:
+                if e.code == 429 and attempt == 0:
+                    try:
+                        body = json.loads(e.read().decode())
+                        retry_after = body.get("retry_after", 5)
+                    except Exception:
+                        retry_after = 5
+                    self.log.warning(
+                        "Discord rate limited, retrying after %.1fs", retry_after
+                    )
+                    time.sleep(retry_after)
+                    continue
+                self.log.warning("Discord HTTP %d: %s", e.code, e.reason)
+                return False
+            except Exception as exc:
+                self.log.warning("Discord send failed: %s", exc)
+                return False
+        return False
+
     def send(self, event_type: str, message: str) -> None:
+        """Legacy plain-text send (backward compatible)."""
         emoji = self.EMOJI.get(event_type, "📢")
         full_msg = f"{emoji} **[MASTER]** {message}"
         self.log.info("NOTIFY [%s]: %s", event_type, message)
 
-        # Determine which webhook to use
-        env_var = self.ROUTING.get(event_type, "")
-        webhook_url = os.environ.get(env_var) if env_var else ""
+        webhook_url = self._get_webhook_url(event_type)
+        self._post_webhook(webhook_url, {"content": full_msg})
 
-        # Fallback to default
-        if not webhook_url:
-            webhook_url = self.default_webhook
+    def send_embed(
+        self,
+        event_type: str,
+        title: str,
+        *,
+        text_en: str = "",
+        text_vi: str = "",
+        description: str = "",
+        footer: str = "",
+        fields: list[dict] | None = None,
+    ) -> None:
+        """Send a Rich Embed to Discord with optional dual-language fields."""
+        color = self.COLOR.get(event_type, 0x95A5A6)
+        emoji = self.EMOJI.get(event_type, "📢")
 
-        if not webhook_url:
-            return  # No webhook configured for this event
+        embed: dict = {
+            "title": f"{emoji} {title}",
+            "color": color,
+        }
+        if description:
+            embed["description"] = description
 
-        try:
-            import urllib.request
+        embed_fields = []
+        if text_en:
+            embed_fields.append({"name": "🇺🇸 English", "value": text_en, "inline": False})
+        if text_vi:
+            embed_fields.append({"name": "🇻🇳 Tiếng Việt", "value": text_vi, "inline": False})
+        if fields:
+            embed_fields.extend(fields)
+        if embed_fields:
+            embed["fields"] = embed_fields
 
-            payload = json.dumps({"content": full_msg}).encode()
-            req = urllib.request.Request(
-                webhook_url,
-                data=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "User-Agent": "VertexFootballScraper/1.0",
-                },
-                method="POST",
-            )
-            urllib.request.urlopen(req, timeout=10)
-        except Exception as exc:
-            self.log.warning("Discord send failed for [%s]: %s", event_type, exc)
+        if footer:
+            embed["footer"] = {"text": footer}
+
+        self.log.info("NOTIFY-EMBED [%s]: %s", event_type, title)
+        webhook_url = self._get_webhook_url(event_type)
+        self._post_webhook(webhook_url, {"embeds": [embed]})
 
 
 # ════════════════════════════════════════════════════════════
@@ -2380,10 +2452,8 @@ class DailyMaintenance:
 
         self.last_run_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-        if ok:
-            self.notifier.send("daily_done", "Daily maintenance completed ✓")
-        else:
-            self.notifier.send("error", "Daily maintenance had errors")
+        # Send Daily Health Report (Rich Embed)
+        self._send_health_report(ok)
         return ok
 
     def _analyze_player_trends(self) -> None:
@@ -2638,6 +2708,92 @@ class DailyMaintenance:
             )
         else:
             self.log.info("[DiskCleanup] No old output files to clean.")
+
+    def _send_health_report(self, maintenance_ok: bool) -> None:
+        """Send a Daily Health Report as Rich Embed to Discord.
+        Queries DB for AI job stats and CB state transitions (last 24h)."""
+        if self.dry_run:
+            self.log.info("[DRY-RUN] Would send health report")
+            return
+
+        # ── Gather stats from DB ──
+        ai_stats = {"total": 0, "succeeded": 0, "dropped": 0, "failed": 0}
+        cb_events = []
+        try:
+            from db.config_db import get_connection
+            conn = get_connection()
+            cur = conn.cursor()
+
+            # AI job stats (last 24h)
+            cur.execute("""
+                SELECT status, COUNT(*)
+                FROM ai_insight_jobs
+                WHERE created_at >= NOW() - INTERVAL '24 hours'
+                GROUP BY status
+            """)
+            for status, count in cur.fetchall():
+                ai_stats["total"] += count
+                if status in ai_stats:
+                    ai_stats[status] = count
+
+            # CB state transitions (last 24h)
+            cur.execute("""
+                SELECT breaker_name, old_state, new_state, reason,
+                       TO_CHAR(logged_at, 'HH24:MI') as ts
+                FROM cb_state_log
+                WHERE logged_at >= NOW() - INTERVAL '24 hours'
+                ORDER BY logged_at DESC
+                LIMIT 10
+            """)
+            cb_events = cur.fetchall()
+
+            cur.close()
+            conn.close()
+        except Exception as exc:
+            self.log.warning("Health report DB query error: %s", exc)
+
+        # ── Build embed fields ──
+        status_emoji = "✅" if maintenance_ok else "❌"
+        status_text = "All tasks completed" if maintenance_ok else "Some tasks had errors"
+
+        # AI performance summary
+        if ai_stats["total"] > 0:
+            success_rate = ai_stats["succeeded"] / ai_stats["total"] * 100
+            ai_summary = (
+                f"Total: **{ai_stats['total']}** jobs\n"
+                f"✅ Succeeded: **{ai_stats['succeeded']}** ({success_rate:.0f}%)\n"
+                f"🗑️ Dropped: **{ai_stats['dropped']}**\n"
+                f"❌ Failed: **{ai_stats['failed']}**"
+            )
+        else:
+            ai_summary = "No AI jobs in the last 24h."
+
+        # CB health
+        if cb_events:
+            cb_lines = []
+            for name, old_s, new_s, reason, ts in cb_events[:5]:
+                cb_lines.append(f"`{ts}` {name}: {old_s}→{new_s}")
+            cb_summary = "\n".join(cb_lines)
+        else:
+            cb_summary = "🟢 No circuit breaker events (all healthy)"
+
+        # Leagues
+        league_list = ", ".join(self.leagues)
+
+        fields = [
+            {"name": "🏟️ Leagues", "value": league_list, "inline": True},
+            {"name": "📊 Maintenance", "value": f"{status_emoji} {status_text}", "inline": True},
+            {"name": "🤖 AI Pipeline (24h)", "value": ai_summary, "inline": False},
+            {"name": "⚡ Circuit Breaker", "value": cb_summary, "inline": False},
+        ]
+
+        self.notifier.send_embed(
+            "daily_done",
+            "📋 Daily Health Report",
+            description=f"Report for {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+            fields=fields,
+            footer="Vertex Football Scraper v2.0 | e2-micro",
+        )
 
 
 # ════════════════════════════════════════════════════════════

@@ -532,6 +532,13 @@ def execute_job(job: dict, *, shadow_mode: bool = True) -> bool:
         finally:
             conn.close()
 
+        # 7. Discord Rich Embed notification (AFTER DB save success)
+        if is_published and text_en:
+            try:
+                _send_insight_embed(job_type, job, text_en, text_vi, latency_ms)
+            except Exception as exc:
+                log.debug("Discord embed send error: %s", exc)
+
         log.info("Job %d succeeded: %s latency=%dms published=%s",
                  job_id, job_type, latency_ms, is_published)
         return True
@@ -540,6 +547,93 @@ def execute_job(job: dict, *, shadow_mode: bool = True) -> bool:
         log.error("Job %d execution error: %s", job_id, exc)
         _retry_or_fail(job, "execution_error", str(exc))
         return True
+
+# ════════════════════════════════════════════════════════════
+# DISCORD EMBED FOR INSIGHTS
+# ════════════════════════════════════════════════════════════
+
+def _send_insight_embed(job_type: str, job: dict,
+                        text_en: str, text_vi: str,
+                        latency_ms: int) -> None:
+    """Send a Rich Embed to Discord after insight is saved to DB."""
+    import os, json, urllib.request, urllib.error
+
+    webhook_url = (
+        os.environ.get("DISCORD_WEBHOOK_LIVE")
+        or os.environ.get("DISCORD_WEBHOOK")
+        or ""
+    )
+    if not webhook_url:
+        return
+
+    payload_data = job.get("payload", {})
+    league_id = job.get("league_id", "?")
+    event_id = job.get("event_id", "")
+    pv = job.get("prompt_version", "v1")
+
+    # Build title based on job type
+    TYPE_LABELS = {
+        "live_badge": "⚡ Live Insight",
+        "match_story": "📖 Match Story",
+        "player_trend": "📈 Player Trend",
+    }
+    title = TYPE_LABELS.get(job_type, job_type)
+
+    # Sub-title context
+    if job_type == "live_badge":
+        home = payload_data.get("home_team", "?")
+        away = payload_data.get("away_team", "?")
+        title += f" | {home} vs {away}"
+    elif job_type == "match_story":
+        home = payload_data.get("home_team", "?")
+        away = payload_data.get("away_team", "?")
+        hs = payload_data.get("home_score", "?")
+        as_ = payload_data.get("away_score", "?")
+        title += f" | {home} {hs}-{as_} {away}"
+    elif job_type == "player_trend":
+        name = payload_data.get("player_name", "?")
+        trend = payload_data.get("trend", "?")
+        title += f" | {name} ({trend})"
+
+    embed = {
+        "title": f"🤖 {title}",
+        "color": 0xFFA500,
+        "fields": [
+            {"name": "🇺🇸 English", "value": text_en or "(empty)", "inline": False},
+            {"name": "🇻🇳 Tiếng Việt", "value": text_vi or "(empty)", "inline": False},
+        ],
+        "footer": {
+            "text": f"League: {league_id} | Prompt: {pv} | Latency: {latency_ms}ms"
+        },
+    }
+
+    data = json.dumps({"embeds": [embed]}).encode()
+    try:
+        req = urllib.request.Request(
+            webhook_url, data=data,
+            headers={"Content-Type": "application/json", "User-Agent": "VertexWorker/2.0"},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=10)
+    except urllib.error.HTTPError as e:
+        if e.code == 429:
+            try:
+                body = json.loads(e.read().decode())
+                retry_after = body.get("retry_after", 5)
+            except Exception:
+                retry_after = 5
+            import time
+            time.sleep(retry_after)
+            urllib.request.urlopen(
+                urllib.request.Request(
+                    webhook_url, data=data,
+                    headers={"Content-Type": "application/json", "User-Agent": "VertexWorker/2.0"},
+                    method="POST",
+                ),
+                timeout=10,
+            )
+    except Exception:
+        pass  # fail-silent
 
 
 # ════════════════════════════════════════════════════════════
