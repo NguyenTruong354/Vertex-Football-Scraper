@@ -748,7 +748,7 @@ async def main(
         try:
             from sofascore.config_sofascore import resolve_season_id, SS_TOURNAMENT_IDS
             if league_id in SS_TOURNAMENT_IDS:
-                season_id = await resolve_season_id(SS_TOURNAMENT_IDS[league_id], str(season), league_id)
+                season_id = resolve_season_id(SS_TOURNAMENT_IDS[league_id], str(season), league_id)
                 if season_id:
                     league_cfg.season_id = season_id
                     league_cfg.season = f"{season}/{str(int(season)+1)[-2:]}"

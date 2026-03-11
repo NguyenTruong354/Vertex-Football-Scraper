@@ -7,7 +7,7 @@ Cập nhật tự động: Sau khi chạy từng lệnh, Tools sẽ tự map tê
 🎯 Ưu Tiên 1: Mùa giải "Sát" Hiện Tại (2024/2025)
 Mùa giải này là chìa khóa để AI đánh giá được phong độ 12 tháng qua.
 
- Lệnh: python run_pipeline.py --league EPL --season 2024 --skip-sofascore-heatmaps. 
+ Lệnh: python run_pipeline.py --league EPL --season 2024 --skip-sofascore-heatmaps. Done
  Lệnh: python run_pipeline.py --league UCL --season 2024 --skip-sofascore-heatmaps
  Lệnh: python run_pipeline.py --league LALIGA --season 2024 --skip-sofascore-heatmaps
  Lệnh: python run_pipeline.py --league BUNDESLIGA --season 2024 --skip-sofascore-heatmaps

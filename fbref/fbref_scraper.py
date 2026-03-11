@@ -958,6 +958,7 @@ async def main(
     no_match_passing: bool = False,
     match_limit: int = 0,
     since_date: str | None = None,
+    season: str | None = None,
 ) -> dict[str, list]:
     """
     FBref Data Pipeline – entry point chính.
@@ -969,16 +970,10 @@ async def main(
         no_match_passing: Bỏ qua match passing data (tiết kiệm thời gian).
         match_limit:      Giới hạn số match reports để scrape (0 = tất cả).
         since_date:       Chỉ scrape match reports có date >= "YYYY-MM-DD".
-                          None = không filter (scrape tất cả).
-                          Dùng cho daily maintenance để tránh re-scrape cả mùa.
-
-    Returns:
-        dict với keys: "standings", "squad_stats", "profiles", "player_stats",
-                       "defensive_stats", "possession_stats", "gk_stats",
-                       "fixtures", "match_passing"
+        season:           Năm mùa giải bắt đầu (VD: "2024").
     """
     # ── Resolve league config ──
-    league_cfg = get_fbref_config(league_id)
+    league_cfg = get_fbref_config(league_id, season)
 
     t_start = time.perf_counter()
     logger.info("=" * 60)
@@ -1324,6 +1319,12 @@ Ví dụ:
         ),
     )
     parser.add_argument(
+        "--season",
+        type=str,
+        default=None,
+        help="Năm bắt đầu mùa giải (VD: 2023).",
+    )
+    parser.add_argument(
         "--list-leagues",
         action="store_true",
         help="Liệt kê tất cả giải đấu hỗ trợ",
@@ -1357,6 +1358,7 @@ Ví dụ:
             no_match_passing=args.no_match_passing,
             match_limit=args.match_limit,
             since_date=args.since_date,
+            season=args.season,
         )
     )
 

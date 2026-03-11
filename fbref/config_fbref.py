@@ -103,17 +103,10 @@ class FBrefLeagueConfig:
     match_passing_csv: str
 
 
-def get_fbref_config(league_id: str = "EPL") -> FBrefLeagueConfig:
+def get_fbref_config(league_id: str = "EPL", season: str | None = None) -> FBrefLeagueConfig:
     """
     Tạo FBrefLeagueConfig từ league_registry.
-
-    Usage:
-        cfg = get_fbref_config("EPL")
-        cfg = get_fbref_config("LALIGA")
-
-    Raises:
-        KeyError: nếu league_id không tồn tại
-        ValueError: nếu league không có FBref comp_id
+    Hỗ trợ truyền `season` dạng '2023', '2024'.
     """
     lg = get_league(league_id)
     if not lg.has_fbref:
@@ -122,16 +115,36 @@ def get_fbref_config(league_id: str = "EPL") -> FBrefLeagueConfig:
     comp_id = lg.fbref_comp_id
     prefix = lg.file_prefix()
 
+    # Xử lý logic season historical url
+    if season and len(str(season)) == 4:
+        s_start = int(season)
+        s_end = s_start + 1
+        fbref_season = f"{s_start}-{s_end}"
+        fbref_season_short = str(s_start)
+        # FBref historical URLs: /en/comps/9/2023-2024/2023-2024-Premier-League-Stats
+        l_url = f"https://fbref.com/en/comps/{comp_id}/{fbref_season}/{fbref_season}-{lg.fbref_slug}-Stats"
+        fix_url = f"https://fbref.com/en/comps/{comp_id}/{fbref_season}/schedule/{fbref_season}-{lg.fbref_slug}-Scores-and-Fixtures"
+        def_url = f"https://fbref.com/en/comps/{comp_id}/{fbref_season}/defense/{fbref_season}-{lg.fbref_slug}-Stats"
+        poss_url = f"https://fbref.com/en/comps/{comp_id}/{fbref_season}/possession/{fbref_season}-{lg.fbref_slug}-Stats"
+        fix_table = f"sched_{fbref_season}_{comp_id}_1"
+    else:
+        fbref_season = lg.fbref_season
+        fbref_season_short = lg.fbref_season_short
+        l_url = lg.fbref_league_url
+        fix_url = f"https://fbref.com/en/comps/{comp_id}/schedule/{lg.fbref_slug}-Scores-and-Fixtures"
+        def_url = f"https://fbref.com/en/comps/{comp_id}/defense/{lg.fbref_slug}-Stats"
+        poss_url = f"https://fbref.com/en/comps/{comp_id}/possession/{lg.fbref_slug}-Stats"
+        fix_table = f"sched_{fbref_season}_{comp_id}_1"
+
     output_dir = OUTPUT_BASE / "fbref" / prefix
     output_dir.mkdir(parents=True, exist_ok=True)
 
     return FBrefLeagueConfig(
         league_id=lg.league_id,
         comp_id=comp_id,
-        league_url=lg.fbref_league_url,
-        season=lg.fbref_season,
-        season_short=lg.fbref_season_short,
-        # Table IDs
+        league_url=l_url,
+        season=fbref_season,
+        season_short=fbref_season_short,
         squad_standard_table_id=f"stats_standard_{comp_id}",
         squad_shooting_table_id=f"stats_shooting_{comp_id}",
         squad_keeper_table_id=f"stats_keeper_{comp_id}",
@@ -140,13 +153,10 @@ def get_fbref_config(league_id: str = "EPL") -> FBrefLeagueConfig:
         squad_defense_table_id=f"stats_defense_{comp_id}",
         squad_possession_table_id=f"stats_possession_{comp_id}",
         squad_gk_table_id=f"stats_keeper_{comp_id}",
-        # Fixture
-        fixture_url=f"https://fbref.com/en/comps/{comp_id}/schedule/{lg.fbref_slug}-Scores-and-Fixtures",
-        fixture_table_id=f"sched_{lg.fbref_season}_{comp_id}_1",
-        # League-wide Stats
-        league_defense_url=f"https://fbref.com/en/comps/{comp_id}/defense/{lg.fbref_slug}-Stats",
-        league_possession_url=f"https://fbref.com/en/comps/{comp_id}/possession/{lg.fbref_slug}-Stats",
-        # Output
+        fixture_url=fix_url,
+        fixture_table_id=fix_table,
+        league_defense_url=def_url,
+        league_possession_url=poss_url,
         output_dir=output_dir,
         standings_csv=f"dataset_{prefix}_standings.csv",
         squad_roster_csv=f"dataset_{prefix}_squad_rosters.csv",
