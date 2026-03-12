@@ -10,6 +10,7 @@ Usage:
     python tools/maintenance/build_team_canonical.py --league EPL
     python tools/maintenance/build_team_canonical.py --dry-run    # preview only
 """
+
 from __future__ import annotations
 
 import argparse
@@ -158,6 +159,7 @@ def normalize_team_name(name: str) -> str:
 
 # ── DB helpers ───────────────────────────────────────────────
 
+
 def _fetch_standings_teams(cur, league_id: str) -> list[dict]:
     """Get distinct (team_id, team_name) from standings.
 
@@ -179,10 +181,11 @@ def _fetch_standings_teams(cur, league_id: str) -> list[dict]:
             (league_id,),
         )
     else:
-        logger.info("No FBref hex IDs for %s — using all standings IDs as anchor", league_id)
+        logger.info(
+            "No FBref hex IDs for %s — using all standings IDs as anchor", league_id
+        )
         cur.execute(
-            "SELECT DISTINCT team_id, team_name FROM standings "
-            "WHERE league_id = %s",
+            "SELECT DISTINCT team_id, team_name FROM standings WHERE league_id = %s",
             (league_id,),
         )
     return [{"fbref_team_id": r[0], "fbref_team_name": r[1]} for r in cur.fetchall()]
@@ -190,31 +193,40 @@ def _fetch_standings_teams(cur, league_id: str) -> list[dict]:
 
 def _fetch_fixture_teams(cur, league_id: str) -> list[dict]:
     """Get distinct teams from fixtures (home + away)."""
-    cur.execute("""
+    cur.execute(
+        """
         SELECT DISTINCT home_team_id, home_team FROM fixtures WHERE league_id = %s AND home_team_id IS NOT NULL
         UNION
         SELECT DISTINCT away_team_id, away_team FROM fixtures WHERE league_id = %s AND away_team_id IS NOT NULL
-    """, (league_id, league_id))
+    """,
+        (league_id, league_id),
+    )
     return [{"fbref_team_id": r[0], "fbref_name": r[1]} for r in cur.fetchall()]
 
 
 def _fetch_sofascore_teams(cur, league_id: str) -> list[dict]:
     """Get distinct (team_name, team_id) from ss_events."""
-    cur.execute("""
+    cur.execute(
+        """
         SELECT DISTINCT home_team, home_team_id FROM ss_events WHERE league_id = %s AND home_team_id IS NOT NULL
         UNION
         SELECT DISTINCT away_team, away_team_id FROM ss_events WHERE league_id = %s AND away_team_id IS NOT NULL
-    """, (league_id, league_id))
+    """,
+        (league_id, league_id),
+    )
     return [{"sofascore_name": r[0], "sofascore_team_id": r[1]} for r in cur.fetchall()]
 
 
 def _fetch_understat_teams(cur, league_id: str) -> list[str]:
     """Get distinct team names from match_stats (understat has no team_id)."""
-    cur.execute("""
+    cur.execute(
+        """
         SELECT DISTINCT h_team FROM match_stats WHERE league_id = %s
         UNION
         SELECT DISTINCT a_team FROM match_stats WHERE league_id = %s
-    """, (league_id, league_id))
+    """,
+        (league_id, league_id),
+    )
     return [r[0] for r in cur.fetchall() if r[0]]
 
 
@@ -229,18 +241,49 @@ def _fetch_tm_teams(cur, league_id: str) -> list[dict]:
 
 # ── Build functions ──────────────────────────────────────────
 
+
 def build_team_registry(cur, league_id: str, dry_run: bool = False) -> int:
-    """Seed team_registry from standings (most reliable source)."""
-    teams = _fetch_standings_teams(cur, league_id)
-    if not teams:
-        logger.warning("No standings teams found for %s", league_id)
+    """Seed team_registry from standings and fixtures.
+
+    For leagues like UCL/UEL that may not have standings, fixtures are the
+    primary source. For domestic leagues, standings are preferred but fixtures
+    provide additional coverage for newly promoted/added teams.
+    """
+    standings_teams = _fetch_standings_teams(cur, league_id)
+    fixture_teams = _fetch_fixture_teams(cur, league_id)
+
+    # Build map: fbref_team_id → team_name (standings preferred)
+    team_map = {}
+    for t in fixture_teams:
+        team_map[t["fbref_team_id"]] = t["fbref_name"]
+    for t in standings_teams:
+        team_map[t["fbref_team_id"]] = t[
+            "fbref_team_name"
+        ]  # overwrite with standings name
+
+    if not team_map:
+        logger.warning("No teams found in standings or fixtures for %s", league_id)
         return 0
 
+    teams_list = [
+        {"fbref_team_id": tid, "fbref_team_name": name}
+        for tid, name in team_map.items()
+    ]
+
+    logger.info(
+        "Found %d teams for %s (standings=%d, fixtures=%d, total=%d)",
+        len(teams_list),
+        league_id,
+        len(standings_teams),
+        len(fixture_teams),
+        len(teams_list),
+    )
+
     if dry_run:
-        logger.info("[DRY] Would upsert %d teams into team_registry", len(teams))
-        for t in teams:
+        logger.info("[DRY] Would upsert %d teams into team_registry", len(teams_list))
+        for t in teams_list:
             logger.info("  %s | %s", t["fbref_team_id"], t["fbref_team_name"])
-        return len(teams)
+        return len(teams_list)
 
     sql = """
         INSERT INTO team_registry (league_id, fbref_team_id, fbref_team_name)
@@ -249,7 +292,7 @@ def build_team_registry(cur, league_id: str, dry_run: bool = False) -> int:
             fbref_team_name = EXCLUDED.fbref_team_name,
             updated_at = NOW()
     """
-    rows = [(league_id, t["fbref_team_id"], t["fbref_team_name"]) for t in teams]
+    rows = [(league_id, t["fbref_team_id"], t["fbref_team_name"]) for t in teams_list]
     cur.executemany(sql, rows)
     logger.info("team_registry: %d rows upserted for %s", len(rows), league_id)
     return len(rows)
@@ -266,7 +309,13 @@ def build_team_canonical(cur, league_id: str, dry_run: bool = False) -> dict:
       5) Match Transfermarkt teams by normalized name
       6) Report unresolved
     """
-    stats = {"seeded": 0, "ss_matched": 0, "us_matched": 0, "tm_matched": 0, "unresolved": []}
+    stats = {
+        "seeded": 0,
+        "ss_matched": 0,
+        "us_matched": 0,
+        "tm_matched": 0,
+        "unresolved": [],
+    }
 
     # Step 1: Seed from standings
     standings_teams = _fetch_standings_teams(cur, league_id)
@@ -343,9 +392,14 @@ def build_team_canonical(cur, league_id: str, dry_run: bool = False) -> dict:
             stats["unresolved"].append(("transfermarkt", tm["tm_name"], norm))
 
     # Summary log
-    logger.info("Canonical map built: %d teams | SS=%d US=%d TM=%d | unresolved=%d",
-                len(canonical_map), stats["ss_matched"], stats["us_matched"],
-                stats["tm_matched"], len(stats["unresolved"]))
+    logger.info(
+        "Canonical map built: %d teams | SS=%d US=%d TM=%d | unresolved=%d",
+        len(canonical_map),
+        stats["ss_matched"],
+        stats["us_matched"],
+        stats["tm_matched"],
+        len(stats["unresolved"]),
+    )
 
     if stats["unresolved"]:
         logger.warning("Unresolved teams:")
@@ -353,7 +407,9 @@ def build_team_canonical(cur, league_id: str, dry_run: bool = False) -> dict:
             logger.warning("  [%s] '%s' (normalized: '%s')", source, name, norm)
 
     if dry_run:
-        logger.info("[DRY] Would upsert %d rows into team_canonical", len(canonical_map))
+        logger.info(
+            "[DRY] Would upsert %d rows into team_canonical", len(canonical_map)
+        )
         return stats
 
     # Clear constraints from old canonical records to allow reassignment to new canonical names
@@ -361,12 +417,12 @@ def build_team_canonical(cur, league_id: str, dry_run: bool = False) -> dict:
         if e.get("sofascore_team_id"):
             cur.execute(
                 "UPDATE team_canonical SET sofascore_team_id = NULL WHERE league_id = %s AND sofascore_team_id = %s",
-                (league_id, e["sofascore_team_id"])
+                (league_id, e["sofascore_team_id"]),
             )
         if e.get("tm_team_id"):
             cur.execute(
                 "UPDATE team_canonical SET tm_team_id = NULL WHERE league_id = %s AND tm_team_id = %s",
-                (league_id, e["tm_team_id"])
+                (league_id, e["tm_team_id"]),
             )
 
     # Step 6: Upsert into team_canonical
@@ -390,9 +446,16 @@ def build_team_canonical(cur, league_id: str, dry_run: bool = False) -> dict:
     """
     rows = [
         (
-            e["league_id"], e["fbref_team_id"], e["canonical_name"],
-            e["fbref_name"], e["understat_name"], e["sofascore_name"], e["tm_name"],
-            e["sofascore_team_id"], e["tm_team_id"], e["matched_by"],
+            e["league_id"],
+            e["fbref_team_id"],
+            e["canonical_name"],
+            e["fbref_name"],
+            e["understat_name"],
+            e["sofascore_name"],
+            e["tm_name"],
+            e["sofascore_team_id"],
+            e["tm_team_id"],
+            e["matched_by"],
         )
         for e in canonical_map.values()
     ]
@@ -403,10 +466,13 @@ def build_team_canonical(cur, league_id: str, dry_run: bool = False) -> dict:
 
 # ── Main ─────────────────────────────────────────────────────
 
+
 def main():
     parser = argparse.ArgumentParser(description="Build team_registry + team_canonical")
     parser.add_argument("--league", default="EPL", help="League ID")
-    parser.add_argument("--dry-run", action="store_true", help="Preview without writing")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Preview without writing"
+    )
     args = parser.parse_args()
 
     league_id = args.league.upper()
@@ -414,7 +480,9 @@ def main():
     try:
         with conn.cursor() as cur:
             logger.info("=" * 50)
-            logger.info("BUILD TEAM CANONICAL | league=%s dry=%s", league_id, args.dry_run)
+            logger.info(
+                "BUILD TEAM CANONICAL | league=%s dry=%s", league_id, args.dry_run
+            )
             logger.info("=" * 50)
 
             reg_count = build_team_registry(cur, league_id, dry_run=args.dry_run)
@@ -428,9 +496,14 @@ def main():
             # Summary
             logger.info("─" * 50)
             logger.info("Registry: %d teams", reg_count)
-            logger.info("Canonical: seeded=%d SS=%d US=%d TM=%d unresolved=%d",
-                        stats["seeded"], stats["ss_matched"], stats["us_matched"],
-                        stats["tm_matched"], len(stats["unresolved"]))
+            logger.info(
+                "Canonical: seeded=%d SS=%d US=%d TM=%d unresolved=%d",
+                stats["seeded"],
+                stats["ss_matched"],
+                stats["us_matched"],
+                stats["tm_matched"],
+                len(stats["unresolved"]),
+            )
     finally:
         conn.close()
 

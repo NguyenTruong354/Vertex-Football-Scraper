@@ -26,6 +26,7 @@ Usage:
     python tools/maintenance/build_match_crossref.py --league EPL
     python tools/maintenance/build_match_crossref.py --dry-run
 """
+
 from __future__ import annotations
 
 import argparse
@@ -51,18 +52,22 @@ logging.basicConfig(
 
 # ── Resolve team name to fbref_team_id ───────────────────────
 
+
 def _build_team_lookup(cur, league_id: str) -> dict[str, str]:
     """Build normalized_name → fbref_team_id lookup from team_canonical.
 
     Returns dict mapping multiple normalized names (fbref, understat,
     sofascore, tm) to the same fbref_team_id.
     """
-    cur.execute("""
+    cur.execute(
+        """
         SELECT fbref_team_id, canonical_name, fbref_name,
                understat_name, sofascore_name, tm_name
         FROM team_canonical
         WHERE league_id = %s AND is_active = TRUE
-    """, (league_id,))
+    """,
+        (league_id,),
+    )
 
     lookup: dict[str, str] = {}
     for row in cur.fetchall():
@@ -85,13 +90,17 @@ def _resolve_team(name: str, lookup: dict[str, str]) -> str | None:
 
 # ── Fetch match data from each source ────────────────────────
 
+
 def _fetch_fbref_matches(cur, league_id: str) -> list[dict]:
     """Fetch fixtures with match_id and team IDs (already fbref_team_id)."""
-    cur.execute("""
+    cur.execute(
+        """
         SELECT match_id, date, home_team_id, away_team_id
         FROM fixtures
         WHERE league_id = %s AND match_id IS NOT NULL
-    """, (league_id,))
+    """,
+        (league_id,),
+    )
     results = []
     for r in cur.fetchall():
         d = r[1]
@@ -102,25 +111,32 @@ def _fetch_fbref_matches(cur, league_id: str) -> list[dict]:
                 continue
         else:
             continue
-        results.append({
-            "fbref_match_id": r[0],
-            "match_date": d,
-            "home_fbref_team_id": r[2],
-            "away_fbref_team_id": r[3],
-        })
+        results.append(
+            {
+                "fbref_match_id": r[0],
+                "match_date": d,
+                "home_fbref_team_id": r[2],
+                "away_fbref_team_id": r[3],
+            }
+        )
     return results
 
 
-def _fetch_understat_matches(cur, league_id: str, team_lookup: dict[str, str]) -> list[dict]:
+def _fetch_understat_matches(
+    cur, league_id: str, team_lookup: dict[str, str]
+) -> list[dict]:
     """Fetch match_stats with resolved team IDs.
 
     All timestamps treated as UTC — date() extracts UTC date.
     """
-    cur.execute("""
+    cur.execute(
+        """
         SELECT match_id, datetime_str, h_team, a_team, season
         FROM match_stats
         WHERE league_id = %s
-    """, (league_id,))
+    """,
+        (league_id,),
+    )
     results = []
     for r in cur.fetchall():
         dt_str = r[1]
@@ -135,23 +151,30 @@ def _fetch_understat_matches(cur, league_id: str, team_lookup: dict[str, str]) -
         away_id = _resolve_team(r[3], team_lookup)
         if not home_id or not away_id:
             continue
-        results.append({
-            "understat_match_id": r[0],
-            "match_date": d,
-            "home_fbref_team_id": home_id,
-            "away_fbref_team_id": away_id,
-            "season": str(r[4]) if r[4] else None,
-        })
+        results.append(
+            {
+                "understat_match_id": r[0],
+                "match_date": d,
+                "home_fbref_team_id": home_id,
+                "away_fbref_team_id": away_id,
+                "season": str(r[4]) if r[4] else None,
+            }
+        )
     return results
 
 
-def _fetch_sofascore_matches(cur, league_id: str, team_lookup: dict[str, str]) -> list[dict]:
+def _fetch_sofascore_matches(
+    cur, league_id: str, team_lookup: dict[str, str]
+) -> list[dict]:
     """Fetch ss_events with resolved team IDs."""
-    cur.execute("""
+    cur.execute(
+        """
         SELECT event_id, match_date, home_team, away_team
         FROM ss_events
         WHERE league_id = %s AND event_id IS NOT NULL
-    """, (league_id,))
+    """,
+        (league_id,),
+    )
     results = []
     for r in cur.fetchall():
         md = r[1]
@@ -166,16 +189,19 @@ def _fetch_sofascore_matches(cur, league_id: str, team_lookup: dict[str, str]) -
         away_id = _resolve_team(r[3], team_lookup)
         if not home_id or not away_id:
             continue
-        results.append({
-            "sofascore_event_id": r[0],
-            "match_date": d,
-            "home_fbref_team_id": home_id,
-            "away_fbref_team_id": away_id,
-        })
+        results.append(
+            {
+                "sofascore_event_id": r[0],
+                "match_date": d,
+                "home_fbref_team_id": home_id,
+                "away_fbref_team_id": away_id,
+            }
+        )
     return results
 
 
 # ── Matching logic ───────────────────────────────────────────
+
 
 def _match_key(home_id: str, away_id: str, d: date) -> str:
     return f"{home_id}|{away_id}|{d.isoformat()}"
@@ -217,7 +243,9 @@ def _match_secondary_to_index(
     """
     unresolved_key = f"unresolved_{source_label}"
     for m in secondary:
-        k = _match_key(m["home_fbref_team_id"], m["away_fbref_team_id"], m["match_date"])
+        k = _match_key(
+            m["home_fbref_team_id"], m["away_fbref_team_id"], m["match_date"]
+        )
         if k in anchor_by_exact:
             aid = anchor_by_exact[k]
             crossref_rows[aid][id_field] = m[id_field]
@@ -231,7 +259,8 @@ def _match_secondary_to_index(
                 if abs((anch_date - m["match_date"]).days) <= 1:
                     crossref_rows[aid][id_field] = m[id_field]
                     crossref_rows[aid]["confidence"] = min(
-                        crossref_rows[aid]["confidence"], 0.9)
+                        crossref_rows[aid]["confidence"], 0.9
+                    )
                     crossref_rows[aid]["matched_by"] = "auto_date_window"
                     old_notes = crossref_rows[aid]["notes"] or ""
                     crossref_rows[aid]["notes"] = (
@@ -245,10 +274,14 @@ def _match_secondary_to_index(
                     break
             if not matched:
                 stats[unresolved_key] += 1
-                logger.debug("Unresolved %s: id=%s %s vs %s on %s",
-                             source_label, m[id_field],
-                             m["home_fbref_team_id"],
-                             m["away_fbref_team_id"], m["match_date"])
+                logger.debug(
+                    "Unresolved %s: id=%s %s vs %s on %s",
+                    source_label,
+                    m[id_field],
+                    m["home_fbref_team_id"],
+                    m["away_fbref_team_id"],
+                    m["match_date"],
+                )
 
 
 def _build_anchor_index(
@@ -260,7 +293,9 @@ def _build_anchor_index(
     by_teams: dict[str, list[tuple[date, str]]] = defaultdict(list)
     for m in matches:
         mid = str(m[id_field]) if m[id_field] is not None else m[id_field]
-        k = _match_key(m["home_fbref_team_id"], m["away_fbref_team_id"], m["match_date"])
+        k = _match_key(
+            m["home_fbref_team_id"], m["away_fbref_team_id"], m["match_date"]
+        )
         by_exact[k] = mid
         team_pair = f"{m['home_fbref_team_id']}|{m['away_fbref_team_id']}"
         by_teams[team_pair].append((m["match_date"], mid))
@@ -290,11 +325,11 @@ def _build_fbref_anchor(
     by_exact, by_teams = _build_anchor_index(fbref, "fbref_match_id")
 
     _match_secondary_to_index(
-        understat, "understat_match_id",
-        by_exact, by_teams, crossref_rows, stats, "us")
+        understat, "understat_match_id", by_exact, by_teams, crossref_rows, stats, "us"
+    )
     _match_secondary_to_index(
-        sofascore, "sofascore_event_id",
-        by_exact, by_teams, crossref_rows, stats, "ss")
+        sofascore, "sofascore_event_id", by_exact, by_teams, crossref_rows, stats, "ss"
+    )
 
     return crossref_rows, stats
 
@@ -306,7 +341,9 @@ def _build_understat_anchor(
     stats: dict,
 ) -> tuple[dict[str, dict], dict]:
     """Build crossref rows anchored on Understat matches (no FBref data)."""
-    logger.info("No FBref fixtures — anchoring on Understat (%d matches)", len(understat))
+    logger.info(
+        "No FBref fixtures — anchoring on Understat (%d matches)", len(understat)
+    )
     crossref_rows: dict[str, dict] = {}
 
     for m in understat:
@@ -323,8 +360,8 @@ def _build_understat_anchor(
     by_exact, by_teams = _build_anchor_index(understat, "understat_match_id")
 
     _match_secondary_to_index(
-        sofascore, "sofascore_event_id",
-        by_exact, by_teams, crossref_rows, stats, "ss")
+        sofascore, "sofascore_event_id", by_exact, by_teams, crossref_rows, stats, "ss"
+    )
 
     return crossref_rows, stats
 
@@ -341,16 +378,24 @@ def build_match_crossref(cur, league_id: str, dry_run: bool = False) -> dict:
       - Rule B (conf=0.9): ±1 day + home + away (timezone edge case)
     """
     stats = {
-        "fbref_total": 0, "us_total": 0, "ss_total": 0,
-        "merged": 0, "inserted": 0,
-        "rule_a": 0, "rule_b": 0,
-        "unresolved_us": 0, "unresolved_ss": 0,
+        "fbref_total": 0,
+        "us_total": 0,
+        "ss_total": 0,
+        "merged": 0,
+        "inserted": 0,
+        "rule_a": 0,
+        "rule_b": 0,
+        "unresolved_us": 0,
+        "unresolved_ss": 0,
         "anchor": "fbref",
     }
 
     team_lookup = _build_team_lookup(cur, league_id)
     if not team_lookup:
-        logger.warning("No team_canonical entries for %s — run build_team_canonical first", league_id)
+        logger.warning(
+            "No team_canonical entries for %s — run build_team_canonical first",
+            league_id,
+        )
         return stats
 
     # Fetch all source matches
@@ -362,40 +407,65 @@ def build_match_crossref(cur, league_id: str, dry_run: bool = False) -> dict:
     stats["us_total"] = len(understat)
     stats["ss_total"] = len(sofascore)
 
-    logger.info("Source matches: FBref=%d Understat=%d SofaScore=%d",
-                len(fbref), len(understat), len(sofascore))
+    logger.info(
+        "Source matches: FBref=%d Understat=%d SofaScore=%d",
+        len(fbref),
+        len(understat),
+        len(sofascore),
+    )
 
     if fbref:
         crossref_rows, stats = _build_fbref_anchor(
-            fbref, understat, sofascore, league_id, stats)
+            fbref, understat, sofascore, league_id, stats
+        )
     elif understat:
         stats["anchor"] = "understat"
         crossref_rows, stats = _build_understat_anchor(
-            understat, sofascore, league_id, stats)
+            understat, sofascore, league_id, stats
+        )
     else:
-        logger.warning("No FBref or Understat data for %s — nothing to build", league_id)
+        logger.warning(
+            "No FBref or Understat data for %s — nothing to build", league_id
+        )
         return stats
 
     stats["merged"] = sum(
-        1 for r in crossref_rows.values()
+        1
+        for r in crossref_rows.values()
         if (r["understat_match_id"] and r["fbref_match_id"])
-        or (r["sofascore_event_id"] and (r["fbref_match_id"] or r["understat_match_id"]))
+        or (
+            r["sofascore_event_id"] and (r["fbref_match_id"] or r["understat_match_id"])
+        )
     )
 
-    logger.info("Matching done: anchor=%s merged=%d rule_a=%d rule_b=%d "
-                "unresolved_us=%d unresolved_ss=%d",
-                stats["anchor"], stats["merged"], stats["rule_a"], stats["rule_b"],
-                stats["unresolved_us"], stats["unresolved_ss"])
+    logger.info(
+        "Matching done: anchor=%s merged=%d rule_a=%d rule_b=%d "
+        "unresolved_us=%d unresolved_ss=%d",
+        stats["anchor"],
+        stats["merged"],
+        stats["rule_a"],
+        stats["rule_b"],
+        stats["unresolved_us"],
+        stats["unresolved_ss"],
+    )
 
     if dry_run:
         linked = sum(
-            1 for r in crossref_rows.values()
-            if sum(1 for k in ("fbref_match_id", "understat_match_id", "sofascore_event_id")
-                   if r.get(k)) >= 2
+            1
+            for r in crossref_rows.values()
+            if sum(
+                1
+                for k in ("fbref_match_id", "understat_match_id", "sofascore_event_id")
+                if r.get(k)
+            )
+            >= 2
         )
-        logger.info("[DRY] Would upsert %d crossref rows (multi-link: %d / %.1f%%)",
-                    len(crossref_rows), linked,
-                    100.0 * linked / len(crossref_rows) if crossref_rows else 0)
+        logger.info(
+            "[DRY] Would upsert %d crossref rows (multi-link: %d / %.1f%%)",
+            len(crossref_rows),
+            linked,
+            100.0 * linked / len(crossref_rows) if crossref_rows else 0,
+        )
         return stats
 
     # Clear secondary IDs from old crossref records to prevent UniqueViolation during reassignment
@@ -404,26 +474,25 @@ def build_match_crossref(cur, league_id: str, dry_run: bool = False) -> dict:
             if r.get("understat_match_id"):
                 cur.execute(
                     "UPDATE match_crossref SET understat_match_id = NULL WHERE league_id = %s AND understat_match_id = %s",
-                    (league_id, r["understat_match_id"])
+                    (league_id, r["understat_match_id"]),
                 )
             if r.get("sofascore_event_id"):
                 cur.execute(
                     "UPDATE match_crossref SET sofascore_event_id = NULL WHERE league_id = %s AND sofascore_event_id = %s",
-                    (league_id, r["sofascore_event_id"])
+                    (league_id, r["sofascore_event_id"]),
                 )
     else:
         for r in crossref_rows.values():
             if r.get("sofascore_event_id"):
                 cur.execute(
                     "UPDATE match_crossref SET sofascore_event_id = NULL WHERE league_id = %s AND sofascore_event_id = %s",
-                    (league_id, r["sofascore_event_id"])
+                    (league_id, r["sofascore_event_id"]),
                 )
 
     # Upsert — use source-specific conflict key based on anchor.
     if stats["anchor"] == "fbref":
         conflict_clause = (
-            "ON CONFLICT (league_id, fbref_match_id) "
-            "WHERE fbref_match_id IS NOT NULL"
+            "ON CONFLICT (league_id, fbref_match_id) WHERE fbref_match_id IS NOT NULL"
         )
     else:
         conflict_clause = (
@@ -467,33 +536,103 @@ def build_match_crossref(cur, league_id: str, dry_run: bool = False) -> dict:
     )
     registered_teams = {r[0] for r in cur.fetchall()}
 
+    logger.info(
+        "  Registered teams in team_registry for %s: %d",
+        league_id,
+        len(registered_teams),
+    )
+
     all_rows = list(crossref_rows.values())
-    valid_rows = [
-        r for r in all_rows
-        if r["home_fbref_team_id"] in registered_teams
-        and r["away_fbref_team_id"] in registered_teams
-    ]
-    skipped = len(all_rows) - len(valid_rows)
+    valid_rows = []
+    skipped_matches = []
+
+    for r in all_rows:
+        home_id = r.get("home_fbref_team_id")
+        away_id = r.get("away_fbref_team_id")
+
+        # Check if both team IDs are valid and present in registry
+        if not home_id or not away_id:
+            skipped_matches.append(
+                {
+                    "match_id": r.get("fbref_match_id"),
+                    "reason": "Missing team ID",
+                    "home_id": home_id,
+                    "away_id": away_id,
+                }
+            )
+            continue
+
+        if home_id not in registered_teams:
+            skipped_matches.append(
+                {
+                    "match_id": r.get("fbref_match_id"),
+                    "reason": "Home team not in registry",
+                    "home_id": home_id,
+                    "away_id": away_id,
+                }
+            )
+            continue
+
+        if away_id not in registered_teams:
+            skipped_matches.append(
+                {
+                    "match_id": r.get("fbref_match_id"),
+                    "reason": "Away team not in registry",
+                    "home_id": home_id,
+                    "away_id": away_id,
+                }
+            )
+            continue
+
+        valid_rows.append(r)
+
+    skipped = len(skipped_matches)
     if skipped:
         logger.warning("  Skipped %d matches (team not in team_registry)", skipped)
+        # Log first few problematic matches for debugging
+        for skip in skipped_matches[:3]:
+            logger.warning(
+                "    - Match %s: %s (home=%s, away=%s)",
+                skip["match_id"],
+                skip["reason"],
+                skip["home_id"],
+                skip["away_id"],
+            )
+        if skipped > 3:
+            logger.warning("    ... and %d more", skipped - 3)
 
     rows = [
         (
-            r["fbref_match_id"], r["understat_match_id"], r["sofascore_event_id"],
-            r["home_fbref_team_id"], r["away_fbref_team_id"], r["match_date"],
-            r["original_date"], r["is_rescheduled"],
-            r["league_id"], r["season"], r["matched_by"], r["confidence"], r["notes"],
+            r["fbref_match_id"],
+            r["understat_match_id"],
+            r["sofascore_event_id"],
+            r["home_fbref_team_id"],
+            r["away_fbref_team_id"],
+            r["match_date"],
+            r["original_date"],
+            r["is_rescheduled"],
+            r["league_id"],
+            r["season"],
+            r["matched_by"],
+            r["confidence"],
+            r["notes"],
         )
         for r in valid_rows
     ]
     cur.executemany(sql, rows)
     stats["inserted"] = len(rows)
-    logger.info("match_crossref: %d rows upserted for %s (anchor=%s, skipped=%d)",
-                len(rows), league_id, stats["anchor"], skipped)
+    logger.info(
+        "match_crossref: %d rows upserted for %s (anchor=%s, skipped=%d)",
+        len(rows),
+        league_id,
+        stats["anchor"],
+        skipped,
+    )
     return stats
 
 
 # ── Validation ───────────────────────────────────────────────
+
 
 def validate_crossref(cur, league_id: str) -> bool:
     """Run sanity checks on match_crossref. Returns True if all pass."""
@@ -501,11 +640,14 @@ def validate_crossref(cur, league_id: str) -> bool:
 
     # Check 1: no duplicate source IDs
     for col in ("understat_match_id", "fbref_match_id", "sofascore_event_id"):
-        cur.execute(f"""
+        cur.execute(
+            f"""
             SELECT {col}, COUNT(*) FROM match_crossref
             WHERE league_id = %s AND {col} IS NOT NULL
             GROUP BY {col} HAVING COUNT(*) > 1
-        """, (league_id,))
+        """,
+            (league_id,),
+        )
         dupes = cur.fetchall()
         if dupes:
             logger.error("FAIL: duplicate %s found: %s", col, dupes)
@@ -514,7 +656,8 @@ def validate_crossref(cur, league_id: str) -> bool:
             logger.info("OK: no duplicate %s", col)
 
     # Check 2: coverage stats
-    cur.execute("""
+    cur.execute(
+        """
         SELECT
             COUNT(*) AS total,
             COUNT(understat_match_id) AS has_us,
@@ -524,36 +667,55 @@ def validate_crossref(cur, league_id: str) -> bool:
                         AND fbref_match_id IS NOT NULL
                         AND sofascore_event_id IS NOT NULL THEN 1 END) AS triple
         FROM match_crossref WHERE league_id = %s
-    """, (league_id,))
+    """,
+        (league_id,),
+    )
     r = cur.fetchone()
     if r:
         total, has_us, has_fb, has_ss, triple = r
-        logger.info("Coverage: total=%d US=%d(%.0f%%) FB=%d(%.0f%%) SS=%d(%.0f%%) triple=%d(%.0f%%)",
-                    total,
-                    has_us, 100 * has_us / max(total, 1),
-                    has_fb, 100 * has_fb / max(total, 1),
-                    has_ss, 100 * has_ss / max(total, 1),
-                    triple, 100 * triple / max(total, 1))
+        logger.info(
+            "Coverage: total=%d US=%d(%.0f%%) FB=%d(%.0f%%) SS=%d(%.0f%%) triple=%d(%.0f%%)",
+            total,
+            has_us,
+            100 * has_us / max(total, 1),
+            has_fb,
+            100 * has_fb / max(total, 1),
+            has_ss,
+            100 * has_ss / max(total, 1),
+            triple,
+            100 * triple / max(total, 1),
+        )
 
     # Check 3: is_rescheduled consistency
-    cur.execute("""
+    cur.execute(
+        """
         SELECT COUNT(*) FROM match_crossref
         WHERE league_id = %s AND is_rescheduled = TRUE AND original_date IS NULL
-    """, (league_id,))
+    """,
+        (league_id,),
+    )
     bad1 = cur.fetchone()[0]
     if bad1 > 0:
-        logger.error("FAIL: %d rows with is_rescheduled=TRUE but original_date IS NULL", bad1)
+        logger.error(
+            "FAIL: %d rows with is_rescheduled=TRUE but original_date IS NULL", bad1
+        )
         ok = False
     else:
         logger.info("OK: is_rescheduled=TRUE always has original_date")
 
-    cur.execute("""
+    cur.execute(
+        """
         SELECT COUNT(*) FROM match_crossref
         WHERE league_id = %s AND is_rescheduled = FALSE AND original_date IS NOT NULL
-    """, (league_id,))
+    """,
+        (league_id,),
+    )
     bad2 = cur.fetchone()[0]
     if bad2 > 0:
-        logger.warning("WARN: %d rows with is_rescheduled=FALSE but original_date IS NOT NULL", bad2)
+        logger.warning(
+            "WARN: %d rows with is_rescheduled=FALSE but original_date IS NOT NULL",
+            bad2,
+        )
     else:
         logger.info("OK: is_rescheduled=FALSE has no original_date")
 
@@ -562,10 +724,13 @@ def validate_crossref(cur, league_id: str) -> bool:
 
 # ── Main ─────────────────────────────────────────────────────
 
+
 def main():
     parser = argparse.ArgumentParser(description="Build match_crossref")
     parser.add_argument("--league", default="EPL", help="League ID")
-    parser.add_argument("--dry-run", action="store_true", help="Preview without writing")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Preview without writing"
+    )
     args = parser.parse_args()
 
     league_id = args.league.upper()
@@ -573,7 +738,9 @@ def main():
     try:
         with conn.cursor() as cur:
             logger.info("=" * 50)
-            logger.info("BUILD MATCH CROSSREF | league=%s dry=%s", league_id, args.dry_run)
+            logger.info(
+                "BUILD MATCH CROSSREF | league=%s dry=%s", league_id, args.dry_run
+            )
             logger.info("=" * 50)
 
             stats = build_match_crossref(cur, league_id, dry_run=args.dry_run)
