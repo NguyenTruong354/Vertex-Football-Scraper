@@ -169,7 +169,7 @@ class LLMClient:
         chat_completion = client.chat.completions.create(
             messages=messages,
             model="llama-3.3-70b-versatile",
-            temperature=0.7,
+            temperature=0.2,
         )
         if chat_completion.choices:
             return chat_completion.choices[0].message.content.strip()

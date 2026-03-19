@@ -21,9 +21,6 @@ def clean_insight(text: str, max_sentences: int = 1) -> str:
 
     text = text.strip()
 
-    # Lấy dòng đầu tiên (bỏ multi-line)
-    text = text.split("\n")[0].strip()
-
     # Xóa markdown
     text = re.sub(r"\*{1,2}|_{1,2}|`|#{1,6}", "", text)
     text = re.sub(r"\s*[-–•]\s*", "", text)

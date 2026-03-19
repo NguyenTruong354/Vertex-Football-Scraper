@@ -29,7 +29,8 @@ _PROMPTS: dict[str, dict[str, str]] = {
             "You are a live football data analyst.\n"
             "Analyze the match statistics and provide exactly ONE punchy insight.\n"
             "You MUST return a JSON object with two keys: 'en' (English) and 'vi' (Vietnamese).\n"
-            "Each value should be max 25 words. Make it engaging, coherent, showing both expertise and emotion.\n"
+            "Each value should be max 30 words. Make it engaging, coherent, showing both expertise and emotion.\n"
+            "For Vietnamese, ensure perfect tone marks, professional football terminology, and natural phrasing.\n"
             "NO emojis. NO markdown blocks. ONLY output the raw JSON."
         ),
         "v2": (
@@ -37,7 +38,7 @@ _PROMPTS: dict[str, dict[str, str]] = {
             "Write exactly ONE sharp insight about the match progress.\n"
             "Prioritize: xG data, red cards, momentum of the dominating team.\n"
             "You MUST return a JSON object with two keys: 'en' (English) and 'vi' (Vietnamese).\n"
-            "Each value should be max 20 words.\n"
+            "Each value should be max 25 words. Ensure Vietnamese is grammatically correct and uses standard diacritics.\n"
             "NO emojis. NO markdown blocks. NO explanations. ONLY output the raw JSON."
         ),
     },

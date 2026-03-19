@@ -2741,7 +2741,7 @@ class DailyMaintenance:
             return
 
         # ── Gather stats from DB ──
-        ai_stats = {"total": 0, "succeeded": 0, "dropped": 0, "failed": 0}
+        ai_stats = {"total": 0, "succeeded": 0, "queued": 0, "dropped": 0, "failed": 0}
         cb_events = []
         try:
             from db.config_db import get_connection
@@ -2786,6 +2786,7 @@ class DailyMaintenance:
             ai_summary = (
                 f"Total: **{ai_stats['total']}** jobs\n"
                 f"✅ Succeeded: **{ai_stats['succeeded']}** ({success_rate:.0f}%)\n"
+                f"⏳ Queued: **{ai_stats['queued']}**\n"
                 f"🗑️ Dropped: **{ai_stats['dropped']}**\n"
                 f"❌ Failed: **{ai_stats['failed']}**"
             )
@@ -2986,14 +2987,17 @@ class MasterScheduler:
         upcoming = await self.schedule.get_upcoming()
 
         if not upcoming and self.pool.is_empty:
-            # Nothing to do — sleep until next check (max 30 mins so news works)
-            next_check = now + timedelta(minutes=30)
+            # Run AI worker to clear backlog while quiet
+            self._run_ai_worker(max_jobs=30)
+
+            # Nothing to do — sleep until next check
+            next_check = now + timedelta(minutes=5)
             self.log.info(
-                "💤 No matches — sleeping 30m until %s UTC",
+                "💤 No matches — sleeping 5m until %s UTC",
                 next_check.strftime("%H:%M"),
             )
             self._check_news(now)
-            if not self._sleep_interruptible(1800):
+            if not self._sleep_interruptible(300):
                 return
             return
 
@@ -3018,14 +3022,7 @@ class MasterScheduler:
             finished_matches = await self.pool.poll_all()
 
             # ── 5b. AI Insight worker cycle ──
-            try:
-                processed = insight_worker.run_worker_cycle(
-                    shadow_mode=self.insight_shadow_mode,
-                )
-                if processed:
-                    self.log.info("🤖 Insight worker processed %d jobs", processed)
-            except Exception as exc:
-                self.log.debug("Insight worker error: %s", exc)
+            self._run_ai_worker()
 
             # FIX Issue #3: Run post-match in thread pool to avoid blocking event loop.
             # Each post_match.run() can take 5-15 minutes (subprocess calls).
@@ -3056,25 +3053,44 @@ class MasterScheduler:
             if wake_time > now:
                 delta = (wake_time - now).total_seconds()
                 self.log.info(
-                    "💤 Next match in %s — sleeping until %s UTC",
+                    "💤 Next match in %s — sleeping until %s UTC (processing AI backlog)",
                     self._fmt_duration(delta),
                     wake_time.strftime("%H:%M"),
                 )
                 self._check_news(now)
-                # Max sleep 1800 to ensure news radar runs
-                if not self._sleep_interruptible(min(delta, 1800)):
-                    return
+                # Loop to process AI during long wait
+                loop_start = time.monotonic()
+                while time.monotonic() - loop_start < delta:
+                    self._run_ai_worker(max_jobs=25)
+                    if not self._sleep_interruptible(300): # Check every 5 mins
+                        return
+                    if datetime.now(timezone.utc) >= wake_time:
+                        break
             else:
                 self._check_news(now)
+                self._run_ai_worker()
                 # Guard against CPU spin-loops if a match fails to enter the pool
                 if not self._sleep_interruptible(60):
                     return
             return
 
         self._check_news(datetime.now(timezone.utc))
+        self._run_ai_worker()
         # Brief pause before next cycle
         if not self._sleep_interruptible(60):
             return
+
+    def _run_ai_worker(self, max_jobs: int = 15) -> None:
+        """Call the AI insight worker to process queued jobs."""
+        try:
+            processed = insight_worker.run_worker_cycle(
+                shadow_mode=self.insight_shadow_mode,
+                max_jobs=max_jobs,
+            )
+            if processed:
+                self.log.info("🤖 AI Worker: processed %d jobs", processed)
+        except Exception as exc:
+            self.log.debug("AI worker cycle error: %s", exc)
 
     def _check_news(self, now: datetime) -> None:
         """Run the RSS news and injury radar every 30 minutes."""

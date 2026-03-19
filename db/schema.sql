@@ -62,6 +62,34 @@
 -- ============================================================
 
 -- ──────────────────────────────────────────────────────────
+-- 0. MASTER TABLES (Danh mục gốc)
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS leagues (
+    league_id         TEXT PRIMARY KEY,
+    display_name      TEXT NOT NULL,
+    country           TEXT,
+    understat_name    TEXT,
+    fbref_comp_id     INTEGER,
+    fbref_slug        TEXT,
+    tm_comp_id        TEXT,
+    tm_slug           TEXT,
+    sofascore_id      INTEGER,
+    is_active         BOOLEAN DEFAULT TRUE,
+    priority          INTEGER DEFAULT 1,
+    loaded_at         TIMESTAMPTZ DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS seasons (
+    season_id         TEXT PRIMARY KEY,  -- e.g. '2024-2025'
+    display_name      TEXT NOT NULL,
+    year_start        INTEGER,
+    year_end          INTEGER,
+    is_current        BOOLEAN DEFAULT FALSE,
+    loaded_at         TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ──────────────────────────────────────────────────────────
 -- 1. MATCH STATS (Understat) — parent của shots + player_match_stats
 -- ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS match_stats (
@@ -1028,6 +1056,25 @@ $$;
 -- FK CONSTRAINTS (cuối cùng, sau khi tất cả bảng tồn tại)
 -- ============================================================
 
+-- ── Leagues & Seasons (Master Tables) ───────────────────────
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_match_stats_league') THEN
+        ALTER TABLE match_stats ADD CONSTRAINT fk_match_stats_league FOREIGN KEY (league_id) REFERENCES leagues(league_id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_standings_league') THEN
+        ALTER TABLE standings ADD CONSTRAINT fk_standings_league FOREIGN KEY (league_id) REFERENCES leagues(league_id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_team_registry_league') THEN
+        ALTER TABLE team_registry ADD CONSTRAINT fk_team_registry_league FOREIGN KEY (league_id) REFERENCES leagues(league_id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_player_crossref_league') THEN
+        ALTER TABLE player_crossref ADD CONSTRAINT fk_player_crossref_league FOREIGN KEY (league_id) REFERENCES leagues(league_id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_match_crossref_league') THEN
+        ALTER TABLE match_crossref ADD CONSTRAINT fk_match_crossref_league FOREIGN KEY (league_id) REFERENCES leagues(league_id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED;
+    END IF;
+END $$;
+
 -- ── FBref: squad_stats → standings ──────────────────────────
 DO $$ BEGIN
     IF NOT EXISTS (
@@ -1597,6 +1644,14 @@ CREATE INDEX IF NOT EXISTS idx_ai_jobs_event
 -- Published lookup (novelty gate source)
 CREATE INDEX IF NOT EXISTS idx_ai_jobs_published
     ON ai_insight_jobs (event_id, job_type, is_published, published_at DESC);
+
+-- ──────────────────────────────────────────────────────────
+-- 33. Tối ưu hóa tìm kiếm (Search Performance via trgm)
+-- ──────────────────────────────────────────────────────────
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX IF NOT EXISTS idx_rosters_player_name_trgm ON squad_rosters USING gin (player_name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_crossref_canonical_name_trgm ON player_crossref USING gin (canonical_name gin_trgm_ops);
+
 
 -- Partial unique for active dedupe (ON CONFLICT target)
 CREATE UNIQUE INDEX IF NOT EXISTS uq_ai_jobs_dedupe_active

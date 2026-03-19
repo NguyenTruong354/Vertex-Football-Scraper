@@ -845,15 +845,29 @@ def recover_expired_leases() -> int:
 # ════════════════════════════════════════════════════════════
 
 def run_worker_cycle(league_id: str = None, *,
-                     shadow_mode: bool = True) -> int:
+                     shadow_mode: bool = True,
+                     max_jobs: int = 20) -> int:
     """Run one worker cycle: recover leases + process available jobs.
-    Returns number of jobs processed."""
+    Returns number of jobs processed.
+    Respects LLM circuit breakers — if all dead, skip cycle."""
+    # Safety Check: If LLM is fully blocked, don't even pick jobs
+    llm = _get_llm()
+    can_work = False
+    if llm.groq_client_1 and llm.cb_groq_1.can_execute():
+        can_work = True
+    elif llm.groq_client_2 and llm.cb_groq_2.can_execute():
+        can_work = True
+
+    if not can_work:
+        # We don't log here to avoid spamming every cycle,
+        # but we do recover leases so they don't stay 'running' forever.
+        recover_expired_leases()
+        return 0
+
     recover_expired_leases()
 
     processed = 0
-    max_per_cycle = 10  # safety cap
-
-    while processed < max_per_cycle:
+    while processed < max_jobs:
         job = pick_job(league_id)
         if not job:
             break
