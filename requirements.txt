@@ -21,7 +21,8 @@ pandas>=2.1.0              # DataFrame & CSV exports
 numpy>=1.26.0              # Numerical operations (often used with pandas)
 
 # --- Database Integration ---
-psycopg2-binary>=2.9.0     # PostgreSQL driver
+psycopg2-binary>=2.9.0     # PostgreSQL driver (for synchronous modules)
+asyncpg>=0.29.0            # Async PostgreSQL driver (for scheduler/live_pool)
 SQLAlchemy>=2.0.0          # ORM & Schema management
 python-dotenv>=1.0.0       # Manage .env configurations
 

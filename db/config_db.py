@@ -46,6 +46,11 @@ else:
     DB_USER: str = os.getenv("POSTGRES_USER", "postgres")
     DB_PASSWORD: str = os.getenv("POSTGRES_PASSWORD", "postgres")
 
+# Pool config (Applied to both URL and param-based connections)
+DB_MIN_POOL: int = int(os.getenv("DB_MIN_POOL", "1"))
+DB_MAX_POOL: int = int(os.getenv("DB_MAX_POOL", "3"))
+
+if not (POSTGRES_HOST.startswith("postgres://") or POSTGRES_HOST.startswith("postgresql://")):
     # psycopg2 DSN string
     DSN: str = (
         f"host={DB_HOST} port={DB_PORT} dbname={DB_NAME} "
@@ -85,3 +90,24 @@ def test_connection() -> bool:
         print(f"✗ Kết nối thất bại: {exc}")
         print(f"  DSN: host={DB_HOST} port={DB_PORT} dbname={DB_NAME} user={DB_USER}")
         return False
+
+async def get_async_pool(min_size=None, max_size=None):
+    """Trả về asyncpg connection pool."""
+    import asyncpg
+    
+    _min = min_size if min_size is not None else DB_MIN_POOL
+    _max = max_size if max_size is not None else DB_MAX_POOL
+    
+    return await asyncpg.create_pool(
+        host=DB_HOST,
+        port=DB_PORT,
+        database=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        min_size=_min,
+        max_size=_max,
+        command_timeout=60,
+        # Tự động đóng connection nếu nó không làm gì trong 5 phút
+        # Giúp tiết kiệm slot trên Aiven khi không có trận đấu
+        max_inactive_connection_lifetime=300.0, 
+    )
