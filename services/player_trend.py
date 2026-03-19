@@ -118,7 +118,12 @@ def analyze_all_players(league: str) -> list[dict]:
 
         enqueued_count = 0
         insights = []
-        for p in all_players:
+        total_players = len(all_players)
+        
+        for idx, p in enumerate(all_players):
+            if (idx + 1) % 100 == 0:
+                log.info("    ... processed %d/%d players", idx + 1, total_players)
+                
             # Với notable players: enqueue vào queue để worker xử lý async
             if p["player_id"] in llm_candidates:
                 job_id = enqueue_player_trend(

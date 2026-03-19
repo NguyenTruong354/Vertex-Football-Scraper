@@ -241,27 +241,7 @@ class DailyMaintenance:
                 self.log.info("▶ Daily/AITrend [%s]", league)
                 count = player_trend.run_and_save(league)
                 total += count
-                self.log.info("✓ Daily/AITrend [%s] analyzed=%d", league, count)
-
-                # Phase D: enqueue player_trend pipeline jobs for notable players
-                try:
-                    insights = player_trend.analyze_all_players(league)
-                    for p in insights:
-                        if p["trend"] in ("GREEN", "RED"):
-                            insight_producer.enqueue_player_trend(
-                                league_id=league,
-                                player_id=p["player_id"],
-                                player_name=p["player_name"],
-                                trend=p["trend"],
-                                trend_score=p["score"],
-                                goals=p.get("goals", []),
-                                assists=p.get("assists", []),
-                                xg_arr=p.get("xg_arr", []),
-                                xa_arr=p.get("xa_arr", []),
-                                match_count=p.get("match_count", 0),
-                            )
-                except Exception as exc:
-                    self.log.debug("Player trend pipeline enqueue error: %s", exc)
+                self.log.info("✓ Daily/AITrend [%s] — %d players enqueued/updated", league, count)
 
             self.log.info("✓ Player trends: %d players analyzed", total)
             self.notifier.send(

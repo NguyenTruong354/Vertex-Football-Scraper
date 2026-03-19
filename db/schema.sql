@@ -352,7 +352,7 @@ CREATE TABLE IF NOT EXISTS player_crossref (
 );
 
 CREATE INDEX IF NOT EXISTS idx_crossref_us    ON player_crossref (understat_player_id, league_id);
-CREATE INDEX IF NOT EXISTS idx_crossref_fb    ON player_crossref (fbref_player_id, league_id);
+-- Removed redundant idx_crossref_fb (covered by Primary Key)
 
 -- Prevent many-FBref → 1-Understat mapping (allow NULL understat_player_id)
 CREATE UNIQUE INDEX IF NOT EXISTS uq_crossref_understat_one
@@ -735,6 +735,7 @@ DO $$ BEGIN
 END $$;
 
 CREATE INDEX IF NOT EXISTS idx_hm_event ON heatmaps (event_id, league_id);
+CREATE INDEX IF NOT EXISTS idx_hm_perf  ON heatmaps (event_id, player_id); -- Optimized for ORDER BY
 
 -- ──────────────────────────────────────────────────────────
 -- 16. MATCH LINEUPS (SofaScore — starting XI + subs + formation)
@@ -962,7 +963,7 @@ CREATE TABLE IF NOT EXISTS live_incidents (
 );
 
 CREATE INDEX IF NOT EXISTS idx_live_snap_status ON live_snapshots (status);
-CREATE INDEX IF NOT EXISTS idx_live_inc_event   ON live_incidents (event_id);
+-- Removed redundant idx_live_inc_event (covered by seq/event unique constraints)
 CREATE UNIQUE INDEX IF NOT EXISTS uq_live_inc
     ON live_incidents (
         event_id, incident_type, minute,

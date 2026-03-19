@@ -9,17 +9,24 @@ from core.config import ROOT
 def setup_logging() -> logging.Logger:
     log_dir = ROOT / "logs"
     log_dir.mkdir(exist_ok=True)
-    log = logging.getLogger("master")
-    log.setLevel(logging.DEBUG)
+    
+    # Configure ROOT logger so all modules share the same settings
+    root_log = logging.getLogger()
+    root_log.setLevel(logging.DEBUG)
+
+    # Remove existing handlers to avoid duplicates on restart
+    for handler in root_log.handlers[:]:
+        root_log.removeHandler(handler)
 
     fmt = logging.Formatter(
         "%(asctime)s [MASTER] %(levelname)-8s %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+    
     ch = logging.StreamHandler()
     ch.setLevel(logging.INFO)
     ch.setFormatter(fmt)
-    log.addHandler(ch)
+    root_log.addHandler(ch)
 
     fh = logging.handlers.RotatingFileHandler(
         log_dir / "scheduler_master.log",
@@ -29,8 +36,9 @@ def setup_logging() -> logging.Logger:
     )
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(fmt)
-    log.addHandler(fh)
-    return log
+    root_log.addHandler(fh)
+    
+    return logging.getLogger("master")
 
 
 class Notifier:
