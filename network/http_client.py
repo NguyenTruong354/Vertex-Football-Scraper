@@ -7,7 +7,7 @@ from curl_cffi.requests import AsyncSession
 
 import sofascore.config_sofascore as cfg
 from core.antiban import AntiBanStateMachine, LiveMetrics
-from core.config import BROWSER_RECYCLE_EVERY
+import core.config as core_cfg
 from core.utils import Notifier
 
 
@@ -33,6 +33,32 @@ class CurlCffiClient:
         self._last_block_alert = 0.0
         self.antiban: AntiBanStateMachine | None = None
         self.metrics: LiveMetrics | None = None
+        
+        # ── Stealth Network (IP Rotation) ──
+        self._bridge_index = 0
+        self._bridge_lock = asyncio.Lock()
+        self._unhealthy_bridges: dict[str, float] = {}  # bridge -> expiry timestamp
+
+    def _is_healthy(self, bridge: str) -> bool:
+        until = self._unhealthy_bridges.get(bridge, 0)
+        if time.time() > until:
+            self._unhealthy_bridges.pop(bridge, None)
+            return True
+        return False
+
+    def _mark_unhealthy(self, bridge: str, cooldown: int = 300) -> None:
+        self._unhealthy_bridges[bridge] = time.time() + cooldown
+
+    async def _next_healthy_bridge(self) -> str | None:
+        if not core_cfg.STEALTH_BRIDGES:
+            return None
+        async with self._bridge_lock:
+            for _ in range(len(core_cfg.STEALTH_BRIDGES)):
+                bridge = core_cfg.STEALTH_BRIDGES[self._bridge_index % len(core_cfg.STEALTH_BRIDGES)]
+                self._bridge_index += 1
+                if self._is_healthy(bridge):
+                    return bridge
+        return None
 
     def _check_block_alert(self, url: str, code: int) -> None:
         """Trigger a Discord alert if Cloudflare/rate-limit blocking is persistent."""
@@ -97,7 +123,7 @@ class CurlCffiClient:
         await self.start()
 
     def needs_recycle(self) -> bool:
-        return self._request_count >= BROWSER_RECYCLE_EVERY
+        return self._request_count >= core_cfg.BROWSER_RECYCLE_EVERY
 
     async def get_json(self, endpoint: str, *, tier: str = "A") -> dict | list | None:
         """Fetch JSON from SofaScore API with retry and jitter.
@@ -125,8 +151,30 @@ class CurlCffiClient:
                     self._last_request = time.monotonic()
                     self._request_count += 1
 
-                    resp = await self._session.get(url, timeout=15)
-                    sc = resp.status_code
+                    resp = None
+                    sc = 0
+                    
+                    if core_cfg.USE_STEALTH_NETWORK:
+                        bridge = await self._next_healthy_bridge()
+                        if bridge:
+                            try:
+                                payload = {"target_url": url, "impersonate": "chrome120"}
+                                headers = {"X-Bridge-Token": core_cfg.BRIDGE_SECRET}
+                                resp = await self._session.post(bridge, json=payload, headers=headers, timeout=15)
+                                sc = resp.status_code
+                                if sc not in [200, 404]:
+                                    self._mark_unhealthy(bridge)
+                                    if sc == 401:
+                                        self.log.debug("Bridge %s returned 401 Unauthorized", bridge)
+                                    resp = None
+                            except Exception as exc:
+                                self.log.debug("Bridge %s exception: %s", bridge, exc)
+                                self._mark_unhealthy(bridge)
+                                resp = None
+                    
+                    if resp is None:
+                        resp = await self._session.get(url, timeout=15)
+                        sc = resp.status_code
 
                     # ── record into anti-ban state machine + metrics ──
                     if self.antiban:
@@ -218,8 +266,30 @@ class CurlCffiClient:
                     self._last_request = time.monotonic()
                     self._request_count += 1
 
-                    resp = await self._session.get(url, timeout=20)
-                    sc = resp.status_code
+                    resp = None
+                    sc = 0
+                    
+                    if core_cfg.USE_STEALTH_NETWORK:
+                        bridge = await self._next_healthy_bridge()
+                        if bridge:
+                            try:
+                                payload = {"target_url": url, "impersonate": "chrome120"}
+                                headers = {"X-Bridge-Token": core_cfg.BRIDGE_SECRET}
+                                resp = await self._session.post(bridge, json=payload, headers=headers, timeout=20)
+                                sc = resp.status_code
+                                if sc not in [200, 404]:
+                                    self._mark_unhealthy(bridge)
+                                    if sc == 401:
+                                        self.log.debug("Bridge %s returned 401 Unauthorized", bridge)
+                                    resp = None
+                            except Exception as exc:
+                                self.log.debug("Bridge %s exception: %s", bridge, exc)
+                                self._mark_unhealthy(bridge)
+                                resp = None
+                    
+                    if resp is None:
+                        resp = await self._session.get(url, timeout=20)
+                        sc = resp.status_code
 
                     # ── anti-ban + metrics ──
                     if self.antiban:
