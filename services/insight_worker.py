@@ -13,12 +13,58 @@ import pathlib
 import random
 import re
 import time
+import asyncio
+from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 from typing import Optional
 
 from services.llm_client import LLMClient
+from services.agent_orchestrator import AgentOrchestrator
 
 log = logging.getLogger(__name__)
+
+# --- Historical Gate Definitions ---
+SKIP_HISTORICAL_LLM = os.environ.get("SKIP_HISTORICAL_LLM", "true").lower() == "true"
+HISTORICAL_THRESHOLD_DAYS = int(os.environ.get("HISTORICAL_THRESHOLD_DAYS", "14"))
+
+def _is_historical_match(payload: dict) -> bool:
+    if not SKIP_HISTORICAL_LLM:
+        return False
+    
+    ref_time_raw = payload.get("finished_at") or payload.get("kickoff") or payload.get("kickoff_utc")
+    if not ref_time_raw:
+        return False
+    
+    # Handle ISO strings vs Datetime objects
+    if isinstance(ref_time_raw, str):
+        try:
+            from dateutil.parser import parse
+            ref_time = parse(ref_time_raw)
+        except Exception:
+            return False
+    else:
+        ref_time = ref_time_raw
+
+    if ref_time.tzinfo is None:
+        ref_time = ref_time.replace(tzinfo=timezone.utc)
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=HISTORICAL_THRESHOLD_DAYS)
+    
+    # Season check: Current year or year-1 based on month
+    CURRENT_SEASON = datetime.now(timezone.utc).year if datetime.now(timezone.utc).month >= 7 else datetime.now(timezone.utc).year - 1
+    season_val = payload.get("season")
+    is_old_season = False
+    
+    if season_val:
+        try:
+            is_old_season = int(season_val) < CURRENT_SEASON
+        except ValueError:
+            # handle formats like '2023/24'
+            if str(season_val)[:4].isdigit():
+                is_old_season = int(str(season_val)[:4]) < CURRENT_SEASON
+
+    return is_old_season or (ref_time < cutoff)
+# -----------------------------------
 
 # ── Lease durations (seconds) by job_type ──
 LEASE_DURATION = {
@@ -51,15 +97,57 @@ DIVERSITY_CONSECUTIVE_LIMIT = 2   # cannot repeat in last N consecutive
 DIVERSITY_ROLLING_CAP = 2         # max same opening in 30-min window
 DIVERSITY_WINDOW_MINUTES = 30
 
-# ── Singleton LLM client ──
-_llm: Optional[LLMClient] = None
+# ── Singleton Orchestrator ──
+_orchestrator: Optional[AgentOrchestrator] = None
 
+def init_orchestrator():
+    """Explicitly initialize the orchestrator singleton (call on boot)."""
+    global _orchestrator
+    if _orchestrator is None:
+        _orchestrator = AgentOrchestrator(LLMClient())
 
-def _get_llm() -> LLMClient:
-    global _llm
-    if _llm is None:
-        _llm = LLMClient()
-    return _llm
+async def shutdown_orchestrator():
+    """Explicitly shutdown the orchestrator and close HTTPX connection pools."""
+    global _orchestrator
+    if _orchestrator is not None:
+        if _orchestrator.llm.async_groq_client_1:
+            await _orchestrator.llm.async_groq_client_1.close()
+        if _orchestrator.llm.async_groq_client_2:
+            await _orchestrator.llm.async_groq_client_2.close()
+        _orchestrator = None
+
+def _get_orchestrator() -> AgentOrchestrator:
+    global _orchestrator
+    if _orchestrator is None:
+        init_orchestrator()
+    return _orchestrator
+
+def _build_pipeline_context(job_type: str, payload: dict) -> dict:
+    stats = {}
+    if "xg_home" in payload:
+        stats["expected_goals_home"] = payload.get("xg_home", 0)
+        stats["expected_goals_away"] = payload.get("xg_away", 0)
+        stats["possession_home"] = payload.get("possession_home", 50)
+        stats["possession_away"] = payload.get("possession_away", 50)
+        stats["goals_home"] = payload.get("home_score", 0)
+        stats["goals_away"] = payload.get("away_score", 0)
+    elif "statistics" in payload:
+        s = payload["statistics"]
+        stats["expected_goals_home"] = s.get("Expected goals", {}).get("home", 0)
+        stats["expected_goals_away"] = s.get("Expected goals", {}).get("away", 0)
+        poss_h = s.get("Ball possession", {}).get("home", "50")
+        if isinstance(poss_h, str): poss_h = poss_h.replace('%', '')
+        stats["possession_home"] = int(poss_h) if str(poss_h).isdigit() else 50
+        stats["goals_home"] = payload.get("home_score", 0)
+        stats["goals_away"] = payload.get("away_score", 0)
+
+    momentum = payload.get("momentum_score", 0.5)
+    return {
+        "stats": stats,
+        "incidents": payload.get("incidents", []),
+        "standings": {"context": "Ongoing Season"},
+        "momentum_score": float(momentum) if str(momentum).replace('.','',1).isdigit() else 0.5
+    }
 
 
 # ════════════════════════════════════════════════════════════
@@ -445,107 +533,97 @@ def _template_diversity_gate(event_id: int, job_type: str,
 # JOB EXECUTION
 # ════════════════════════════════════════════════════════════
 
-def execute_job(job: dict, *, shadow_mode: bool = True) -> bool:
-    """Execute a picked job: LLM call + post-gates + status update.
+async def execute_job(job: dict, *, shadow_mode: bool = True) -> bool:
+    """Execute a picked job: Agent calls + post-gates + status update.
     Returns True when job reaches terminal state."""
-    from db.config_db import get_connection
-
     job_id = job["id"]
     job_type = job["job_type"]
     event_id = job["event_id"]
     payload = job["payload"]
-    league_id = job["league_id"]
 
     t0 = time.monotonic()
 
     try:
-        # 1. Build prompt
-        pv = job.get("prompt_version")
-        if job_type == "live_badge":
-            system_prompt, user_prompt = _build_live_badge_prompt(payload, pv)
-        elif job_type == "match_story":
-            system_prompt, user_prompt = _build_match_story_prompt(payload, pv)
-        elif job_type == "player_trend":
-            system_prompt, user_prompt = _build_player_trend_prompt(payload, pv)
-        else:
-            _fail_job(job_id, "unknown_job_type",
-                      f"Unsupported: {job_type}")
+        # 1. Historical Gate
+        if job_type in ["live_badge", "match_story"] and _is_historical_match(payload):
+            log.info("Skipping historical match %s", event_id)
+            await asyncio.to_thread(_drop_job, job_id, "historical_match", "Skipped by historical gate", "", "", 0)
             return True
 
-        # 2. Call LLM
-        llm = _get_llm()
-        result_text = llm.generate_insight(
-            user_prompt, system_instruction=system_prompt
-        )
+        # 2. Build Pipeline Context
+        ctx = _build_pipeline_context(job_type, payload)
+        
+        # 3. Call Multi-Agent Orchestrator
+        orchestrator = _get_orchestrator()
+        result_dict = await orchestrator.run_pipeline(job_type, ctx)
         latency_ms = int((time.monotonic() - t0) * 1000)
 
-        if not result_text:
-            _retry_or_fail(job, "llm_empty",
-                           "All LLM providers returned empty")
+        if not result_dict:
+            await asyncio.to_thread(_retry_or_fail, job, "llm_empty", "All LLM agents failed or rejected verification")
             return True
 
-        # Parse dual language
-        from services.text_utils import clean_json_insight
-        max_s = 3 if job_type == "match_story" else 1
-        parsed = clean_json_insight(result_text, max_sentences=max_s)
-        text_en = parsed.get("en", "")
-        text_vi = parsed.get("vi", "")
+        text_en = result_dict.get("final_insight_en") or result_dict.get("dominant_narrative", "")
+        text_vi = result_dict.get("final_insight_vi", "")
+        result_text = json.dumps(result_dict)
 
-        # 3. Post-LLM gate: Novelty (skip for one-shot types)
+        # 4. Post-LLM gate: Novelty
         if job_type == "live_badge" and event_id is not None:
-            if not _novelty_gate(event_id, job_type, text_en):
-                _drop_job(job_id, "near_duplicate", result_text, text_en, text_vi, latency_ms)
+            novelty_pass = await asyncio.to_thread(_novelty_gate, event_id, job_type, text_en)
+            if not novelty_pass:
+                await asyncio.to_thread(_drop_job, job_id, "near_duplicate", result_text, text_en, text_vi, latency_ms)
                 return True
 
-        # 4. Post-LLM gate: Template diversity (live_badge only)
+        # 5. Post-LLM gate: Template diversity
         if job_type == "live_badge" and event_id is not None:
-            if not _template_diversity_gate(event_id, job_type, text_en):
-                _drop_job(job_id, "template_repeat", result_text, text_en, text_vi, latency_ms)
+            diversity_pass = await asyncio.to_thread(_template_diversity_gate, event_id, job_type, text_en)
+            if not diversity_pass:
+                await asyncio.to_thread(_drop_job, job_id, "template_repeat", result_text, text_en, text_vi, latency_ms)
                 return True
 
-        # 5. Success — update job row
+        # 6. Success — update job row
         is_published = not shadow_mode
-        conn = get_connection()
-        try:
-            cur = conn.cursor()
-            cur.execute("""
-                UPDATE ai_insight_jobs
-                SET status = 'succeeded',
-                    result_text = %s,
-                    result_text_en = %s,
-                    result_text_vi = %s,
-                    is_published = %s,
-                    published_at = CASE WHEN %s THEN NOW() ELSE NULL END,
-                    latency_ms = %s,
-                    finished_at = NOW(),
-                    lease_until = NULL,
-                    worker_id = NULL
-                WHERE id = %s
-            """, (result_text, text_en, text_vi, is_published, is_published,
-                  latency_ms, job_id))
-
-            # 6. Write to destination tables (when published)
-            if is_published:
-                _write_destination(cur, job_type, job, result_text, text_en, text_vi)
-
-            conn.commit()
-        finally:
-            conn.close()
-
-        # 7. Discord Rich Embed notification (AFTER DB save success)
-        if is_published and text_en:
+        
+        def db_success_update():
+            from db.config_db import get_connection
+            conn = get_connection()
             try:
-                _send_insight_embed(job_type, job, text_en, text_vi, latency_ms)
-            except Exception as exc:
-                log.debug("Discord embed send error: %s", exc)
+                cur = conn.cursor()
+                cur.execute("""
+                    UPDATE ai_insight_jobs
+                    SET status = 'succeeded',
+                        result_text = %s,
+                        result_text_en = %s,
+                        result_text_vi = %s,
+                        is_published = %s,
+                        published_at = CASE WHEN %s THEN NOW() ELSE NULL END,
+                        latency_ms = %s,
+                        finished_at = NOW(),
+                        lease_until = NULL,
+                        worker_id = NULL
+                    WHERE id = %s
+                """, (result_text, text_en, text_vi, is_published, is_published, latency_ms, job_id))
 
-        log.info("Job %d succeeded: %s latency=%dms published=%s",
-                 job_id, job_type, latency_ms, is_published)
+                if is_published:
+                    _write_destination(cur, job_type, job, result_text, text_en, text_vi)
+
+                conn.commit()
+            finally:
+                conn.close()
+
+            if is_published and text_en:
+                try:
+                    _send_insight_embed(job_type, job, text_en, text_vi, latency_ms)
+                except Exception as exc:
+                    log.debug("Discord embed send error: %s", exc)
+
+        await asyncio.to_thread(db_success_update)
+
+        log.info("Job %d succeeded: %s latency=%dms published=%s", job_id, job_type, latency_ms, is_published)
         return True
 
     except Exception as exc:
         log.error("Job %d execution error: %s", job_id, exc)
-        _retry_or_fail(job, "execution_error", str(exc))
+        await asyncio.to_thread(_retry_or_fail, job, "execution_error", str(exc))
         return True
 
 # ════════════════════════════════════════════════════════════
@@ -844,34 +922,31 @@ def recover_expired_leases() -> int:
 # PUBLIC: WORKER CYCLE
 # ════════════════════════════════════════════════════════════
 
-def run_worker_cycle(league_id: str = None, *,
+async def run_worker_cycle(league_id: str = None, *,
                      shadow_mode: bool = True,
                      max_jobs: int = 20) -> int:
-    """Run one worker cycle: recover leases + process available jobs.
-    Returns number of jobs processed.
-    Respects LLM circuit breakers — if all dead, skip cycle."""
-    # Safety Check: If LLM is fully blocked, don't even pick jobs
-    llm = _get_llm()
+    """Run one async worker cycle: recover leases + process available jobs.
+    Returns number of jobs processed."""
+    orchestrator = _get_orchestrator()
     can_work = False
-    if llm.groq_client_1 and llm.cb_groq_1.can_execute():
+    
+    if orchestrator.llm.async_groq_client_1 and orchestrator.llm.cb_groq_1.can_execute():
         can_work = True
-    elif llm.groq_client_2 and llm.cb_groq_2.can_execute():
+    elif orchestrator.llm.async_groq_client_2 and orchestrator.llm.cb_groq_2.can_execute():
         can_work = True
 
     if not can_work:
-        # We don't log here to avoid spamming every cycle,
-        # but we do recover leases so they don't stay 'running' forever.
-        recover_expired_leases()
+        await asyncio.to_thread(recover_expired_leases)
         return 0
 
-    recover_expired_leases()
+    await asyncio.to_thread(recover_expired_leases)
 
     processed = 0
     while processed < max_jobs:
-        job = pick_job(league_id)
+        job = await asyncio.to_thread(pick_job, league_id)
         if not job:
             break
-        execute_job(job, shadow_mode=shadow_mode)
+        await execute_job(job, shadow_mode=shadow_mode)
         processed += 1
 
     return processed

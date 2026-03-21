@@ -154,6 +154,11 @@ class MasterScheduler:
         self.db_pool = await get_async_pool()
         self.pool.db_pool = self.db_pool  # Pass down to LiveTrackingPool
         
+        # Init AI Orchestrator Singleton
+        from services import insight_worker
+        self.log.info("🔌 Initializing AI Orchestrator...")
+        insight_worker.init_orchestrator()
+
         self.notifier.send(
             "info", f"Master started — {', '.join(self.leagues)} (PID={os.getpid()})"
         )
@@ -170,6 +175,13 @@ class MasterScheduler:
         finally:
             self.log.info("Cleaning up resources...")
             
+            # Close AI Orchestrator Connections
+            from services import insight_worker
+            try:
+                await insight_worker.shutdown_orchestrator()
+            except Exception as e:
+                self.log.warning("Error shutting down orchestrator: %s", e)
+
             # 1. Close DB Pool
             if hasattr(self, 'db_pool') and self.db_pool is not None:
                 await self.db_pool.close()
@@ -224,8 +236,8 @@ class MasterScheduler:
         upcoming = await self.schedule.get_upcoming()
 
         if not upcoming and self.pool.is_empty:
-            # Run AI worker in a thread but wait with shutdown awareness
-            worker_task = asyncio.create_task(asyncio.to_thread(self._run_ai_worker, max_jobs=30))
+            # Run AI worker natively in loop but wait with shutdown awareness
+            worker_task = asyncio.create_task(self._run_ai_worker(max_jobs=30))
             shutdown_task = asyncio.create_task(self._shutdown.wait())
             done, _ = await asyncio.wait(
                 [worker_task, shutdown_task],
@@ -266,7 +278,7 @@ class MasterScheduler:
             finished_matches = await self.pool.poll_all()
 
             # ── 5b. AI Insight worker cycle ──
-            worker_task = asyncio.create_task(asyncio.to_thread(self._run_ai_worker))
+            worker_task = asyncio.create_task(self._run_ai_worker())
             shutdown_task = asyncio.create_task(self._shutdown.wait())
             done, _ = await asyncio.wait(
                 [worker_task, shutdown_task],
@@ -314,7 +326,7 @@ class MasterScheduler:
                 while time.monotonic() - loop_start < delta:
                     if self._shutdown.is_set():
                         return
-                    worker_task = asyncio.create_task(asyncio.to_thread(self._run_ai_worker, max_jobs=25))
+                    worker_task = asyncio.create_task(self._run_ai_worker(max_jobs=25))
                     shutdown_task = asyncio.create_task(self._shutdown.wait())
                     done, _ = await asyncio.wait(
                         [worker_task, shutdown_task],
@@ -329,7 +341,7 @@ class MasterScheduler:
             else:
                 await self._check_news(now)
                 # Guard against CPU spin-loops if a match fails to enter the pool
-                worker_task = asyncio.create_task(asyncio.to_thread(self._run_ai_worker))
+                worker_task = asyncio.create_task(self._run_ai_worker())
                 shutdown_task = asyncio.create_task(self._shutdown.wait())
                 done, _ = await asyncio.wait(
                     [worker_task, shutdown_task],
@@ -343,7 +355,7 @@ class MasterScheduler:
             return
 
         await self._check_news(datetime.now(timezone.utc))
-        worker_task = asyncio.create_task(asyncio.to_thread(self._run_ai_worker))
+        worker_task = asyncio.create_task(self._run_ai_worker())
         shutdown_task = asyncio.create_task(self._shutdown.wait())
         done, _ = await asyncio.wait(
             [worker_task, shutdown_task],
@@ -355,10 +367,10 @@ class MasterScheduler:
         if not self._sleep_interruptible(60):
             return
 
-    def _run_ai_worker(self, max_jobs: int = 15) -> None:
-        """Call the AI insight worker to process queued jobs."""
+    async def _run_ai_worker(self, max_jobs: int = 15) -> None:
+        """Call the async AI insight worker to process queued jobs."""
         try:
-            processed = insight_worker.run_worker_cycle(
+            processed = await insight_worker.run_worker_cycle(
                 shadow_mode=self.insight_shadow_mode,
                 max_jobs=max_jobs,
             )

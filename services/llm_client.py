@@ -9,10 +9,24 @@ Fallback: Groq Key 2 (llama-3.3-70b-versatile)
 import os
 import time
 import logging
+import asyncio
 from pathlib import Path
-from typing import Optional
-from groq import Groq
+from typing import Optional, Dict, Any
+from groq import Groq, AsyncGroq
 from groq import APIStatusError as GroqAPIError
+
+# --- Multi-Agent Pipeline Configuration ---
+TIER1_SEM = asyncio.Semaphore(3)  # Heavy models (Reasoning/Synthesis)
+TIER2_SEM = asyncio.Semaphore(5)  # Light models (Data Extraction)
+
+AGENT_MODEL_MAP = {
+    "data_miner": "llama-3.1-8b-instant",
+    "tactical_analyst": "llama-3.3-70b-versatile",
+    "scout": "llama-3.3-70b-versatile",
+    "editor_in_chief": "llama-3.3-70b-versatile"
+}
+# ------------------------------------------
+
 
 try:
     from dotenv import load_dotenv
@@ -142,6 +156,8 @@ class LLMClient:
 
         self.groq_client_1 = None
         self.groq_client_2 = None
+        self.async_groq_client_1 = None
+        self.async_groq_client_2 = None
 
         self.cb_groq_1 = CircuitBreaker("Groq_1", "groq")
         self.cb_groq_2 = CircuitBreaker("Groq_2", "groq")
@@ -150,12 +166,14 @@ class LLMClient:
         if self.groq_key_1:
             try:
                 self.groq_client_1 = Groq(api_key=self.groq_key_1)
+                self.async_groq_client_1 = AsyncGroq(api_key=self.groq_key_1)
             except Exception as e:
                 logger.error("Failed to init Groq client 1: %s", e)
 
         if self.groq_key_2:
             try:
                 self.groq_client_2 = Groq(api_key=self.groq_key_2)
+                self.async_groq_client_2 = AsyncGroq(api_key=self.groq_key_2)
             except Exception as e:
                 logger.error("Failed to init Groq client 2: %s", e)
 
@@ -227,6 +245,87 @@ class LLMClient:
 
         logger.error("All configured Groq clients are unavailable. Returning empty insight.")
         return ""
+
+    async def _async_call_groq(self, client: AsyncGroq, model: str, prompt: str,
+                               system_instruction: Optional[str] = None,
+                               response_format: Optional[Dict[str, Any]] = None) -> str:
+        messages = []
+        if system_instruction:
+            messages.append({"role": "system", "content": system_instruction})
+        messages.append({"role": "user", "content": prompt})
+
+        kwargs = {
+            "messages": messages,
+            "model": model,
+            "temperature": 0.2, # Default conservative temp
+        }
+        if response_format:
+            kwargs["response_format"] = response_format
+
+        chat_completion = await client.chat.completions.create(**kwargs)
+        if chat_completion.choices:
+            return chat_completion.choices[0].message.content.strip()
+        return ""
+
+    async def async_generate_for_agent(self, agent_name: str, prompt: str,
+                                       system_instruction: Optional[str] = None,
+                                       response_format: Optional[Dict[str, Any]] = None) -> str:
+        """
+        Asynchronously generates an insight specifically routed by agent name, 
+        respecting tiered semaphores and model mappings.
+        """
+        if not self.async_groq_client_1 and not self.async_groq_client_2:
+            logger.warning("No async LLM clients configured.")
+            return ""
+
+        model = AGENT_MODEL_MAP.get(agent_name, "llama-3.3-70b-versatile")
+        
+        # Determine semaphore tier based on model type
+        sem = TIER2_SEM if model == "llama-3.1-8b-instant" else TIER1_SEM
+
+        async with sem:
+            # 1. Try Primary: Groq Key 1
+            if self.async_groq_client_1 and self.cb_groq_1.can_execute():
+                try:
+                    res = await self._async_call_groq(
+                        self.async_groq_client_1, model, prompt, system_instruction, response_format
+                    )
+                    self.cb_groq_1.record_success()
+                    logger.debug(
+                        "Async LLM OK | agent=%s | provider=groq_1 | length=%d",
+                        agent_name, len(res)
+                    )
+                    return res
+                except GroqAPIError as e:
+                    status_code = getattr(e, "status_code", 500)
+                    self.cb_groq_1.record_error(status_code)
+                    logger.warning("Async Groq API (Key 1) failed for %s (HTTP %s): %s", agent_name, status_code, e)
+                except Exception as e:
+                    self.cb_groq_1.record_error(500)
+                    logger.warning("Async Groq API (Key 1) unexpected error for %s: %s", agent_name, e)
+
+            # 2. Try Secondary: Groq Key 2
+            if self.async_groq_client_2 and self.cb_groq_2.can_execute():
+                try:
+                    res = await self._async_call_groq(
+                        self.async_groq_client_2, model, prompt, system_instruction, response_format
+                    )
+                    self.cb_groq_2.record_success()
+                    logger.debug(
+                        "Async LLM OK | agent=%s | provider=groq_2 | length=%d",
+                        agent_name, len(res)
+                    )
+                    return res
+                except GroqAPIError as e:
+                    status_code = getattr(e, "status_code", 500)
+                    self.cb_groq_2.record_error(status_code)
+                    logger.warning("Async Groq API (Key 2) failed for %s (HTTP %s): %s", agent_name, status_code, e)
+                except Exception as e:
+                    self.cb_groq_2.record_error(500)
+                    logger.warning("Async Groq API (Key 2) unexpected error for %s: %s", agent_name, e)
+
+            logger.error("All async Groq clients failed for agent %s.", agent_name)
+            return ""
 
 
 if __name__ == "__main__":
