@@ -8,4 +8,12 @@
 
 ## Dependencies
 - Need to install `asyncpg`.
-- Need to keep `psycopg2-binary` for non-async modules like `db/loader.py` and `db/setup_db.py` because they are synchronous.
+## 📊 Database Performance Insights (2026-03-20)
+- **Vấn đề**: Database Load tăng đột biến (>3000%) do Scraper chạy cường độ cao.
+- **Tối ưu Index**: Aiven phát hiện 2 Index dư thừa cần xóa:
+    - `idx_live_inc_event` (public.live_incidents)
+    - `idx_crossref_fb` (public.player_crossref)
+- **Hành động sau này**:
+    - Thực hiện `DROP INDEX` cho 2 index trên.
+    - Tạo Composite Index cho bảng `heatmaps` trên 2 cột `(event_id, player_id)`.
+    - Kiểm tra các Index trên bảng `shots` vì tốc độ ghi đang rất chậm (6s+).

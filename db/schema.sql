@@ -55,6 +55,13 @@
 --  30. ai_insight_jobs     — AI insight pipeline queue
 --  31. ai_insight_feedback — AI insight quality feedback
 --  32. mv_player_complete_stats — player comparison MV (all sources)
+--  33. cb_state_log — circuit breaker logs
+--  34. users — core identity
+--  35. refresh_tokens — long-lived session persistence
+--  36. user_preferences — personalized settings & timezone
+--  37. user_follows — explicit/implicit following (players, squads)
+--  38. user_predictions — gamified match outcome predictions
+--  39. user_audit_logs — behavioral tracking for AI engine
 -- ============================================================
 
 -- ============================================================
@@ -74,6 +81,7 @@ CREATE TABLE IF NOT EXISTS leagues (
     tm_comp_id        TEXT,
     tm_slug           TEXT,
     sofascore_id      INTEGER,
+    logo_url          TEXT,
     is_active         BOOLEAN DEFAULT TRUE,
     priority          INTEGER DEFAULT 1,
     loaded_at         TIMESTAMPTZ DEFAULT NOW(),
@@ -136,6 +144,24 @@ CREATE TABLE IF NOT EXISTS standings (
     loaded_at        TIMESTAMPTZ DEFAULT NOW(),
     PRIMARY KEY (team_id, league_id, season)
 );
+
+-- ──────────────────────────────────────────────────────────
+-- 2b. STANDINGS HISTORY (Lịch sử BXH — Immutable History)
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS standings_history (
+    id          BIGSERIAL PRIMARY KEY,
+    team_id     TEXT NOT NULL,
+    team_name   TEXT, -- Bổ sung để dễ dàng tra cứu theo tên từ match story
+    league_id   TEXT NOT NULL,
+    season      VARCHAR(10) NOT NULL,
+    position    INTEGER NOT NULL,
+    points      INTEGER NOT NULL,
+    snapshot_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    matchday    INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_sh_lookup 
+    ON standings_history (team_id, league_id, season, snapshot_at DESC);
 
 -- ============================================================
 -- NHÓM B: CHILD TABLES (Understat)
@@ -909,7 +935,8 @@ CREATE TABLE IF NOT EXISTS match_summaries (
     summary_text    TEXT,
     summary_text_en TEXT,
     summary_text_vi TEXT,
-    loaded_at       TIMESTAMPTZ DEFAULT NOW(),
+    standing_context_json JSONB, -- Pre-computed impact (Strategic Context)
+    created_at       TIMESTAMPTZ DEFAULT NOW(),
     updated_at      TIMESTAMPTZ,
     PRIMARY KEY (event_id)
 );
@@ -1738,6 +1765,113 @@ CREATE TABLE IF NOT EXISTS cb_state_log (
 CREATE INDEX IF NOT EXISTS idx_cb_state_log_time ON cb_state_log(logged_at DESC);
 
 
+-- ──────────────────────────────────────────────────────────
+-- 34. USERS — core identity
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS users (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email           TEXT UNIQUE NOT NULL,
+    password        TEXT NOT NULL,
+    name            TEXT,
+    role            TEXT NOT NULL DEFAULT 'USER', -- USER, ADMIN, SERVICE
+    status          TEXT NOT NULL DEFAULT 'PENDING', -- PENDING, ACTIVE, BANNED
+    email_verified  BOOLEAN DEFAULT FALSE,
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+
+-- ──────────────────────────────────────────────────────────
+-- 35. REFRESH_TOKENS — long-lived session persistence
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+    id              BIGSERIAL PRIMARY KEY,
+    user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token           TEXT UNIQUE NOT NULL,
+    expiry_date     TIMESTAMPTZ NOT NULL,
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_token ON refresh_tokens(token);
+
+
+-- ──────────────────────────────────────────────────────────
+-- 36. USER_PREFERENCES — personalized settings & privacy
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS user_preferences (
+    user_id         UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    fav_language    TEXT DEFAULT 'vi', 
+    theme           TEXT DEFAULT 'dark',
+    timezone        TEXT DEFAULT 'UTC+7',
+    push_enabled    BOOLEAN DEFAULT TRUE,
+    silent_start    TIME,
+    silent_end      TIME,
+    privacy_level   TEXT DEFAULT 'STANDARD' 
+        CHECK (privacy_level IN ('STANDARD', 'ANONYMOUS', 'STRICT')),
+    implicit_consent BOOLEAN DEFAULT FALSE,
+    updated_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ──────────────────────────────────────────────────────────
+-- 37. USER_FOLLOWS — weights-based following infrastructure
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS user_follows (
+    id              BIGSERIAL PRIMARY KEY,
+    user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    entity_id       TEXT NOT NULL, -- player_slug, team_id, or league_id
+    entity_type     TEXT NOT NULL 
+        CHECK (entity_type IN ('TEAM', 'PLAYER', 'LEAGUE')),
+    priority_score  INTEGER DEFAULT 10,  -- Implicit=5, Explicit=10
+    is_implicit     BOOLEAN DEFAULT FALSE, 
+    follow_reason   TEXT, 
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (user_id, entity_id, entity_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_follows_user ON user_follows (user_id);
+CREATE INDEX IF NOT EXISTS idx_follows_entity ON user_follows (entity_id);
+
+-- ──────────────────────────────────────────────────────────
+-- 38. USER_PREDICTIONS — match outcome gaming
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS user_predictions (
+    id                BIGSERIAL PRIMARY KEY,
+    user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    event_id          BIGINT NOT NULL, -- SofaScore event_id
+    prediction_type   TEXT NOT NULL
+        CHECK (prediction_type IN ('WINNER', 'FIRST_SCORER', 'XG_BEAT')),
+    predicted_value   TEXT NOT NULL,
+    prediction_status TEXT DEFAULT 'PENDING'
+        CHECK (prediction_status IN ('PENDING', 'SETTLED', 'VOID')),
+    is_correct        BOOLEAN,
+    points_earned     INTEGER DEFAULT 0,
+    created_at        TIMESTAMPTZ DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_predictions_user ON user_predictions (user_id);
+CREATE INDEX IF NOT EXISTS idx_predictions_event ON user_predictions (event_id, prediction_status);
+
+-- ──────────────────────────────────────────────────────────
+-- 39. USER_AUDIT_LOGS — behavioral intelligence storage
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS user_audit_logs (
+    id              BIGSERIAL PRIMARY KEY,
+    user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    action_type     TEXT NOT NULL, -- VIEW_PLAYER, VIEW_TEAM, SEARCH, etc.
+    entity_id       TEXT,
+    metadata        JSONB,
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_behavior 
+    ON user_audit_logs (user_id, action_type, created_at);
+
+
 -- ============================================================
 -- NHÓM J: UPDATED_AT TRIGGER + COLUMNS
 -- ============================================================
@@ -1790,7 +1924,8 @@ BEGIN
         'market_values', 'player_crossref',
         'team_registry', 'team_canonical', 'match_crossref',
         'live_match_state', 'ai_insight_jobs', 'match_summaries',
-        'player_insights', 'cb_state_log'
+        'player_insights', 'cb_state_log', 'users', 'refresh_tokens',
+        'user_preferences', 'user_follows', 'user_predictions', 'user_audit_logs'
     ])
     LOOP
         EXECUTE format(
