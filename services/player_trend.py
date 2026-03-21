@@ -25,7 +25,7 @@ from services.prompt_registry import get_prompt
 SYSTEM_PROMPT = get_prompt("player_trend")
 
 
-def analyze_all_players(league: str) -> list[dict]:
+def analyze_all_players(league: str, force: bool = False) -> list[dict]:
     """
     Analyze the trend of all players in a league and return a list of insights.
     
@@ -37,19 +37,53 @@ def analyze_all_players(league: str) -> list[dict]:
         conn = get_connection()
         cur = conn.cursor()
 
-        # Get the last 5 matches for each player who played >= 30 mins
-        # Uses window function to rank matches per player
-        cur.execute("""
-            WITH ranked AS (
-                SELECT
-                    player_id, player, match_id,
-                    goals, assists, xg, xa, xg_chain, shots, key_passes, time,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY player_id
-                        ORDER BY match_id DESC
-                    ) AS rn
+        # Step 1: Early Exit Gate (No active matches)
+        if not force:
+            cur.execute("""
+                SELECT COUNT(*) FROM matches 
+                WHERE finished_at >= NOW() - INTERVAL '5 days'
+                  AND status = 'finished' AND league_id = %s
+            """, (league,))
+            if cur.fetchone()[0] == 0:
+                log.info("🚫 No active matches in the last 5 days for %s. Skipping player trend analysis.", league)
+                cur.close()
+                conn.close()
+                return []
+
+        # Step 2: Fetch Existing Insights for Dirty Check
+        cur.execute("SELECT player_id, trend, trend_score FROM player_insights WHERE league_id = %s", (league,))
+        existing_insights = {row[0]: {"trend": row[1], "score": float(row[2])} for row in cur.fetchall()}
+
+        # Step 3: Fetch Player Stats with Participation Filter
+        active_cte = ""
+        if not force:
+            active_cte = """
+            active_matches AS (
+                SELECT id FROM matches 
+                WHERE finished_at >= NOW() - INTERVAL '5 days'
+                  AND status = 'finished'
+            ),
+            active_players AS (
+                SELECT DISTINCT player_id
                 FROM player_match_stats
-                WHERE league_id = %s AND time >= 30
+                WHERE match_id IN (SELECT id FROM active_matches)
+                  AND "time" > 0
+            ),
+            """
+
+        sql = f"""
+            WITH {active_cte}
+            ranked AS (
+                SELECT
+                    pms.player_id, pms.player, pms.match_id,
+                    pms.goals, pms.assists, pms.xg, pms.xa, pms.xg_chain, pms.shots, pms.key_passes, pms."time",
+                    ROW_NUMBER() OVER (
+                        PARTITION BY pms.player_id
+                        ORDER BY pms.match_id DESC
+                    ) AS rn
+                FROM player_match_stats pms
+                {"INNER JOIN active_players ap ON pms.player_id = ap.player_id" if not force else ""}
+                WHERE pms.league_id = %(league)s AND pms."time" >= 30
             )
             SELECT player_id, player,
                    array_agg(goals ORDER BY rn ASC) AS goals_arr,
@@ -64,7 +98,8 @@ def analyze_all_players(league: str) -> list[dict]:
             GROUP BY player_id, player
             HAVING COUNT(*) >= 3
             ORDER BY player
-        """, (league,))
+        """
+        cur.execute(sql, {"league": league})
 
         rows = cur.fetchall()
         cur.close()
@@ -86,6 +121,12 @@ def analyze_all_players(league: str) -> list[dict]:
 
             trend, score = _calculate_trend(goals, assists, xg_arr, xa_arr, shots, key_passes)
 
+            # Step 4: Dirty Check (Skip unchanged players)
+            if not force and player_id in existing_insights:
+                old = existing_insights[player_id]
+                if old["trend"] == trend and abs(old["score"] - score) < 0.01:
+                    continue  # Skip: Structural data identical
+
             all_players.append({
                 "player_id": player_id,
                 "player_name": player_name,
@@ -99,6 +140,10 @@ def analyze_all_players(league: str) -> list[dict]:
                 "match_count": match_count,
                 "insight_text": "",
             })
+
+        if not all_players:
+             log.info("⚡ All player trends are up-to-date for %s (0 changes)", league)
+             return []
 
         # Phase 2: Enqueue top players vào queue thay vì gọi LLM trực tiếp
         LLM_BUDGET = 15
@@ -271,9 +316,9 @@ def _static_insight(player: dict) -> str:
         return f"{name} maintains a stable form with {goals} goals in the last {n} matches."
 
 
-def run_and_save(league: str) -> int:
+def run_and_save(league: str, force: bool = False) -> int:
     """Run trend analysis for all players in a league and save to DB."""
-    insights = analyze_all_players(league)
+    insights = analyze_all_players(league, force=force)
     if not insights:
         return 0
 
@@ -294,6 +339,8 @@ def run_and_save(league: str) -> int:
                     trend_score = EXCLUDED.trend_score,
                     insight_text = EXCLUDED.insight_text,
                     loaded_at = NOW()
+                WHERE player_insights.trend IS DISTINCT FROM EXCLUDED.trend
+                   OR player_insights.trend_score IS DISTINCT FROM EXCLUDED.trend_score
             """, (
                 ins["player_id"], ins["player_name"], ins["league_id"],
                 ins["trend"], ins["score"], ins["insight_text"],
