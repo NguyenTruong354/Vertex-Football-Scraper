@@ -4,7 +4,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from core.config import LEAGUE_SOURCES, ROOT, PYTHON
-from core.runner import run_with_retry
+from core.runner import run_with_retry, async_run_with_retry
 from core.utils import Notifier
 from services import insight_producer
 
@@ -38,177 +38,197 @@ class DailyMaintenance:
         self.fbref_match_limit = max(0, int(fbref_match_limit))
         self.skip_ai_trend = skip_ai_trend
         self.last_run_date: str | None = None
+        self._daily_attempt_date: str | None = None
+        self._daily_attempt_count: int = 0
 
     def is_due(self) -> bool:
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        return self.last_run_date != today
+        if self.last_run_date == today:
+            return False
+        if self._daily_attempt_date == today and self._daily_attempt_count >= 3:
+            return False
+        return True
 
-    def run(self) -> bool:
+    async def _process_league(
+        self,
+        league: str,
+        since_date: str,
+        scraper_sem: asyncio.Semaphore,
+        browser_sem: asyncio.Semaphore,
+        db_write_sem: asyncio.Semaphore,
+    ) -> bool:
+        ok = True
+        sources = LEAGUE_SOURCES.get(league, {})
+        
+        # ── PHASE A: Parallel Scrapers ──
+        async def run_understat():
+            if sources.get("understat"):
+                async with scraper_sem:
+                    return await async_run_with_retry(
+                        [PYTHON, "async_scraper.py", "--league", league, "--limit", "10"],
+                        ROOT / "understat",
+                        f"Daily/Understat [{league}]",
+                        self.log, dry_run=self.dry_run, timeout=self.task_timeout_seconds, shutdown_event=self._shutdown
+                    )
+            return True
+
+        async def run_sofascore():
+            if sources.get("sofascore"):
+                async with scraper_sem:
+                    return await async_run_with_retry(
+                        [PYTHON, "sofascore_client.py", "--league", league, "--match-limit", "10"],
+                        ROOT / "sofascore",
+                        f"Daily/SofaScore [{league}]",
+                        self.log, dry_run=self.dry_run, timeout=self.task_timeout_seconds, shutdown_event=self._shutdown
+                    )
+            return True
+
+        async def run_fbref():
+            if sources.get("fbref"):
+                # CRITICAL: Acquire scraper slot AND browser lock
+                async with scraper_sem, browser_sem:
+                    fbref_cmd = [PYTHON, "fbref_scraper.py", "--league", league]
+                    if self.fbref_standings_only:
+                        fbref_cmd.append("--standings-only")
+                    else:
+                        if self.fbref_no_match_passing:
+                            fbref_cmd.append("--no-match-passing")
+                        else:
+                            fbref_cmd.extend(["--since-date", since_date])
+                        if self.fbref_team_limit > 0:
+                            fbref_cmd.extend(["--limit", str(self.fbref_team_limit)])
+                        if self.fbref_match_limit > 0:
+                            fbref_cmd.extend(["--match-limit", str(self.fbref_match_limit)])
+                    
+                    return await async_run_with_retry(
+                        fbref_cmd,
+                        ROOT / "fbref",
+                        f"Daily/FBref [{league}]",
+                        self.log, dry_run=self.dry_run, timeout=self.task_timeout_seconds, shutdown_event=self._shutdown
+                    )
+            return True
+
+        async def run_transfermarkt():
+            if sources.get("transfermarkt"):
+                # CRITICAL: Acquire both scraper slot AND browser lock (Transfermarkt uses nodriver Chrome)
+                async with scraper_sem, browser_sem:
+                    return await async_run_with_retry(
+                        [PYTHON, "tm_scraper.py", "--league", league, "--metadata-only"],
+                        ROOT / "transfermarkt",
+                        f"Daily/Transfermarkt-metadata [{league}]",
+                        self.log, dry_run=self.dry_run, timeout=self.task_timeout_seconds, shutdown_event=self._shutdown
+                    )
+            return True
+
+        self.log.info("▶ Starting Phase A (Parallel Scrapers) for %s", league)
+        a_results = await asyncio.gather(
+            run_understat(), run_sofascore(), run_fbref(), run_transfermarkt()
+        )
+        ok &= all(a_results)
+
+        if self._shutdown and self._shutdown.is_set():
+            return False
+            
+        # ── PHASE B: DBLoad ──
+        # Sequential per league, globally protected by db_write_sem
+        self.log.info("▶ Starting Phase B (DBLoad) for %s", league)
+        async with db_write_sem:
+            ok &= await async_run_with_retry(
+                [PYTHON, "-m", "db.loader", "--league", league],
+                ROOT,
+                f"Daily/DBLoad [{league}]",
+                self.log, dry_run=self.dry_run, timeout=self.task_timeout_seconds, shutdown_event=self._shutdown
+            )
+
+        if self._shutdown and self._shutdown.is_set():
+            return False
+
+        # ── PHASE C: Crossref ──
+        if not self.skip_crossref_build:
+            self.log.info("▶ Starting Phase C (Crossref) for %s", league)
+            async with scraper_sem:
+                ok &= await async_run_with_retry(
+                    [PYTHON, "tools/maintenance/build_team_canonical.py", "--league", league],
+                    ROOT, f"Daily/TeamCanonical [{league}]",
+                    self.log, dry_run=self.dry_run, timeout=self.task_timeout_seconds, shutdown_event=self._shutdown
+                )
+                ok &= await async_run_with_retry(
+                    [PYTHON, "tools/maintenance/build_match_crossref.py", "--league", league],
+                    ROOT, f"Daily/MatchCrossref [{league}]",
+                    self.log, dry_run=self.dry_run, timeout=self.task_timeout_seconds, shutdown_event=self._shutdown
+                )
+
+        return ok
+
+    async def run(
+        self,
+        scraper_sem: asyncio.Semaphore,
+        browser_sem: asyncio.Semaphore,
+        db_write_sem: asyncio.Semaphore,
+    ) -> bool:
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if self._daily_attempt_date != today:
+            self._daily_attempt_date = today
+            self._daily_attempt_count = 0
+            
+        self._daily_attempt_count += 1
+
         self.log.info("═" * 50)
-        self.log.info("DAILY MAINTENANCE (all leagues)")
+        self.log.info("DAILY MAINTENANCE (all leagues) [PARALLEL MODE]")
+        self.log.info("Attempt %d/3 for %s", self._daily_attempt_count, today)
         self.log.info("═" * 50)
 
-        # Window 3 ngày: safety margin cho 2 trường hợp thực tế:
-        #   1. Nếu daily maintenance bị skip 1 ngày (crash, restart, maintenance window)
-        #      → ngày đó sẽ không bị miss.
-        #   2. FBref thường cập nhật số liệu sau trận vài tiếng, đôi khi qua ngày hôm sau
-        #      mới có đầy đủ data → cần re-fetch ngày hôm qua lần nữa.
-        # Cost thêm không đáng kể so với việc quét cả mùa (~3 ngày vs ~9 tháng).
         _LOOKBACK_DAYS = 3
         since_date = (
             datetime.now(timezone.utc) - timedelta(days=_LOOKBACK_DAYS)
         ).strftime("%Y-%m-%d")
         self.log.info("  since_date: %s (lookback=%d days)", since_date, _LOOKBACK_DAYS)
 
-        ok = True
-        for league in self.leagues:
-            if self._shutdown and self._shutdown.is_set():
-                self.log.info("⏹ Daily maintenance aborted (shutdown)")
-                return False
-            sources = LEAGUE_SOURCES.get(league, {})
+        if self._shutdown and self._shutdown.is_set():
+            self.log.info("⏹ Daily maintenance aborted (shutdown)")
+            return False
 
-            # Understat: limit 10 trận gần nhất (daily compensate missed matches)
-            if sources.get("understat"):
-                ok &= run_with_retry(
-                    [PYTHON, "async_scraper.py", "--league", league, "--limit", "10"],
-                    ROOT / "understat",
-                    f"Daily/Understat [{league}]",
-                    self.log,
-                    dry_run=self.dry_run,
-                    timeout=self.task_timeout_seconds,
-                    shutdown_event=self._shutdown,
-                )
-
-            # SofaScore: limit 10 trận (lineup + passing + advanced stats)
-            if sources.get("sofascore"):
-                ok &= run_with_retry(
-                    [
-                        PYTHON,
-                        "sofascore_client.py",
-                        "--league",
-                        league,
-                        "--match-limit",
-                        "10",
-                    ],
-                    ROOT / "sofascore",
-                    f"Daily/SofaScore [{league}]",
-                    self.log,
-                    dry_run=self.dry_run,
-                    timeout=self.task_timeout_seconds,
-                    shutdown_event=self._shutdown,
-                )
-
-            if sources.get("fbref"):
-                fbref_cmd = [PYTHON, "fbref_scraper.py", "--league", league]
-                if self.fbref_standings_only:
-                    fbref_cmd.append("--standings-only")
-                    # --standings-only không chạy STEP 4 (match reports) nên
-                    # --since-date không có tác dụng → không cần append.
-                else:
-                    if self.fbref_no_match_passing:
-                        fbref_cmd.append("--no-match-passing")
-                    else:
-                        # Giới hạn match reports theo ngày để tránh re-scrape cả mùa.
-                        # since_date = now - 3 days, computed once at top of run().
-                        fbref_cmd.extend(["--since-date", since_date])
-                    if self.fbref_team_limit > 0:
-                        fbref_cmd.extend(["--limit", str(self.fbref_team_limit)])
-                    if self.fbref_match_limit > 0:
-                        fbref_cmd.extend(["--match-limit", str(self.fbref_match_limit)])
-                ok &= run_with_retry(
-                    fbref_cmd,
-                    ROOT / "fbref",
-                    f"Daily/FBref [{league}]",
-                    self.log,
-                    dry_run=self.dry_run,
-                    timeout=self.task_timeout_seconds,
-                    shutdown_event=self._shutdown,
-                )
-            if sources.get("transfermarkt"):
-                # Daily TM dùng --metadata-only: chỉ scrape team overview pages
-                # (stadium, manager, formation) — bỏ qua kader/market value pages.
-                # Lý do: market values trên TM cập nhật ~1 lần/tuần (thứ 4),
-                # không cần scrape full kader daily (20 đội × 30+ cầu thủ).
-                # Market values đầy đủ được cập nhật qua run_pipeline.py chạy weekly.
-                ok &= run_with_retry(
-                    [PYTHON, "tm_scraper.py", "--league", league, "--metadata-only"],
-                    ROOT / "transfermarkt",
-                    f"Daily/Transfermarkt-metadata [{league}]",
-                    self.log,
-                    dry_run=self.dry_run,
-                    timeout=self.task_timeout_seconds,
-                    shutdown_event=self._shutdown,
-                )
-            ok &= run_with_retry(
-                [PYTHON, "-m", "db.loader", "--league", league],
-                ROOT,
-                f"Daily/DBLoad [{league}]",
-                self.log,
-                dry_run=self.dry_run,
-                timeout=self.task_timeout_seconds,
-                shutdown_event=self._shutdown,
-            )
-
-            if not self.skip_crossref_build:
-                ok &= run_with_retry(
-                    [
-                        PYTHON,
-                        "tools/maintenance/build_team_canonical.py",
-                        "--league",
-                        league,
-                    ],
-                    ROOT,
-                    f"Daily/TeamCanonical [{league}]",
-                    self.log,
-                    dry_run=self.dry_run,
-                    timeout=self.task_timeout_seconds,
-                    shutdown_event=self._shutdown,
-                )
-                ok &= run_with_retry(
-                    [
-                        PYTHON,
-                        "tools/maintenance/build_match_crossref.py",
-                        "--league",
-                        league,
-                    ],
-                    ROOT,
-                    f"Daily/MatchCrossref [{league}]",
-                    self.log,
-                    dry_run=self.dry_run,
-                    timeout=self.task_timeout_seconds,
-                    shutdown_event=self._shutdown,
-                )
+        # Process all leagues in parallel with dependency graph inside
+        self.log.info(">> PHASE 1/4: Scrapers & DB Loading")
+        tasks = [
+            self._process_league(league, since_date, scraper_sem, browser_sem, db_write_sem)
+            for league in self.leagues
+        ]
+        results = await asyncio.gather(*tasks)
+        ok = all(results)
 
         if self._shutdown and self._shutdown.is_set():
             self.log.info("⏹ Daily maintenance aborted before post-steps (shutdown)")
             return False
 
         # AI: Nightly player performance trend analysis
+        self.log.info(">> PHASE 2/4: AI Player Trends")
         if self.skip_ai_trend:
             self.log.info("⏭ Daily AI trend disabled (--skip-ai-trend)")
         else:
-            self._analyze_player_trends()
+            await asyncio.to_thread(self._analyze_player_trends)
 
         if self._shutdown and self._shutdown.is_set():
             self.log.info("⏹ Daily maintenance aborted after AI trends (shutdown)")
             return False
 
         # Cleanup live data
-        self._cleanup_live_data()
+        self.log.info(">> PHASE 3/4: Cleanup & Vacuum")
+        await asyncio.to_thread(self._cleanup_live_data)
 
         if self._shutdown and self._shutdown.is_set():
             self.log.info("⏹ Daily maintenance aborted after cleanup (shutdown)")
             return False
 
         # Disk space cleanup: remove old output files
-        self._cleanup_disk_space()
+        await asyncio.to_thread(self._cleanup_disk_space)
 
         if self._shutdown and self._shutdown.is_set():
             self.log.info("⏹ Daily maintenance aborted after disk cleanup (shutdown)")
             return False
 
         # AI insight jobs retention cleanup
-        self._cleanup_old_insight_jobs()
+        await asyncio.to_thread(self._cleanup_old_insight_jobs)
 
         if self._shutdown and self._shutdown.is_set():
             self.log.info(
@@ -217,12 +237,13 @@ class DailyMaintenance:
             return False
 
         # Refresh views
-        self._refresh_views()
+        self.log.info(">> PHASE 4/4: Refreshing Materialized Views")
+        await asyncio.to_thread(self._refresh_views)
 
-        self.last_run_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        self.last_run_date = today
 
         # Send Daily Health Report (Rich Embed)
-        self._send_health_report(ok)
+        await asyncio.to_thread(self._send_health_report, ok)
         return ok
 
     def _analyze_player_trends(self) -> None:

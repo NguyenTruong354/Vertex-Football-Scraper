@@ -159,33 +159,20 @@ def analyze_all_players(league: str, force: bool = False) -> list[dict]:
 
         log.info("  📥 Enqueueing %d notable players into job queue...", len(llm_candidates))
 
-        from services.insight_producer import enqueue_player_trend
+        from services.insight_producer import enqueue_player_trend_batch
 
         enqueued_count = 0
         insights = []
         total_players = len(all_players)
         
+        batch_candidates = []
         for idx, p in enumerate(all_players):
             if (idx + 1) % 100 == 0:
                 log.info("    ... processed %d/%d players", idx + 1, total_players)
                 
-            # Với notable players: enqueue vào queue để worker xử lý async
+            # Với notable players: collect into batch
             if p["player_id"] in llm_candidates:
-                job_id = enqueue_player_trend(
-                    league_id=p["league_id"],
-                    player_id=p["player_id"],
-                    player_name=p["player_name"],
-                    trend=p["trend"],
-                    trend_score=p["score"],
-                    goals=p["goals"],
-                    assists=p["assists"],
-                    xg_arr=p["xg_arr"],
-                    xa_arr=p["xa_arr"],
-                    match_count=p["match_count"],
-                )
-                if job_id:
-                    enqueued_count += 1
-                # Dùng static insight tạm thời — worker sẽ update sau khi LLM xong
+                batch_candidates.append(p)
                 p["insight_text"] = _static_insight(p)
             else:
                 p["insight_text"] = _static_insight(p)
@@ -198,6 +185,9 @@ def analyze_all_players(league: str, force: bool = False) -> list[dict]:
                 "score": p["score"],
                 "insight_text": p["insight_text"],
             })
+
+        if batch_candidates:
+            enqueued_count = enqueue_player_trend_batch(batch_candidates)
 
         log.info("  ✓ Enqueued %d player_trend jobs for async LLM processing", enqueued_count)
         return insights
@@ -325,11 +315,12 @@ def run_and_save(league: str, force: bool = False) -> int:
     saved = 0
     try:
         from db.config_db import get_connection
+        from psycopg2.extras import execute_batch
         conn = get_connection()
-        cur = conn.cursor()
-
-        for ins in insights:
-            cur.execute("""
+        try:
+            cur = conn.cursor()
+            
+            sql = """
                 INSERT INTO player_insights
                     (player_id, player_name, league_id, trend, trend_score, insight_text)
                 VALUES (%s, %s, %s, %s, %s, %s)
@@ -341,16 +332,21 @@ def run_and_save(league: str, force: bool = False) -> int:
                     loaded_at = NOW()
                 WHERE player_insights.trend IS DISTINCT FROM EXCLUDED.trend
                    OR player_insights.trend_score IS DISTINCT FROM EXCLUDED.trend_score
-            """, (
-                ins["player_id"], ins["player_name"], ins["league_id"],
-                ins["trend"], ins["score"], ins["insight_text"],
-            ))
-            saved += 1
-
-        conn.commit()
-        cur.close()
-        conn.close()
-        log.info("✓ Saved %d player insights for %s", saved, league)
+            """
+            
+            args_list = [
+                (ins["player_id"], ins["player_name"], ins["league_id"],
+                 ins["trend"], ins["score"], ins["insight_text"])
+                for ins in insights
+            ]
+            
+            if args_list:
+                execute_batch(cur, sql, args_list, page_size=200)
+                conn.commit()
+                saved = len(args_list)
+            log.info("✓ Saved %d player insights for %s", saved, league)
+        finally:
+            conn.close()
     except Exception as exc:
         log.error("Failed to save player insights: %s", exc)
 

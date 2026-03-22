@@ -329,7 +329,7 @@ class LiveTrackingPool:
                 old_ids = {i.get("id") for i in old_incidents if i.get("id")}
                 for inc in inc_data.get("incidents") or []:
                     iid = inc.get("id")
-                    if iid and iid not in old_ids and _is_tier_c_trigger(inc):
+                    if iid and iid not in old_ids and is_tier_c_trigger(inc):
                         state._tier_c_pending = True
                         break
 

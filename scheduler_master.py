@@ -58,6 +58,11 @@ class MasterScheduler:
         self.notifier = Notifier(self.log)
         self._shutdown = asyncio.Event()
 
+        # Global Resource Governors
+        self.scraper_sem = asyncio.Semaphore(4)
+        self.browser_sem = asyncio.Semaphore(1)
+        self.db_write_sem = asyncio.Semaphore(2)
+
         self.tournament_ids = {l: TOURNAMENT_IDS[l] for l in self.leagues}
         self.browser = CurlCffiClient(self.log, self.notifier, dry_run=dry_run)
         # ── Anti-ban state machine + metrics (plan_live Step 1+2) ──
@@ -111,14 +116,13 @@ class MasterScheduler:
         if hasattr(signal, "SIGBREAK"):
             signal.signal(signal.SIGBREAK, handler)
 
-    def _sleep_interruptible(self, seconds: float) -> bool:
+    async def _sleep_interruptible(self, seconds: float) -> bool:
         """Sleep for N seconds, return False if shutdown requested."""
-        deadline = time.monotonic() + seconds
-        while time.monotonic() < deadline:
-            if self._shutdown.is_set():
-                return False
-            time.sleep(min(10, max(0, deadline - time.monotonic())))
-        return not self._shutdown.is_set()
+        try:
+            await asyncio.wait_for(self._shutdown.wait(), timeout=seconds)
+            return False
+        except asyncio.TimeoutError:
+            return True
 
     @staticmethod
     def _fmt_duration(seconds: float) -> str:
@@ -164,14 +168,16 @@ class MasterScheduler:
         )
 
         try:
-            while not self._shutdown.is_set():
-                try:
-                    await self._cycle()
-                except Exception as exc:
-                    self.log.exception("Cycle error: %s", exc)
-                    self.notifier.send("error", f"Cycle error: {exc}")
-                    if not self._sleep_interruptible(60):
-                        break
+            tasks = [
+                asyncio.create_task(self._live_loop()),
+                asyncio.create_task(self._maintenance_loop()),
+                asyncio.create_task(self._news_loop()),
+                asyncio.create_task(self._ai_loop())
+            ]
+            await asyncio.gather(*tasks)
+        except Exception as exc:
+            self.log.exception("Master scheduler fatal error: %s", exc)
+            self.notifier.send("error", f"Master scheduler fatal error: {exc}")
         finally:
             self.log.info("Cleaning up resources...")
             
@@ -201,215 +207,138 @@ class MasterScheduler:
             signal.signal(signal.SIGINT, signal.SIG_DFL)
             signal.signal(signal.SIGTERM, signal.SIG_DFL)
 
-    async def _cycle(self) -> None:
-        now = datetime.now(timezone.utc)
-        self.log.info("─" * 50)
-        self.log.info("CYCLE START — %s", now.strftime("%Y-%m-%d %H:%M UTC"))
-
-        # ── 1. Daily maintenance (with barrier) ──
-        if self.daily.is_due() and (now.hour >= 6 or self.force_daily_now):
-            if self.pool.is_empty:
-                self.log.info("🚧 Pool is empty — running daily maintenance")
-                self._lineup_fetched.clear()  # Reset lineup tracking daily
-                
-                # Run daily maintenance in a way that respects immediate shutdown
-                maint_task = asyncio.create_task(asyncio.to_thread(self.daily.run))
-                shutdown_task = asyncio.create_task(self._shutdown.wait())
-                done, _ = await asyncio.wait(
-                    [maint_task, shutdown_task],
-                    return_when=asyncio.FIRST_COMPLETED
-                )
-                if self._shutdown.is_set():
-                    return
-            else:
-                self.log.info(
-                    "⏸️  Pool has %d active matches — deferring maintenance",
-                    self.pool.active_count,
-                )
-
-        # ── 2. Browser recycle (when pool is idle) ──
-        if self.browser.needs_recycle() and self.pool.is_empty:
-            await self.browser.recycle()
-            self.notifier.send("recycle", "Browser recycled (memory cleanup)")
-
-        # ── 3. Fetch schedule ──
-        upcoming = await self.schedule.get_upcoming()
-
-        if not upcoming and self.pool.is_empty:
-            # Run AI worker natively in loop but wait with shutdown awareness
-            worker_task = asyncio.create_task(self._run_ai_worker(max_jobs=30))
-            shutdown_task = asyncio.create_task(self._shutdown.wait())
-            done, _ = await asyncio.wait(
-                [worker_task, shutdown_task],
-                return_when=asyncio.FIRST_COMPLETED
-            )
-            if self._shutdown.is_set():
-                return
-
-            # Nothing to do — sleep until next check
-            next_check = now + timedelta(minutes=5)
-            self.log.info(
-                "💤 No matches — sleeping 5m until %s UTC",
-                next_check.strftime("%H:%M"),
-            )
-            await self._check_news(now)
-            if not self._sleep_interruptible(300):
-                return
-            return
-
-        # ── 3.5 Phase 1: Fetch lineups ~60min before kickoff ──
-        await self._check_lineups(upcoming)
-
-        # ── 4. Add upcoming matches to pool when ready ──
-        for match in upcoming:
-            kickoff = match.get("kickoff_utc")
-            if not kickoff:
-                continue
-            time_to_kickoff = (kickoff - datetime.now(timezone.utc)).total_seconds()
-
-            # Add to pool if within 15 minutes or already in progress
-            if time_to_kickoff <= 900 or match["status"] == "inprogress":
-                self.pool.add_match(match)
-                # Phase 2: Refresh lineup when entering pool (-15min)
-                await self._fetch_and_save_lineup(match)
-
-        # ── 5. Poll active matches ──
-        if not self.pool.is_empty:
-            finished_matches = await self.pool.poll_all()
-
-            # ── 5b. AI Insight worker cycle ──
-            worker_task = asyncio.create_task(self._run_ai_worker())
-            shutdown_task = asyncio.create_task(self._shutdown.wait())
-            done, _ = await asyncio.wait(
-                [worker_task, shutdown_task],
-                return_when=asyncio.FIRST_COMPLETED
-            )
-            if self._shutdown.is_set():
-                return
-
-            # FIX Issue #3: Run post-match in thread pool to avoid blocking event loop.
-            # Each post_match.run() can take 5-15 minutes (subprocess calls).
-            for fm in finished_matches:
-                asyncio.get_event_loop().run_in_executor(
-                    self._post_match_executor, self.post_match.run, fm
-                )
-
-            # Sleep based on number of active matches
-            if not self.pool.is_empty:
-                # poll_all() already spread its requests across ~60 seconds via per_match_interval
-                # We just need a short 5s technical break before the next cycle starts
-                self.log.info(
-                    "⏳ Cycle complete for %d active matches. Next cycle shortly...",
-                    self.pool.active_count,
-                )
-                if not self._sleep_interruptible(5):
-                    return
-                return  # Go straight to next cycle
-
-        # ── 6. If pool is empty but matches are coming later ──
-        if upcoming:
-            next_kickoff = min(
-                m["kickoff_utc"] for m in upcoming if m.get("kickoff_utc")
-            )
-            wake_time = next_kickoff - timedelta(minutes=60)
+    async def _live_loop(self) -> None:
+        self.log.info("Started Live Match Orchestration Loop")
+        while not self._shutdown.is_set():
             now = datetime.now(timezone.utc)
-            if wake_time > now:
-                delta = (wake_time - now).total_seconds()
-                self.log.info(
-                    "💤 Next match in %s — sleeping until %s UTC (processing AI backlog)",
-                    self._fmt_duration(delta),
-                    wake_time.strftime("%H:%M"),
-                )
-                await self._check_news(now)
-                # Loop to process AI during long wait
-                loop_start = time.monotonic()
-                while time.monotonic() - loop_start < delta:
-                    if self._shutdown.is_set():
-                        return
-                    worker_task = asyncio.create_task(self._run_ai_worker(max_jobs=25))
-                    shutdown_task = asyncio.create_task(self._shutdown.wait())
-                    done, _ = await asyncio.wait(
-                        [worker_task, shutdown_task],
-                        return_when=asyncio.FIRST_COMPLETED
+            self.log.info("─" * 50)
+            self.log.info("LIVE CYCLE START — %s", now.strftime("%Y-%m-%d %H:%M UTC"))
+
+            # 1. Browser recycle (when pool is idle)
+            if self.browser.needs_recycle() and self.pool.is_empty:
+                await self.browser.recycle()
+                self.notifier.send("recycle", "Browser recycled (memory cleanup)")
+
+            # 2. Fetch schedule
+            try:
+                upcoming = await self.schedule.get_upcoming()
+            except Exception as e:
+                self.log.error("Live loop upcoming matches error: %s", e)
+                if not await self._sleep_interruptible(60): return
+                continue
+
+            if not upcoming and self.pool.is_empty:
+                next_check = now + timedelta(minutes=5)
+                self.log.info("💤 No matches — sleeping 5m until %s UTC", next_check.strftime("%H:%M"))
+                if not await self._sleep_interruptible(300): return
+                continue
+
+            # 3. Check lineups ~60min before kickoff
+            await self._check_lineups(upcoming)
+
+            # 4. Add upcoming matches to pool when ready
+            for match in upcoming:
+                kickoff = match.get("kickoff_utc")
+                if not kickoff:
+                    continue
+                time_to_kickoff = (kickoff - datetime.now(timezone.utc)).total_seconds()
+
+                if time_to_kickoff <= 900 or match["status"] == "inprogress":
+                    self.pool.add_match(match)
+                    await self._fetch_and_save_lineup(match)
+
+            # 5. Poll active matches
+            if not self.pool.is_empty:
+                finished_matches = await self.pool.poll_all()
+                for fm in finished_matches:
+                    asyncio.get_event_loop().run_in_executor(
+                        self._post_match_executor, self.post_match.run, fm
                     )
-                    if self._shutdown.is_set():
-                        return
-                    if not self._sleep_interruptible(300): # Check every 5 mins
-                        return
-                    if datetime.now(timezone.utc) >= wake_time:
-                        break
+                self.log.info("⏳ Cycle complete for %d active matches. Next cycle shortly...", self.pool.active_count)
+                if not await self._sleep_interruptible(5): return
+                continue
+
+            # 6. Sleep before next kickoff if pool is empty
+            if upcoming:
+                next_kickoff = min(m["kickoff_utc"] for m in upcoming if m.get("kickoff_utc"))
+                wake_time = next_kickoff - timedelta(minutes=60)
+                now = datetime.now(timezone.utc)
+                if wake_time > now:
+                    delta = (wake_time - now).total_seconds()
+                    self.log.info("💤 Next match in %s — sleeping until %s UTC", self._fmt_duration(delta), wake_time.strftime("%H:%M"))
+                    if not await self._sleep_interruptible(min(300, delta)): return
+                else:
+                    if not await self._sleep_interruptible(60): return
             else:
-                await self._check_news(now)
-                # Guard against CPU spin-loops if a match fails to enter the pool
-                worker_task = asyncio.create_task(self._run_ai_worker())
-                shutdown_task = asyncio.create_task(self._shutdown.wait())
-                done, _ = await asyncio.wait(
-                    [worker_task, shutdown_task],
-                    return_when=asyncio.FIRST_COMPLETED
+                if not await self._sleep_interruptible(60): return
+
+    async def _maintenance_loop(self) -> None:
+        self.log.info("Started Daily Maintenance Task Loop")
+        while not self._shutdown.is_set():
+            now = datetime.now(timezone.utc)
+            if self.daily.is_due() and (now.hour >= 6 or self.force_daily_now):
+                if self.pool.is_empty:
+                    self.log.info("🚧 Running daily maintenance...")
+                    self.notifier.send("info", "⚙️ Bắt đầu Daily Maintenance...")
+                    t0 = time.monotonic()
+                    self._lineup_fetched.clear()
+                    try:
+                        await self.daily.run(self.scraper_sem, self.browser_sem, self.db_write_sem)
+                        if self.daily.last_run_date == now.strftime("%Y-%m-%d"):
+                            duration = self._fmt_duration(time.monotonic() - t0)
+                            self.notifier.send("info", f"✅ Hoàn thành Daily Maintenance! (Thời gian: {duration})")
+                        elif self.daily._daily_attempt_count >= 3:
+                            self.notifier.send("error", f"🚨 Daily Maintenance failed 3 lần hôm nay. Bỏ qua cho tới ngày mai.")
+                    except Exception as e:
+                        self.log.error("Maintenance failed: %s", e)
+                else:
+                    self.log.info("⏸️ Pool has %d active matches — deferring maintenance", self.pool.active_count)
+            # Check every 5 minutes if due
+            if not await self._sleep_interruptible(300):
+                break
+
+    async def _news_loop(self) -> None:
+        self.log.info("Started News Radar Task Loop")
+        while not self._shutdown.is_set():
+            now = datetime.now(timezone.utc)
+            if self.last_news_fetch is None or (now - self.last_news_fetch).total_seconds() >= 1800:
+                if self.dry_run:
+                    self.log.info("[DRY-RUN] Would fetch RSS news")
+                else:
+                    try:
+                        from services import news_radar
+                        self.log.info("📰 Starting RSS news radar fetch...")
+                        saved = await asyncio.to_thread(news_radar.run_and_save)
+                        if saved > 0:
+                            self.log.info("✓ RSS news radar fetch complete: %d items", saved)
+                        else:
+                            self.log.info("✓ RSS news radar fetch complete: 0 new items")
+                    except Exception as exc:
+                        self.log.error("News radar error: %s", exc)
+                self.last_news_fetch = datetime.now(timezone.utc)
+            
+            # Check shutdown every minute
+            if not await self._sleep_interruptible(60):
+                break
+
+    async def _ai_loop(self) -> None:
+        self.log.info("Started AI Worker Task Loop")
+        while not self._shutdown.is_set():
+            try:
+                # FIX: Pass shutdown event to allow immediate break in worker loop
+                processed = await insight_worker.run_worker_cycle(
+                    shadow_mode=self.insight_shadow_mode,
+                    max_jobs=15,
+                    shutdown_event=self._shutdown
                 )
-                if self._shutdown.is_set():
-                    return
-                # Guard against CPU spin-loops if a match fails to enter the pool
-                if not self._sleep_interruptible(60):
-                    return
-            return
-
-        await self._check_news(datetime.now(timezone.utc))
-        worker_task = asyncio.create_task(self._run_ai_worker())
-        shutdown_task = asyncio.create_task(self._shutdown.wait())
-        done, _ = await asyncio.wait(
-            [worker_task, shutdown_task],
-            return_when=asyncio.FIRST_COMPLETED
-        )
-        if self._shutdown.is_set():
-            return
-        # Brief pause before next cycle
-        if not self._sleep_interruptible(60):
-            return
-
-    async def _run_ai_worker(self, max_jobs: int = 15) -> None:
-        """Call the async AI insight worker to process queued jobs."""
-        try:
-            processed = await insight_worker.run_worker_cycle(
-                shadow_mode=self.insight_shadow_mode,
-                max_jobs=max_jobs,
-            )
-            if processed:
-                self.log.info("🤖 AI Worker: processed %d jobs", processed)
-        except Exception as exc:
-            self.log.debug("AI worker cycle error: %s", exc)
-
-    async def _check_news(self, now: datetime) -> None:
-        """Run the RSS news and injury radar every 30 minutes."""
-        if (
-            self.last_news_fetch is None
-            or (now - self.last_news_fetch).total_seconds() >= 1800
-        ):
-            if self.dry_run:
-                self.log.info("[DRY-RUN] Would fetch RSS news")
-            else:
-                try:
-                    from services import news_radar
-                    self.log.info("📰 Starting RSS news radar fetch...")
-                    
-                    # Run news radar with shutdown awareness
-                    news_task = asyncio.create_task(asyncio.to_thread(news_radar.run_and_save))
-                    shutdown_task = asyncio.create_task(self._shutdown.wait())
-                    done, _ = await asyncio.wait(
-                        [news_task, shutdown_task],
-                        return_when=asyncio.FIRST_COMPLETED
-                    )
-                    if self._shutdown.is_set():
-                        return
-                        
-                    saved = news_task.result() if news_task.done() else 0
-                    if saved > 0:
-                        self.log.info("✓ RSS news radar fetch complete: %d items", saved)
-                    else:
-                        self.log.info("✓ RSS news radar fetch complete: 0 new items")
-                except Exception as exc:
-                    self.log.error("News radar error: %s", exc)
-            self.last_news_fetch = now
+                if processed > 0:
+                    self.log.info("✓ AI cycle: processed %d jobs", processed)
+                
+            except Exception as e:
+                self.log.error("AI worker loop error: %s", e)
+            
+            if not await self._sleep_interruptible(60):
+                break
 
     async def _check_lineups(self, upcoming: list[dict]) -> None:
         """Phase 1: Fetch lineups for matches within 60 minutes of kickoff."""
@@ -471,7 +400,7 @@ class MasterScheduler:
                             side,
                             team_name,
                             pi.get("position"),
-                            pi.get("jerseyNumber"),
+                            int(pi.get("jerseyNumber")) if pi.get("jerseyNumber") and str(pi.get("jerseyNumber")).isdigit() else 0,
                             p.get("substitute", False),
                             stats.get("minutesPlayed"),
                             stats.get("rating"),

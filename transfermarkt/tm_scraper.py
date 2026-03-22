@@ -109,19 +109,30 @@ class TMBrowser:
         
         is_linux = sys.platform.startswith('linux')
         
+        # Optimal flags for low-RAM environments (GCP e2-micro)
+        ultra_lite_args = [
+            '--disable-dev-shm-usage',
+            '--disable-gpu',
+            '--disable-extensions',
+            '--disable-component-update',
+            '--disable-default-apps',
+            '--mute-audio',
+            '--no-first-run',
+            '--no-default-browser-check',
+            '--disable-popup-blocking',
+            '--blink-settings=imagesEnabled=false',  # Block images (Major RAM saver)
+        ]
+
         if is_linux:
-            logger.info("▶ Khởi động Chrome browser (Linux Headless) cho Transfermarkt…")
+            logger.info("▶ Khởi động Chrome browser (Linux Headless — Low RAM Optimized) cho Transfermarkt…")
             self._browser = await uc.start(
                 headless=True,
                 sandbox=False,
-                browser_args=[
-                    '--disable-dev-shm-usage',
-                    '--disable-gpu',
-                ],
+                browser_args=ultra_lite_args + ['--no-sandbox', '--no-zygote'],
             )
         else:
-            logger.info("▶ Khởi động Chrome browser (Local Headed) cho Transfermarkt…")
-            self._browser = await uc.start(headless=False)
+            logger.info("▶ Khởi động Chrome browser (Local Headed — Low RAM Optimized) cho Transfermarkt…")
+            self._browser = await uc.start(headless=False, browser_args=ultra_lite_args)
         return self
 
     async def __aexit__(self, *args: Any) -> None:

@@ -924,7 +924,8 @@ def recover_expired_leases() -> int:
 
 async def run_worker_cycle(league_id: str = None, *,
                      shadow_mode: bool = True,
-                     max_jobs: int = 20) -> int:
+                     max_jobs: int = 20,
+                     shutdown_event: asyncio.Event = None) -> int:
     """Run one async worker cycle: recover leases + process available jobs.
     Returns number of jobs processed."""
     orchestrator = _get_orchestrator()
@@ -943,6 +944,10 @@ async def run_worker_cycle(league_id: str = None, *,
 
     processed = 0
     while processed < max_jobs:
+        if shutdown_event and shutdown_event.is_set():
+            log.info("⏹ AI Worker loop interrupted by shutdown event")
+            break
+            
         job = await asyncio.to_thread(pick_job, league_id)
         if not job:
             break
@@ -950,3 +955,4 @@ async def run_worker_cycle(league_id: str = None, *,
         processed += 1
 
     return processed
+

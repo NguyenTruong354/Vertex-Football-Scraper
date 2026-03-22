@@ -367,3 +367,62 @@ def enqueue_player_trend(
         return None
     finally:
         conn.close()
+
+def enqueue_player_trend_batch(players: list, prompt_version: str = "v1") -> int:
+    """
+    Enqueue multiple player_trend jobs in a single DB transaction.
+    `players` should be a list of dicts.
+    Returns the number of rows processed.
+    """
+    if not players:
+        return 0
+
+    from db.config_db import get_connection
+    import json
+    from psycopg2.extras import execute_batch
+
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        
+        args_list = []
+        for p in players:
+            payload = {
+                "player_id": p["player_id"],
+                "player_name": p["player_name"],
+                "trend": p["trend"],
+                "trend_score": p["trend_score"],
+                "goals": p["goals"],
+                "assists": p["assists"],
+                "xg_arr": p["xg_arr"],
+                "xa_arr": p["xa_arr"],
+                "match_count": p["match_count"],
+            }
+            dedupe_key = f"player_trend:{p['league_id']}:{p['player_id']}"
+            fingerprint = _compute_fingerprint(payload)
+            
+            args_list.append((
+                p["league_id"], p["player_name"], dedupe_key, fingerprint,
+                json.dumps(payload, ensure_ascii=False), prompt_version
+            ))
+
+        sql = """
+            INSERT INTO ai_insight_jobs
+                (job_type, event_id, league_id, team_focus, status, priority,
+                 dedupe_key, fingerprint, payload_json, prompt_version)
+            VALUES
+                ('player_trend', NULL, %s, %s, 'queued', 100,
+                 %s, %s, %s, %s)
+            ON CONFLICT (dedupe_key) WHERE status IN ('queued', 'running')
+            DO NOTHING
+        """
+        execute_batch(cur, sql, args_list, page_size=100)
+        conn.commit()
+        log.info("Batch enqueued %d player_trend jobs", len(args_list))
+        return len(args_list)
+    except Exception as exc:
+        conn.rollback()
+        log.error("Failed to enqueue batch player_trend: %s", exc)
+        return 0
+    finally:
+        conn.close()

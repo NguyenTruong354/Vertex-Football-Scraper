@@ -47,6 +47,14 @@ class EditorInChiefAgent:
             response_format={"type": "json_object"}
         )
         
+        if not res:
+            return EditorOutput(
+                factual_verification_passed=False,
+                dominant_narrative="NONE",
+                confidence_score=0.0,
+                rejected_reason="LLM returned empty response"
+            )
+
         try:
             data = json.loads(res)
             return EditorOutput(**data)
