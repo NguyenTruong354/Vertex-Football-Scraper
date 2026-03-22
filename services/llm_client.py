@@ -275,18 +275,37 @@ class LLMClient:
 
     async def async_generate_for_agent(self, agent_name: str, prompt: str,
                                        system_instruction: Optional[str] = None,
-                                       response_format: Optional[Dict[str, Any]] = None) -> str:
+                                       response_format: Optional[Dict[str, Any]] = None,
+                                       priority: int = 100) -> str:
         """
         Asynchronously generates an insight specifically routed by agent name, 
-        respecting tiered semaphores and model mappings.
+        respecting tiered semaphores, model mappings, and job priority.
+        
+        Priority Logic:
+        - priority < 50: High priority (Live events). Prefers 70B if mapped.
+        - priority >= 100: Low priority (Maintenance/Trends). Forced to 8B to save Quota.
+        
+        Fallback Logic:
+        - If 70B is mapped but CircuitBreaker is OPEN, automatically falls back to 8B.
         """
         if not self.async_groq_client_1 and not self.async_groq_client_2:
             logger.warning("No async LLM clients configured.")
             return ""
 
-        model = AGENT_MODEL_MAP.get(agent_name, "llama-3.3-70b-versatile")
+        requested_model = AGENT_MODEL_MAP.get(agent_name, "llama-3.3-70b-versatile")
+        model = requested_model
+
+        # 1. Priority Throttling: Force 8B for periodic/low-priority tasks
+        if priority >= 100 and model == "llama-3.3-70b-versatile":
+            logger.debug("Priority >= 100: Downgrading %s from 70B to 8B.", agent_name)
+            model = "llama-3.1-8b-instant"
+
+        # 2. Dynamic Fallback: If 70B is OPEN, use 8B
+        if model == "llama-3.3-70b-versatile" and not self.cb_groq_1.can_execute() and not self.cb_groq_2.can_execute():
+            logger.info("70B CircuitBreaker is OPEN/HALF_OPEN. Falling back to 8B for %s.", agent_name)
+            model = "llama-3.1-8b-instant"
         
-        # Determine semaphore tier based on model type
+        # Determine semaphore tier based on resolved model type
         sem = TIER2_SEM if model == "llama-3.1-8b-instant" else TIER1_SEM
 
         async with sem:
@@ -297,10 +316,6 @@ class LLMClient:
                         self.async_groq_client_1, model, prompt, system_instruction, response_format
                     )
                     self.cb_groq_1.record_success()
-                    logger.debug(
-                        "Async LLM OK | agent=%s | provider=groq_1 | length=%d",
-                        agent_name, len(res)
-                    )
                     return res
                 except GroqAPIError as e:
                     status_code = getattr(e, "status_code", 500)
@@ -317,10 +332,6 @@ class LLMClient:
                         self.async_groq_client_2, model, prompt, system_instruction, response_format
                     )
                     self.cb_groq_2.record_success()
-                    logger.debug(
-                        "Async LLM OK | agent=%s | provider=groq_2 | length=%d",
-                        agent_name, len(res)
-                    )
                     return res
                 except GroqAPIError as e:
                     status_code = getattr(e, "status_code", 500)
@@ -330,7 +341,13 @@ class LLMClient:
                     self.cb_groq_2.record_error(500)
                     logger.warning("Async Groq API (Key 2) unexpected error for %s: %s", agent_name, e)
 
-            logger.error("All async Groq clients failed for agent %s.", agent_name)
+            # Final Fallback Attempt: If even the resolved model failed and it was 70B, try 8B one last time 
+            # (if we didn't already fallback)
+            if model == "llama-3.3-70b-versatile":
+                 logger.warning("70B failed for %s. Last ditch attempt with 8B.", agent_name)
+                 return await self.async_generate_for_agent(agent_name, prompt, system_instruction, response_format, priority=100)
+
+            logger.error("All async Groq clients failed for agent %s on %s.", agent_name, model)
             return ""
 
 

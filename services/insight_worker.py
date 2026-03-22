@@ -165,7 +165,7 @@ def pick_job(league_id: str = None) -> Optional[dict]:
         if league_id:
             cur.execute("""
                 SELECT id, job_type, event_id, league_id, team_focus,
-                       payload_json, prompt_version, attempt_count, max_attempts
+                       payload_json, prompt_version, attempt_count, max_attempts, priority
                 FROM ai_insight_jobs
                 WHERE league_id = %s
                   AND status = 'queued'
@@ -177,7 +177,7 @@ def pick_job(league_id: str = None) -> Optional[dict]:
         else:
             cur.execute("""
                 SELECT id, job_type, event_id, league_id, team_focus,
-                       payload_json, prompt_version, attempt_count, max_attempts
+                       payload_json, prompt_version, attempt_count, max_attempts, priority
                 FROM ai_insight_jobs
                 WHERE status = 'queued'
                   AND (next_retry_at IS NULL OR next_retry_at <= NOW())
@@ -220,6 +220,7 @@ def pick_job(league_id: str = None) -> Optional[dict]:
             "prompt_version": row[6],
             "attempt_count": row[7] + 1,
             "max_attempts": row[8],
+            "priority": row[9],
         }
     except Exception as exc:
         conn.rollback()
@@ -555,7 +556,8 @@ async def execute_job(job: dict, *, shadow_mode: bool = True) -> bool:
         
         # 3. Call Multi-Agent Orchestrator
         orchestrator = _get_orchestrator()
-        result_dict = await orchestrator.run_pipeline(job_type, ctx)
+        priority = job.get("priority", 100) # Use priority from job
+        result_dict = await orchestrator.run_pipeline(job_type, ctx, priority=priority)
         latency_ms = int((time.monotonic() - t0) * 1000)
 
         if not result_dict:

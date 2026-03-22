@@ -15,7 +15,7 @@ class EditorInChiefAgent:
     def __init__(self, llm_client: LLMClient):
         self.llm = llm_client
 
-    async def synthesize(self, ctx: Dict[str, Any]) -> EditorOutput:
+    async def synthesize(self, ctx: Dict[str, Any], priority: int = 100) -> EditorOutput:
         prompt = (
             "You are the EditorInChief. Synthesize the provided agent outputs into a compelling, 30-40 word broadcast-style summary in both Vietnamese and English.\n"
             "First, fact-check the data (is it logically consistent?). If consistent, factual_verification_passed = true.\n"
@@ -44,7 +44,8 @@ class EditorInChiefAgent:
             "editor_in_chief", 
             prompt, 
             system, 
-            response_format={"type": "json_object"}
+            response_format={"type": "json_object"},
+            priority=priority
         )
         
         if not res:

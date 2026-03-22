@@ -28,26 +28,25 @@ class AgentOrchestrator:
         self.scout = ScoutAgent(self.llm)
         self.editor = EditorInChiefAgent(self.llm)
         
-    async def run_pipeline(self, insight_type: str, ctx: Dict[str, Any], max_retries=1) -> Optional[Dict[str, Any]]:
+    async def run_pipeline(self, insight_type: str, ctx: Dict[str, Any], max_retries=1, priority: int = 100) -> Optional[Dict[str, Any]]:
         """
         Runs the specified pipeline variant within a global timeout constraint.
         """
         config = PIPELINE_CONFIG.get(insight_type)
         if not config:
             logger.error(f"Unknown insight type config: {insight_type}")
-            # Instead of crashing with KeyError, return None
             return None
             
         try:
             return await asyncio.wait_for(
-                self._execute_pipeline(config, ctx, max_retries),
+                self._execute_pipeline(config, ctx, max_retries, priority),
                 timeout=config["timeout"]
             )
         except asyncio.TimeoutError:
             logger.warning(f"Pipeline {insight_type} timed out after {config['timeout']}s.")
             return None
             
-    async def _execute_pipeline(self, config: Dict[str, Any], ctx: Dict[str, Any], max_retries: int) -> Optional[Dict[str, Any]]:
+    async def _execute_pipeline(self, config: Dict[str, Any], ctx: Dict[str, Any], max_retries: int, priority: int) -> Optional[Dict[str, Any]]:
         tasks = []
         agent_names = config["agents"]
         
@@ -83,11 +82,11 @@ class AgentOrchestrator:
         
         # Synthesis and Verification Loop
         for attempt in range(max_retries + 1):
-            editor_output = await self.editor.synthesize(editor_ctx)
+            editor_output = await self.editor.synthesize(editor_ctx, priority=priority)
             
             if editor_output.factual_verification_passed:
                 if editor_output.confidence_score >= INSIGHT_CONFIDENCE_THRESHOLD:
-                    return editor_output.model_dump() # Support for Pydantic V2 dump
+                    return editor_output.model_dump()
                 else:
                     logger.warning(f"Insight discarded - Confidence ({editor_output.confidence_score}) < Threshold ({INSIGHT_CONFIDENCE_THRESHOLD})")
                     return None
