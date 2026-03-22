@@ -40,9 +40,9 @@ def analyze_all_players(league: str, force: bool = False) -> list[dict]:
         # Step 1: Early Exit Gate (No active matches)
         if not force:
             cur.execute("""
-                SELECT COUNT(*) FROM matches 
-                WHERE finished_at >= NOW() - INTERVAL '5 days'
-                  AND status = 'finished' AND league_id = %s
+                SELECT COUNT(*) FROM match_stats 
+                WHERE TO_TIMESTAMP(datetime_str, 'YYYY-MM-DD HH24:MI:SS') >= NOW() - INTERVAL '5 days'
+                  AND league_id = %s
             """, (league,))
             if cur.fetchone()[0] == 0:
                 log.info("🚫 No active matches in the last 5 days for %s. Skipping player trend analysis.", league)
@@ -59,14 +59,13 @@ def analyze_all_players(league: str, force: bool = False) -> list[dict]:
         if not force:
             active_cte = """
             active_matches AS (
-                SELECT id FROM matches 
-                WHERE finished_at >= NOW() - INTERVAL '5 days'
-                  AND status = 'finished'
+                SELECT match_id FROM match_stats 
+                WHERE TO_TIMESTAMP(datetime_str, 'YYYY-MM-DD HH24:MI:SS') >= NOW() - INTERVAL '5 days'
             ),
             active_players AS (
                 SELECT DISTINCT player_id
                 FROM player_match_stats
-                WHERE match_id IN (SELECT id FROM active_matches)
+                WHERE match_id IN (SELECT match_id FROM active_matches)
                   AND "time" > 0
             ),
             """

@@ -18,7 +18,7 @@ def test_tc02_international_break_simulation(mock_get_conn):
     
     # Only 1 query executed: the early exit check
     assert mock_cur.execute.call_count == 1
-    assert "SELECT COUNT(*) FROM matches" in mock_cur.execute.call_args_list[0][0][0]
+    assert "SELECT COUNT(*) FROM match_stats" in mock_cur.execute.call_args_list[0][0][0]
 
 @patch('services.insight_producer.enqueue_player_trend')
 @patch('db.config_db.get_connection')
