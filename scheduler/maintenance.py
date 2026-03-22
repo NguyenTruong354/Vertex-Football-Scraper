@@ -414,7 +414,7 @@ class DailyMaintenance:
         "sofascore/output",
         "transfermarkt/output",
     ]
-    _RETENTION_DAYS = 7
+    _RETENTION_DAYS = 2
     _LARGE_FILE_THRESHOLD_MB = 50
 
     def _cleanup_disk_space(self) -> None:
