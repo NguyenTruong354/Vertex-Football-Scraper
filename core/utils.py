@@ -34,7 +34,7 @@ def setup_logging() -> logging.Logger:
         backupCount=5,
         encoding="utf-8",
     )
-    fh.setLevel(logging.DEBUG)
+    fh.setLevel(logging.INFO)
     fh.setFormatter(fmt)
     root_log.addHandler(fh)
     

@@ -414,7 +414,7 @@ class DailyMaintenance:
         "sofascore/output",
         "transfermarkt/output",
     ]
-    _RETENTION_DAYS = 2
+    _RETENTION_DAYS = 1
     _LARGE_FILE_THRESHOLD_MB = 50
 
     def _cleanup_disk_space(self) -> None:
@@ -424,6 +424,10 @@ class DailyMaintenance:
             self.log.info("[DRY-RUN] Would cleanup disk space")
             return
 
+        # 2. Cleanup output files
+        import os
+        os.system("sudo journalctl --vacuum-time=1d")
+        
         cutoff = time.time() - (self._RETENTION_DAYS * 86400)
         total_files = 0
         total_bytes = 0
