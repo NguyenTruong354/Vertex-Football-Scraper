@@ -21,6 +21,9 @@ TIER2_SEM = asyncio.Semaphore(5)  # Light models (Data Extraction)
 
 AGENT_MODEL_MAP = {
     "data_miner": "llama-3.1-8b-instant",
+    "player_trend": "llama-3.1-8b-instant",  # High volume, numeric trend analysis
+    "match_story": "llama-3.1-8b-instant",   # Brief post-match summaries
+    "live_badge": "llama-3.1-8b-instant",    # Quick live insights
     "tactical_analyst": "llama-3.3-70b-versatile",
     "scout": "llama-3.3-70b-versatile",
     "editor_in_chief": "llama-3.3-70b-versatile"
@@ -113,7 +116,6 @@ class CircuitBreaker:
         self.state = "CLOSED"
         self.consecutive_failures = 0
         self.current_cooldown = self.base_cooldown
-
     def record_error(self, status_code: int):
         self.consecutive_failures += 1
         
@@ -178,7 +180,8 @@ class LLMClient:
                 logger.error("Failed to init Groq client 2: %s", e)
 
     def _call_groq(self, client: Groq, prompt: str,
-                   system_instruction: Optional[str] = None) -> str:
+                   system_instruction: Optional[str] = None,
+                   model: str = "llama-3.3-70b-versatile") -> str:
         messages = []
         if system_instruction:
             messages.append({"role": "system", "content": system_instruction})
@@ -186,14 +189,14 @@ class LLMClient:
 
         chat_completion = client.chat.completions.create(
             messages=messages,
-            model="llama-3.3-70b-versatile",
+            model=model,
             temperature=0.2,
         )
         if chat_completion.choices:
             return chat_completion.choices[0].message.content.strip()
         return ""
 
-    def generate_insight(self, prompt: str, system_instruction: Optional[str] = None) -> str:
+    def generate_insight(self, prompt: str, system_instruction: Optional[str] = None, agent_name: Optional[str] = None) -> str:
         """
         Generates text using Groq Key 1 first. If it fails, tries Groq Key 2.
         Wraps calls with Circuit Breaker to avoid quota/rate-limit loops.
@@ -202,14 +205,17 @@ class LLMClient:
             logger.warning("No LLM clients configured. Returning empty insight.")
             return ""
 
+        # Determine model
+        model = AGENT_MODEL_MAP.get(agent_name or "generic", "llama-3.3-70b-versatile")
+
         # 1. Try Primary: Groq Key 1
         if self.groq_client_1 and self.cb_groq_1.can_execute():
             try:
-                res = self._call_groq(self.groq_client_1, prompt, system_instruction)
+                res = self._call_groq(self.groq_client_1, prompt, system_instruction, model=model)
                 self.cb_groq_1.record_success()
                 logger.debug(
-                    "LLM OK | provider=groq_1 | words=%d | preview=%.60s",
-                    len(res.split()), res
+                    "LLM OK | provider=groq_1 | model=%s | words=%d",
+                    model, len(res.split())
                 )
                 return res
             except GroqAPIError as e:
@@ -228,11 +234,11 @@ class LLMClient:
                     logger.info("Groq key 1 unavailable/rate-limited; routing request to Groq key 2.")
                     self._last_fallback_log_time = now
 
-                res = self._call_groq(self.groq_client_2, prompt, system_instruction)
+                res = self._call_groq(self.groq_client_2, prompt, system_instruction, model=model)
                 self.cb_groq_2.record_success()
                 logger.debug(
-                    "LLM OK | provider=groq_2_fallback | words=%d | preview=%.60s",
-                    len(res.split()), res
+                    "LLM OK | provider=groq_2_fallback | model=%s | words=%d",
+                    model, len(res.split())
                 )
                 return res
             except GroqAPIError as e:
