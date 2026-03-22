@@ -4,15 +4,24 @@ Hướng dẫn từng bước cấu hình máy chủ Linux ảo (GCP e2-micro Ub
 
 ---
 
-## Bước 1: Cài đặt môi trường cơ bản (Python & Git)
-Truy cập SSH vào máy chủ e2-micro và chạy các lệnh sau để cập nhật hệ thống và cài đặt Python 3.11+ cùng với Git.
+## Bước 1: Cài đặt Python, Git và Google Chrome
+Truy cập SSH vào máy chủ e2-micro và chạy các lệnh sau để cập nhật hệ thống, cài đặt Python 3.11+ cùng với **Google Chrome** (bắt buộc để chạy Browser Scraper).
 
 ```bash
+# 1. Cập nhật hệ thống
 sudo apt update && sudo apt upgrade -y
 sudo apt install software-properties-common -y
+
+# 2. Cài đặt Python 3.11
 sudo add-apt-repository ppa:deadsnakes/ppa -y
 sudo apt update
 sudo apt install python3.11 python3.11-venv python3.11-dev git -y
+
+# 3. Cài đặt Google Chrome (Cần thiết cho nodriver/scraper)
+wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+sudo apt install ./google-chrome-stable_current_amd64.deb -y
+# Xóa file deb sau khi cài xong cho đỡ tốn chỗ
+rm google-chrome-stable_current_amd64.deb
 ```
 
 ---
@@ -23,6 +32,9 @@ Không bao giờ nên chạy Bot bằng user `root`. Hãy tạo riêng một use
 ```bash
 # Tạo user vertex
 sudo useradd -m -s /bin/bash vertex
+
+#Đặt lại pw
+sudo passwd vertex
 
 # Thêm vertex vào group sudo (tùy chọn)
 sudo usermod -aG sudo vertex
@@ -46,6 +58,7 @@ cd /opt/vertex-football-scraper
 
 # Trình bày Git Clone (thay bằng URL repo CỦA BẠN nếu để private, cần xài Personal Access Token)
 git clone https://github.com/NguyenTruong354/Vertex-Football-Scraper.git .
+
 
 # Tạo môi trường ảo (Virtual Environment)
 python3.11 -m venv .venv
@@ -127,4 +140,4 @@ sudo journalctl -u scheduler-master.service -f
 tail -f /opt/vertex-football-scraper/logs/scheduler_master.log
 ```
 
-🎉 **XONG!** Bây giờ máy ảo e2-micro của bạn (chỉ tốn cỡ 60MB RAM) sẽ tự động hoạt động ngày ngày đêm đêm canh me bóng đá!
+🎉 **XONG!** Bây giờ máy ảo e2-micro của bạn (với 1GB-1.5GB RAM) sẽ hoạt động ổn định. Hệ thống tiêu thụ khoảng **700MB - 1GB RAM** nhờ cấu hình Ultra-Lite Chrome (tắt ảnh) và phân luồng LLM 8B thông minh mà chúng ta đã thiết lập!
