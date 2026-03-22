@@ -138,6 +138,8 @@ class FBrefBrowser:
 
         import nodriver as uc
 
+        is_linux = sys.platform == "linux"
+
         # Optimal flags for low-RAM environments (GCP e2-micro)
         ultra_lite_args = [
             "--disable-dev-shm-usage",
