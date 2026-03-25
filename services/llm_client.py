@@ -60,6 +60,9 @@ class CircuitBreaker:
         self.base_cooldown = 0
         self.current_cooldown = 0
         self._last_open_log_time = 0.0
+        self._half_open_entered_at = 0.0
+        self._half_open_stale_count = 0  # consecutive HALF_OPEN timeouts without any real call
+        self._half_open_max_stale = 5   # after this many stale cycles, force CLOSED
 
     @staticmethod
     def _log_transition_to_db(name: str, old_state: str, new_state: str, reason: str = "") -> None:
@@ -86,6 +89,7 @@ class CircuitBreaker:
         if self.state == "OPEN":
             if current_time >= self.next_retry_time:
                 self.state = "HALF_OPEN"
+                self._half_open_entered_at = current_time
                 logger.info("[CircuitBreaker-%s] HALF_OPEN — Testing recovery.", self.name)
                 return True
             else:
@@ -93,19 +97,45 @@ class CircuitBreaker:
                 mins, secs = divmod(remaining, 60)
                 # Throttle noisy OPEN logs to at most once per minute per breaker.
                 if (current_time - self._last_open_log_time) >= 60:
-                    logger.warning("[CircuitBreaker-%s] OPEN — skipping request. Retry explicitly in %dm:%02ds.", self.name, mins, secs)
+                    logger.warning("[CircuitBreaker-%s] OPEN — skipping request. Retry in %dm:%02ds.", self.name, mins, secs)
                     self._last_open_log_time = current_time
                 return False
                 
         if self.state == "HALF_OPEN":
-            # Nếu đã quá 30s kể từ lần chuyển sang HALF_OPEN mà vẫn chưa có kết quả
-            # (tức là request test bị treo/timeout), cho phép retry để tránh bị kẹt mãi.
-            if current_time >= self.next_retry_time + 30:
-                logger.warning(
-                    "[CircuitBreaker-%s] HALF_OPEN test timed out after 30s. Allowing retry.",
-                    self.name
+            # If 30s has passed since entering HALF_OPEN and no record_success/record_error
+            # was called, the test request was never actually made (no jobs, or logic skip).
+            # Transition back to OPEN with backoff to avoid infinite HALF_OPEN spam.
+            if current_time >= self._half_open_entered_at + 30:
+                self._half_open_stale_count += 1
+                
+                # Safety valve: after N stale HALF_OPEN cycles, force CLOSED
+                # so the system can try fresh instead of being stuck forever.
+                if self._half_open_stale_count >= self._half_open_max_stale:
+                    logger.warning(
+                        "[CircuitBreaker-%s] HALF_OPEN stale %d times. Force-resetting to CLOSED.",
+                        self.name, self._half_open_stale_count
+                    )
+                    self._log_transition_to_db(self.name, "HALF_OPEN", "CLOSED", 
+                                              f"force_reset_after_{self._half_open_stale_count}_stale_cycles")
+                    self.state = "CLOSED"
+                    self.consecutive_failures = 0
+                    self._half_open_stale_count = 0
+                    self.current_cooldown = self.base_cooldown
+                    return True
+                
+                # Otherwise, go back to OPEN with increasing cooldown
+                self.current_cooldown = min(
+                    max(self.current_cooldown, 60) * 2, 600  # cap at 10 min
                 )
-                return True
+                self.state = "OPEN"
+                self.next_retry_time = current_time + self.current_cooldown
+                logger.warning(
+                    "[CircuitBreaker-%s] HALF_OPEN stale (no real call made). "
+                    "Back to OPEN for %ds. (stale_count=%d/%d)",
+                    self.name, self.current_cooldown,
+                    self._half_open_stale_count, self._half_open_max_stale
+                )
+                return False
             return False
 
     def record_success(self):
@@ -116,6 +146,7 @@ class CircuitBreaker:
         self.state = "CLOSED"
         self.consecutive_failures = 0
         self.current_cooldown = self.base_cooldown
+        self._half_open_stale_count = 0
     def record_error(self, status_code: int):
         self.consecutive_failures += 1
         
@@ -165,17 +196,20 @@ class LLMClient:
         self.cb_groq_2 = CircuitBreaker("Groq_2", "groq")
         self._last_fallback_log_time = 0.0
 
+        # Hard timeout for all Groq requests to prevent hanging in HALF_OPEN
+        _groq_timeout = 30.0
+
         if self.groq_key_1:
             try:
-                self.groq_client_1 = Groq(api_key=self.groq_key_1)
-                self.async_groq_client_1 = AsyncGroq(api_key=self.groq_key_1)
+                self.groq_client_1 = Groq(api_key=self.groq_key_1, timeout=_groq_timeout)
+                self.async_groq_client_1 = AsyncGroq(api_key=self.groq_key_1, timeout=_groq_timeout)
             except Exception as e:
                 logger.error("Failed to init Groq client 1: %s", e)
 
         if self.groq_key_2:
             try:
-                self.groq_client_2 = Groq(api_key=self.groq_key_2)
-                self.async_groq_client_2 = AsyncGroq(api_key=self.groq_key_2)
+                self.groq_client_2 = Groq(api_key=self.groq_key_2, timeout=_groq_timeout)
+                self.async_groq_client_2 = AsyncGroq(api_key=self.groq_key_2, timeout=_groq_timeout)
             except Exception as e:
                 logger.error("Failed to init Groq client 2: %s", e)
 
