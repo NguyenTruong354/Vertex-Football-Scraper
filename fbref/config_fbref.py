@@ -44,7 +44,7 @@ FBREF_BASE: str = "https://fbref.com"
 # 2. RATE LIMITING
 # ────────────────────────────────────────────────────────────
 FBREF_DELAY_BETWEEN_PAGES: float = 5.0
-FBREF_CF_WAIT_MAX: int = 45
+FBREF_CF_WAIT_MAX: int = 120
 FBREF_TABLE_LOAD_WAIT: float = 2.0
 
 # ────────────────────────────────────────────────────────────

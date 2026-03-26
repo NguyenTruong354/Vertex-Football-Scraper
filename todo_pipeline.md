@@ -16,8 +16,8 @@ Mùa giải này là chìa khóa để AI đánh giá được phong độ 12 th
 🎯 Ưu Tiên 2: Mùa giải "Xưa" (2023/2024)
 Dữ liệu này giúp AI viết được những bài "So sánh với năm ngoái" hoặc "Lịch sử đối đầu".
 
- Lệnh: python run_pipeline.py --league EPL --season 2023 --skip-sofascore-heatmaps
- Lệnh: python run_pipeline.py --league UCL --season 2023 --skip-sofascore-heatmaps
+ Lệnh: python run_pipeline.py --league EPL --season 2023 --skip-sofascore-heatmaps. Done
+ Lệnh: python run_pipeline.py --league UCL --season 2023 --skip-sofascore-heatmaps. Done cần chạy lại dù dã done cho fbref
  Lệnh: python run_pipeline.py --league LALIGA --season 2023 --skip-sofascore-heatmaps
  Lệnh: python run_pipeline.py --league BUNDESLIGA --season 2023 --skip-sofascore-heatmaps
  Lệnh: python run_pipeline.py --league SERIEA --season 2023 --skip-sofascore-heatmaps

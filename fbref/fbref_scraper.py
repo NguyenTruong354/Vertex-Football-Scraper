@@ -51,22 +51,48 @@ import time
 from pathlib import Path
 from typing import Any
 
-import config_fbref as cfg
+try:
+    from fbref import config_fbref as cfg
+    from fbref.config_fbref import FBrefLeagueConfig, get_fbref_config
+except ImportError:
+    import config_fbref as cfg
+    from config_fbref import FBrefLeagueConfig, get_fbref_config
+
 import pandas as pd
 from bs4 import BeautifulSoup, Comment
-from config_fbref import FBrefLeagueConfig, get_fbref_config
-from schemas_fbref import (
-    FixtureRow,
-    MatchPassingStats,
-    PlayerDefensiveStats,
-    PlayerGKStats,
-    PlayerPossessionStats,
-    PlayerProfile,
-    PlayerSeasonStats,
-    SquadStats,
-    StandingsRow,
-    safe_parse_list,
-)
+
+try:
+    from fbref import schemas_fbref as schemas
+except ImportError:
+    import schemas_fbref as schemas
+
+try:
+    from fbref.schemas_fbref import (
+        FixtureRow,
+        MatchPassingStats,
+        PlayerDefensiveStats,
+        PlayerGKStats,
+        PlayerPossessionStats,
+        PlayerProfile,
+        PlayerSeasonStats,
+        SquadStats,
+        StandingsRow,
+        safe_parse_list,
+    )
+except ImportError:
+    from schemas_fbref import (
+        FixtureRow,
+        MatchPassingStats,
+        PlayerDefensiveStats,
+        PlayerGKStats,
+        PlayerPossessionStats,
+        PlayerProfile,
+        PlayerSeasonStats,
+        SquadStats,
+        StandingsRow,
+        safe_parse_list,
+    )
+
 
 # League registry (project root)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -114,72 +140,134 @@ logger = _setup_logging()
 
 class FBrefBrowser:
     """
-    Quản lý browser session cho FBref scraping.
+    Quản lý browser session cho FBref scraping — Playwright CDP.
+
+    Chiến lược: Khởi động Chrome thật với --remote-debugging-port,
+    rồi kết nối Playwright qua CDP.  Cloudflare không thể phát hiện
+    vì đây là Chrome thật, không phải automated browser.
 
     Lifecycle:
         async with FBrefBrowser() as fb:
             html = await fb.fetch("https://fbref.com/...")
 
     Tự động:
-      • Mở Chrome (headed) khi __aenter__
+      • Mở Chrome thật khi __aenter__
+      • Kết nối Playwright CDP
       • Chờ Cloudflare pass khi fetch()
       • Đóng Chrome khi __aexit__
       • Rate-limit giữa các request
     """
 
+    _CDP_PORT = 9222
+
     def __init__(self) -> None:
+        self._chrome_proc = None
+        self._playwright = None
         self._browser = None
         self._page = None
         self._last_fetch_time: float = 0.0
 
     async def __aenter__(self) -> "FBrefBrowser":
         import os
+        import shutil
+        import socket
+        import subprocess
         import sys
-
-        import nodriver as uc
 
         is_linux = sys.platform == "linux"
 
-        # Optimal flags for low-RAM environments (GCP e2-micro)
-        ultra_lite_args = [
-            "--disable-dev-shm-usage",
-            "--disable-gpu",
-            "--disable-extensions",
-            "--disable-component-update",
-            "--disable-default-apps",
-            "--mute-audio",
+        # Find Chrome executable
+        if is_linux:
+            chrome_path = shutil.which("google-chrome") or shutil.which("chromium-browser") or "/usr/bin/google-chrome"
+        else:
+            chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+            if not Path(chrome_path).exists():
+                chrome_path = r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
+
+        # Persistent profile dir (Cloudflare cookies survive between runs)
+        profile_dir = Path(__file__).resolve().parent / ".chrome_cdp_profile"
+        profile_dir.mkdir(parents=True, exist_ok=True)
+
+        # Kill any existing Chrome with the same debugging port
+        if is_linux:
+            os.system(f"pkill -f 'remote-debugging-port={self._CDP_PORT}' 2>/dev/null")
+        else:
+            os.system("taskkill /f /im chrome.exe 2>nul")
+        await asyncio.sleep(2)
+
+        # Build Chrome args
+        chrome_args = [
+            chrome_path,
+            f"--remote-debugging-port={self._CDP_PORT}",
+            "--remote-debugging-address=127.0.0.1",
+            f"--user-data-dir={profile_dir}",
             "--no-first-run",
             "--no-default-browser-check",
             "--disable-popup-blocking",
-            "--blink-settings=imagesEnabled=false",  # Block images (Major RAM saver)
+            "--mute-audio",
         ]
-
         if is_linux:
-            logger.info("▶ Khởi động Chrome browser (Linux Headless mode — Low RAM Optimized)…")
-            self._browser = await uc.start(
-                headless=True,
-                sandbox=False,
-                browser_args=ultra_lite_args + ["--no-sandbox", "--no-zygote"],
-            )
+            chrome_args += ["--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"]
+        
+        chrome_args.append("about:blank")
+
+        logger.info("▶ Launching Chrome CDP (profile: %s)…", profile_dir)
+        self._chrome_proc = subprocess.Popen(
+            chrome_args,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+        # Wait for CDP port to become available
+        for attempt in range(30):
+            await asyncio.sleep(1)
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            if sock.connect_ex(("127.0.0.1", self._CDP_PORT)) == 0:
+                sock.close()
+                logger.info("  ✓ Chrome CDP ready on port %d (took %ds)", self._CDP_PORT, attempt + 1)
+                break
+            sock.close()
         else:
-            logger.info("▶ Khởi động Chrome browser (Local Headed mode — Low RAM Optimized)…")
-            self._browser = await uc.start(headless=False, browser_args=ultra_lite_args)
+            raise RuntimeError(f"Chrome failed to start on port {self._CDP_PORT}")
+
+        # Connect Playwright via CDP
+        from playwright.async_api import async_playwright
+        self._playwright = await async_playwright().start()
+        self._browser = await self._playwright.chromium.connect_over_cdp(
+            f"http://127.0.0.1:{self._CDP_PORT}"
+        )
+        logger.info("  ✓ Playwright CDP connected")
+
         return self
 
     async def __aexit__(self, *args: Any) -> None:
-        if self._browser:
+        try:
+            if self._browser:
+                await self._browser.close()
+        except Exception:
+            pass
+        try:
+            if self._playwright:
+                await self._playwright.stop()
+        except Exception:
+            pass
+        if self._chrome_proc:
             try:
-                self._browser.stop()
+                self._chrome_proc.terminate()
+                self._chrome_proc.wait(timeout=5)
             except Exception:
-                pass
-            logger.info("✓ Đã đóng Chrome browser.")
+                try:
+                    self._chrome_proc.kill()
+                except Exception:
+                    pass
+        logger.info("✓ Chrome CDP closed.")
 
-    async def _wait_for_cf(self) -> None:
+    async def _wait_for_cf(self, page) -> None:
         """Chờ Cloudflare JS challenge pass (title không còn 'Just a moment')."""
         for i in range(cfg.FBREF_CF_WAIT_MAX):
             await asyncio.sleep(1)
             try:
-                title = await self._page.evaluate("document.title")
+                title = await page.title()
                 if "moment" not in title.lower():
                     logger.info("  ✓ Cloudflare passed sau %ds – %s", i + 1, title[:60])
                     return
@@ -189,11 +277,11 @@ class FBrefBrowser:
                 logger.info("  ⏳ Chờ Cloudflare… (%ds)", i)
         logger.warning("  ⚠ Cloudflare timeout sau %ds", cfg.FBREF_CF_WAIT_MAX)
 
-    async def _wait_for_tables(self) -> bool:
+    async def _wait_for_tables(self, page) -> bool:
         """Chờ cho đến khi trang có ít nhất 1 <table>."""
         for _ in range(15):
             try:
-                count = await self._page.evaluate(
+                count = await page.evaluate(
                     'document.querySelectorAll("table").length'
                 )
                 if count > 0:
@@ -205,50 +293,70 @@ class FBrefBrowser:
         return False
 
     async def _rate_limit(self) -> None:
-        """Đảm bảo delay tối thiểu giữa các fetch."""
+        """Đảm bảo delay ngẫu nhiên để trông giống người thật hơn."""
+        import random
+        base_delay = cfg.FBREF_DELAY_BETWEEN_PAGES
+        # Delay ngẫu nhiên từ 80% đến 150% của config
+        jitter = random.uniform(base_delay * 0.8, base_delay * 1.5)
+        
         elapsed = time.monotonic() - self._last_fetch_time
-        if elapsed < cfg.FBREF_DELAY_BETWEEN_PAGES:
-            wait = cfg.FBREF_DELAY_BETWEEN_PAGES - elapsed
-            logger.debug("  Rate limit: chờ %.1fs", wait)
+        if elapsed < jitter:
+            wait = jitter - elapsed
+            logger.debug("  Rate limit: chờ ngẫu nhiên %.1fs", wait)
             await asyncio.sleep(wait)
+
+    async def _simulate_human(self, page) -> None:
+        """Giả lập hành vi người dùng (scroll) để bypass behavioral checks."""
+        import random
+        try:
+            # Scroll xuống một chút
+            scroll_dist = random.randint(300, 700)
+            await page.mouse.wheel(0, scroll_dist)
+            await asyncio.sleep(random.uniform(0.5, 1.5))
+            # Scroll lên lại
+            await page.mouse.wheel(0, -random.randint(100, 300))
+            await asyncio.sleep(random.uniform(0.2, 0.8))
+        except Exception:
+            pass
 
     async def fetch(self, url: str) -> str:
         """
         Navigate tới URL và trả về HTML sau khi page load xong.
-
-        Xử lý:
-          1. Rate limit (delay giữa requests)
-          2. Navigate + chờ DOM loaded
-          3. Chờ Cloudflare nếu cần
-          4. Chờ tables xuất hiện
-          5. Trả về full HTML
-
-        Returns:
-            HTML string, hoặc "" nếu lỗi.
+        Xử lý thêm: Giả lập hành vi người dùng để tránh bị ban.
         """
         await self._rate_limit()
         logger.info("📥 Fetching: %s", url)
 
         try:
-            self._page = await self._browser.get(url)
+            context = self._browser.contexts[0]
+            page = await context.new_page()
+            self._page = page
+            
+            # Navigate
+            await page.goto(url, wait_until="domcontentloaded", timeout=90000)
             self._last_fetch_time = time.monotonic()
+
+            # Giả lập người dùng trước khi check Cloudflare/Tables
+            await self._simulate_human(page)
 
             # Kiểm tra Cloudflare
             try:
-                title = await self._page.evaluate("document.title")
+                title = await page.title()
                 if "moment" in title.lower():
-                    await self._wait_for_cf()
+                    await self._wait_for_cf(page)
             except Exception:
                 await asyncio.sleep(3)
 
             # Chờ tables
-            has_tables = await self._wait_for_tables()
+            has_tables = await self._wait_for_tables(page)
             if not has_tables:
                 logger.warning("  ⚠ Không tìm thấy tables trên %s", url)
 
             # Lấy full HTML
-            html = await self._page.evaluate("document.documentElement.outerHTML")
+            html = await page.content()
             logger.info("  ✓ HTML: %d bytes, tables=%s", len(html), has_tables)
+            
+            await page.close()
             return html
 
         except Exception as exc:
@@ -265,6 +373,7 @@ def _parse_table_rows(
     soup: BeautifulSoup,
     table_id: str | None = None,
     table_id_pattern: str | None = None,
+    table_obj: BeautifulSoup | None = None,
 ) -> tuple[list[dict], BeautifulSoup | None]:
     """
     Parse một FBref HTML table thành list[dict].
@@ -273,16 +382,18 @@ def _parse_table_rows(
         soup: BeautifulSoup parsed HTML
         table_id: Exact table id (e.g. "stats_standard_9")
         table_id_pattern: Regex pattern for table id
+        table_obj: Trực tiếp truyền BeautifulSoup object của table
 
     Returns:
         (rows_as_dicts, table_element)
         Mỗi dict có keys = data-stat attributes.
     """
-    table = None
-    if table_id:
-        table = soup.find("table", id=table_id)
-    elif table_id_pattern:
-        table = soup.find("table", id=re.compile(table_id_pattern))
+    table = table_obj
+    if not table:
+        if table_id:
+            table = soup.find("table", id=table_id)
+        elif table_id_pattern:
+            table = soup.find("table", id=re.compile(table_id_pattern))
 
     if table is None:
         return [], None
@@ -329,29 +440,39 @@ def _parse_table_rows(
 
 def _extract_team_links(soup: BeautifulSoup) -> list[dict[str, str]]:
     """
-    Extract team links từ standings table.
+    Extract team links từ TẤT CẢ các standings tables (hỗ trợ UCL nhiều bảng).
 
     Returns:
         [{"name": "Arsenal", "team_id": "18bb7c10", "url": "/en/squads/..."}]
     """
     teams: list[dict[str, str]] = []
-    # Tìm standings table
-    table = soup.find("table", id=re.compile(r"results.*_overall"))
-    if not table:
-        return teams
+    seen_ids = set()
 
-    for row in table.find("tbody", recursive=False).find_all("tr"):
-        link = row.find("a", href=re.compile(r"/en/squads/"))
-        if link:
-            href = link["href"]
-            m = re.search(r"/squads/([^/]+)/", href)
-            teams.append(
-                {
-                    "name": link.text.strip(),
-                    "team_id": m.group(1) if m else "",
-                    "url": cfg.FBREF_BASE + href,
-                }
-            )
+    # Tìm TẤT CẢ standings tables
+    import re
+    tables = soup.find_all("table", id=re.compile(r"results.*_overall"))
+    
+    for table in tables:
+        tbody = table.find("tbody", recursive=False)
+        if not tbody:
+            continue
+            
+        for row in tbody.find_all("tr"):
+            link = row.find("a", href=re.compile(r"/en/squads/"))
+            if link:
+                href = link["href"]
+                m = re.search(r"/squads/([^/]+)/", href)
+                team_id = m.group(1) if m else ""
+                
+                if team_id and team_id not in seen_ids:
+                    teams.append(
+                        {
+                            "name": link.text.strip(),
+                            "team_id": team_id,
+                            "url": cfg.FBREF_BASE + href,
+                        }
+                    )
+                    seen_ids.add(team_id)
     return teams
 
 
@@ -363,55 +484,72 @@ def _extract_team_links(soup: BeautifulSoup) -> list[dict[str, str]]:
 def parse_league_page(html: str) -> dict[str, Any]:
     """
     Parse FBref league overview page.
-
-    Returns:
-        {
-            "standings":   list[dict],
-            "squad_stats": list[dict],
-            "team_links":  list[{"name", "team_id", "url"}],
-        }
     """
     soup = BeautifulSoup(html, "html.parser")
+
+    # ── Unwrap tables hidden inside HTML comments (historical pages) ──
+    from bs4 import Comment
+    comments = soup.find_all(string=lambda t: isinstance(t, Comment))
+    unwrapped = 0
+    for comment in comments:
+        c_str = str(comment)
+        if "<table" in c_str.lower():
+            # Replace the comment with its content so it becomes part of the DOM
+            comment.replace_with(BeautifulSoup(c_str, "html.parser"))
+            unwrapped += 1
+    if unwrapped:
+        logger.info("  📦 Unwrapped %d tables from HTML comments", unwrapped)
+
     result: dict[str, Any] = {
         "standings": [],
         "squad_stats": [],
         "team_links": [],
     }
 
-    # 1. Standings table
-    standings_rows, _ = _parse_table_rows(soup, table_id_pattern=r"results.*_overall")
-    # Enrich with team_id from links
-    for row in standings_rows:
-        if "_team_id" in row:
-            row["team_id"] = row.pop("_team_id")
-            row["team_url"] = row.pop("_team_url", None)
-        else:
-            row.pop("_team_id", None)
-            row.pop("_team_url", None)
-    result["standings"] = standings_rows
-    logger.info("  Standings: %d teams parsed", len(standings_rows))
+    # 1. Standings table(s) - UCL has multiple groups
+    all_standings_tables = soup.find_all("table", id=re.compile(r"^results.*_overall$"))
+    
+    all_standings_rows = []
+    seen_standings_teams = set()
+    
+    for tbl in all_standings_tables:
+        rows, _ = _parse_table_rows(soup, table_obj=tbl)
+        for row in rows:
+            tid = row.get("_team_id")
+            if tid and tid not in seen_standings_teams:
+                # Normalize keys for consistency
+                if "_team_id" in row:
+                    row["team_id"] = row.pop("_team_id")
+                    row["team_url"] = row.pop("_team_url", None)
+                all_standings_rows.append(row)
+                seen_standings_teams.add(tid)
+    
+    result["standings"] = all_standings_rows
+    logger.info("  Standings: %d teams parsed", len(all_standings_rows))
 
-    # 2. Squad standard stats
-    squad_rows, _ = _parse_table_rows(soup, table_id="stats_squads_standard_for")
-    for row in squad_rows:
-        if "_team_id" in row:
-            row["team_id"] = row.pop("_team_id")
-        row.pop("_team_url", None)
-        row.pop("_player_id", None)
-        row.pop("_player_url", None)
-    result["squad_stats"] = squad_rows
-    logger.info("  Squad stats: %d teams parsed", len(squad_rows))
+    # 2. Squad standard stats - Flexible ID lookup
+    squad_table = soup.find("table", id=re.compile(r"^stats_squads_standard_.*"))
+    if not squad_table:
+        squad_table = soup.find("table", id=lambda x: x and "squads_standard" in x)
+    
+    if squad_table:
+        squad_rows, _ = _parse_table_rows(soup, table_obj=squad_table)
+        for row in squad_rows:
+            if "_team_id" in row:
+                row["team_id"] = row.pop("_team_id")
+        result["squad_stats"] = squad_rows
+        logger.info("  Squad stats: %d teams parsed", len(squad_rows))
+    else:
+        # Fallback for tournaments: Use standings data as basic squad stats if table is missing
+        if all_standings_rows:
+            logger.info("  Squad stats table missing, using standings as fallback")
+            result["squad_stats"] = all_standings_rows
+        else:
+            logger.warning("  ⚠ Could not find squad stats table or standings")
 
     # 3. Team links
     result["team_links"] = _extract_team_links(soup)
-    logger.info("  Team links: %d teams found", len(result["team_links"]))
-
     return result
-
-
-# ────────────────────────────────────────────────────────────
-# STEP 2: Parse Squad Page → Player Profiles + Stats
-# ────────────────────────────────────────────────────────────
 
 
 def parse_squad_page(
@@ -423,68 +561,53 @@ def parse_squad_page(
 ) -> dict[str, Any]:
     """
     Parse FBref squad page.
-
-    Args:
-        html: Raw HTML string
-        team_name: Tên đội
-        team_id: FBref team ID
-        league_cfg: Dynamic league config (nếu None, dùng legacy defaults)
-
-    Returns:
-        {
-            "profiles":     list[dict],  — player profiles
-            "player_stats": list[dict],  — player season stats
-        }
     """
     soup = BeautifulSoup(html, "html.parser")
+
+    # ── Unwrap tables ──
+    from bs4 import Comment
+    comments = soup.find_all(string=lambda t: isinstance(t, Comment))
+    for comment in comments:
+        c_str = str(comment)
+        if "<table" in c_str.lower():
+            comment.replace_with(BeautifulSoup(c_str, "html.parser"))
+
     result: dict[str, Any] = {
         "profiles": [],
-        "player_stats": [],
         "player_stats": [],
         "gk_stats": [],
     }
 
-    # Resolve table IDs (dynamic hoặc legacy)
-    std_table_id = (
-        league_cfg.squad_standard_table_id
-        if league_cfg
-        else cfg.SQUAD_STANDARD_TABLE_ID
-    )
-    shoot_table_id = (
-        league_cfg.squad_shooting_table_id
-        if league_cfg
-        else cfg.SQUAD_SHOOTING_TABLE_ID
-    )
-    gk_table_id = (
-        league_cfg.squad_gk_table_id if league_cfg else cfg.SQUAD_KEEPER_TABLE_ID
-    )
+    # Resolve Base table IDs
+    std_base = "stats_standard"
+    shoot_base = "stats_shooting"
+    gk_base = "stats_keeper"
     season = league_cfg.season if league_cfg else cfg.FBREF_SEASON
 
-    # ── Standard stats table (player-level) ──
-    std_rows, _ = _parse_table_rows(soup, table_id=std_table_id)
+    # ── Flexible lookup for tables (handles ID suffixes like _20, _9, etc.) ──
+    std_table = soup.find("table", id=re.compile(f"^{std_base}.*"))
+    shoot_table = soup.find("table", id=re.compile(f"^{shoot_base}.*"))
+    gk_table = soup.find("table", id=re.compile(f"^{gk_base}.*"))
 
-    # ── Shooting stats table ──
-    shoot_rows, _ = _parse_table_rows(soup, table_id=shoot_table_id)
-    # Build lookup by player name for merging
+    # Parse rows
+    std_rows, _ = _parse_table_rows(soup, table_obj=std_table)
+    shoot_rows, _ = _parse_table_rows(soup, table_obj=shoot_table)
+    
+    # Merge shooting
     shoot_lookup: dict[str, dict] = {}
     for row in shoot_rows:
         pname = row.get("player", "")
-        if pname:
-            shoot_lookup[pname] = row
+        if pname: shoot_lookup[pname] = row
 
     for row in std_rows:
         player_name = row.get("player", "")
         if not player_name or player_name.lower() == "squad total":
             continue
 
-        # Extract IDs
         player_id = row.pop("_player_id", None)
         player_url = row.pop("_player_url", None)
-        row.pop("_team_id", None)
-        row.pop("_team_url", None)
 
-        # ── Build Profile ──
-        profile = {
+        result["profiles"].append({
             "player": player_name,
             "player_id": player_id,
             "player_url": player_url,
@@ -494,50 +617,37 @@ def parse_squad_page(
             "team_name": team_name,
             "team_id": team_id,
             "season": season,
-        }
-        result["profiles"].append(profile)
+        })
 
-        # ── Build Player Season Stats ──
-        stats = dict(row)  # Copy standard stats
+        stats = dict(row)
         stats["player_id"] = player_id
         stats["team_name"] = team_name
         stats["team_id"] = team_id
 
-        # Merge shooting data
         shoot_data = shoot_lookup.get(player_name, {})
         for key in ("shots", "shots_on_target", "shots_on_target_pct"):
-            if key in shoot_data:
-                stats[key] = shoot_data[key]
+            if key in shoot_data: stats[key] = shoot_data[key]
 
-        # Remove internal fields
         for k in ("matches", "_player_id", "_player_url", "_team_id", "_team_url"):
             stats.pop(k, None)
-
         result["player_stats"].append(stats)
 
-    # ── GK stats table ──
-    gk_rows, _ = _parse_table_rows(soup, table_id=gk_table_id)
+    # GK
+    gk_rows, _ = _parse_table_rows(soup, table_obj=gk_table)
     for row in gk_rows:
-        player_name = row.get("player", "")
-        if not player_name or player_name.lower() == "squad total":
-            continue
+        pname = row.get("player", "")
+        if not pname or pname.lower() == "squad total": continue
         g = dict(row)
         g["player_id"] = g.pop("_player_id", None)
         g["team_name"] = team_name
         g["team_id"] = team_id
         g["season"] = season
-        for k in ("_player_url", "_team_id", "_team_url"):
-            g.pop(k, None)
+        for k in ("_player_url", "_team_id", "_team_url"): g.pop(k, None)
         result["gk_stats"].append(g)
 
-    logger.info(
-        "  %s: %d players, %d with shooting data, %d gk",
-        team_name,
-        len(result["profiles"]),
-        len(shoot_lookup),
-        len(result["gk_stats"]),
-    )
+    logger.info("  %s: %d players", team_name, len(result["profiles"]))
     return result
+
 
 
 # ────────────────────────────────────────────────────────────
