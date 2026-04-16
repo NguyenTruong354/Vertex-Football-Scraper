@@ -33,7 +33,7 @@ class PostMatchWorker:
     def run(self, match: dict) -> bool:
         league = match["league"]
         home, away = match["home_team"], match["away_team"]
-        self.log.info("─" * 50)
+        self.log.info("â" * 50)
         self.log.info("POST-MATCH: [%s] %s vs %s", league, home, away)
 
         sources = LEAGUE_SOURCES.get(league, {})
@@ -102,7 +102,7 @@ class PostMatchWorker:
                         # Prevent "Task exception was never retrieved" warning
                         def _swallow_task_exc(t: asyncio.Task) -> None:
                             if not t.cancelled():
-                                t.exception()  # mark as retrieved, không re-raise
+                                t.exception()  # mark as retrieved, khÃ´ng re-raise
 
                         task.add_done_callback(_swallow_task_exc)
                     else:
@@ -178,7 +178,7 @@ class PostMatchWorker:
             if ok:
                 self.notifier.send(
                     "info",
-                    f"📝 [{match['league']}] Match story generated: "
+                    f"ð [{match['league']}] Match story generated: "
                     f"{match['home_team']} vs {match['away_team']}",
                 )
 
@@ -202,24 +202,24 @@ class PostMatchWorker:
 
     async def _run_standings_safe(self, league: str, tournament_id: int) -> None:
         """
-        Safe wrapper cho standings update với error boundary.
-        Log rõ + Discord alert thay vì để exception biến mất im lặng.
+        Safe wrapper cho standings update vá»i error boundary.
+        Log rÃµ + Discord alert thay vÃ¬ Äá» exception biáº¿n máº¥t im láº·ng.
         """
         try:
             await self._update_standings_from_sofascore(league, tournament_id)
-            self.log.info("✓ Standings updated: %s", league)
+            self.log.info("[OK] Standings updated: %s", league)
         except Exception as exc:
-            # Log đủ thông tin để debug: league, tournament_id, error message
+            # Log Äá»§ thÃ´ng tin Äá» debug: league, tournament_id, error message
             self.log.error(
-                "⚠ Standings update FAILED — league=%s tournament_id=%d — %s",
+                "[WARNING] Standings update FAILED â league=%s tournament_id=%d â %s",
                 league,
                 tournament_id,
                 exc,
             )
-            # Discord alert để người vận hành biết cần manual check
+            # Discord alert Äá» ngÆ°á»i váº­n hÃ nh biáº¿t cáº§n manual check
             self.notifier.send(
                 "error",
-                f"⚠ Standings update failed: `{league}` (tournament={tournament_id})\n"
+                f"[WARNING] Standings update failed: `{league}` (tournament={tournament_id})\n"
                 f"```{exc}```\n"
                 f"Manual trigger: `python run_pipeline.py --league {league} --load-only`",
             )
@@ -228,7 +228,7 @@ class PostMatchWorker:
         self, league: str, tournament_id: int
     ) -> None:
         """Fetch latest standings from SofaScore API and upsert into DB."""
-        self.log.info("📊 Fetching standings for %s from SofaScore API...", league)
+        self.log.info("[STATS] Fetching standings for %s from SofaScore API...", league)
 
         # Step 1: Get current season ID
         seasons_data = await self.browser.get_json(
@@ -277,7 +277,7 @@ class PostMatchWorker:
             conn = get_connection()
             cur = conn.cursor()
 
-            # Lấy mapping từ Sofascore ID -> FBref ID để tránh Duplicate (Dòng 1 vs Dòng 2)
+            # Láº¥y mapping tá»« Sofascore ID -> FBref ID Äá» trÃ¡nh Duplicate (DÃ²ng 1 vs DÃ²ng 2)
             cur.execute(
                 "SELECT sofascore_team_id, fbref_team_id FROM team_canonical WHERE league_id = %s AND sofascore_team_id IS NOT NULL",
                 (league,)
@@ -343,7 +343,7 @@ class PostMatchWorker:
             conn.close()
 
             self.log.info(
-                "✅ Standings updated: %s — %d teams (%s)",
+                "â Standings updated: %s â %d teams (%s)",
                 league,
                 len(rows),
                 season_str,
@@ -351,13 +351,13 @@ class PostMatchWorker:
 
             # Send top 5 to Discord
             top5 = sorted(rows, key=lambda r: r.get("position", 99))[:5]
-            lines = [f"📊 **BXH {league}** (sau vòng đấu):"]
+            lines = [f"[STATS] **BXH {league}** (sau vÃ²ng Äáº¥u):"]
             for r in top5:
                 t = r.get("team", {}).get("name", "?")
                 p = r.get("position", 0)
                 pts = r.get("points", 0)
                 w, d, l = r.get("wins", 0), r.get("draws", 0), r.get("losses", 0)
-                lines.append(f"  #{p} {t} — {pts}pts ({w}W {d}D {l}L)")
+                lines.append(f"  #{p} {t} â {pts}pts ({w}W {d}D {l}L)")
             self.notifier.send("info", "\n".join(lines))
 
         except Exception as exc:
@@ -367,10 +367,10 @@ class PostMatchWorker:
         """Safe wrapper for match stats fetching with error boundary."""
         try:
             await self._fetch_and_save_match_stats(league, event_id)
-            self.log.info("✓ Match team stats updated: %s %s", league, event_id)
+            self.log.info("[OK] Match team stats updated: %s %s", league, event_id)
         except Exception as exc:
             self.log.error(
-                "⚠ Match stats update FAILED — league=%s event_id=%s — %s",
+                "[WARNING] Match stats update FAILED â league=%s event_id=%s â %s",
                 league,
                 event_id,
                 exc,
@@ -378,7 +378,7 @@ class PostMatchWorker:
 
     async def _fetch_and_save_match_stats(self, league: str, event_id: int) -> None:
         """Fetch latest statistics from SofaScore API and upsert into match_team_stats."""
-        self.log.info("��� Fetching match statistics for event %s from SofaScore API...", event_id)
+        self.log.info("[*] Fetching match statistics for event %s from SofaScore API...", event_id)
 
         data = await self.browser.get_json(f"/event/{event_id}/statistics")
         if not data or "statistics" not in data:
@@ -431,7 +431,7 @@ class PostMatchWorker:
                 # The proposal says team_id BIGINT, but SofaScore team_ids are INT. 
                 # Let's get the team_id from the live_snapshots or live_match_state. But wait, in SofaScore event, team_id is not directly in the statistics endpoint. 
                 # It's fine to leave it NULL if we can't easily fetch it, or query the DB for it.
-                # Actually, the user proposal says: `team_id BIGINT ID đội bóng`. Let's try to query it from `live_match_state` or `live_snapshots` or just leave it.
+                # Actually, the user proposal says: `team_id BIGINT ID Äá»i bÃ³ng`. Let's try to query it from `live_match_state` or `live_snapshots` or just leave it.
                 # Let's query team ID using sofascore API if we need to, but it's simpler to leave as NULL and do a join with live_snapshots later.
                 
                 cur.execute("""
@@ -466,10 +466,10 @@ class PostMatchWorker:
         try:
             await self._fetch_and_save_match_stats(league, event_id)
         except Exception as exc:
-            self.log.error(f"⚠ Match stats update FAILED — league={league} event_id={event_id} — {exc}")
+            self.log.error(f"[WARNING] Match stats update FAILED â league={league} event_id={event_id} â {exc}")
 
     async def _fetch_and_save_match_stats(self, league: str, event_id: int) -> None:
-        self.log.info(f"📊 Fetching match statistics for event {event_id} from SofaScore API...")
+        self.log.info(f"[STATS] Fetching match statistics for event {event_id} from SofaScore API...")
 
         data = await getattr(self.browser, "get_json", self.browser.get)(f"/event/{event_id}/statistics")
         if not data or "statistics" not in data:
@@ -540,6 +540,6 @@ class PostMatchWorker:
                 conn.commit()
                 cur.close()
                 conn.close()
-                self.log.info(f"✓ Match stats upserted for {event_id} ({side})")
+                self.log.info(f"[OK] Match stats upserted for {event_id} ({side})")
             except Exception as exc:
                 self.log.error(f"Failed to upsert match_team_stats {event_id} side {side}: {exc}")
