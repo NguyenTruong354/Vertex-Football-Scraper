@@ -134,6 +134,13 @@ def populate_tm_crossref(league: str) -> bool:
     return _run(cmd, ROOT, f"TM Crossref [{league}]")
 
 
+def backfill_missing_match_stats(league: str, season: str = None) -> bool:
+    cmd = [PYTHON, "tools/backfill_match_stats.py", "--league", league]
+    if season:
+        cmd.extend(["--season", season])
+    return _run(cmd, ROOT, f"Backfill Match Stats [{league}]")
+
+
 def refresh_materialized_views(league: str) -> bool:
     # Strict refresh order: helper → profiles → teams → downstream
     cmd = [
@@ -232,6 +239,10 @@ def run_pipeline(args: argparse.Namespace) -> None:
             results[league]["db_load"] = "OK" if ok else "FAIL"
             
             if ok:
+                # ── Backfill missing stats directly to DB ────────
+                ok_stats = backfill_missing_match_stats(league, args.season)
+                results[league]["backfill_match_stats"] = "OK" if ok_stats else "FAIL"
+
                 if not args.skip_crossref_build:
                     ok_tc = build_team_canonical(league)
                     results[league]["team_canonical"] = "OK" if ok_tc else "FAIL"
