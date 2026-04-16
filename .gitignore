@@ -7,4 +7,4 @@ dist/
 build/
 *logs/
 *output/
-.chrome_cdp_profile
+.chrome_cdp_profile/

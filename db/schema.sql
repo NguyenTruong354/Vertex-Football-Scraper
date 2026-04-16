@@ -409,6 +409,7 @@ CREATE TABLE IF NOT EXISTS fixtures (
     match_report_url TEXT,
     home_team_id     TEXT,
     away_team_id     TEXT,
+    status           VARCHAR(50) DEFAULT 'upcoming',
     league_id        TEXT    NOT NULL DEFAULT 'EPL',
     loaded_at        TIMESTAMPTZ DEFAULT NOW(),
     PRIMARY KEY (match_id, league_id)
@@ -558,6 +559,34 @@ CREATE TABLE IF NOT EXISTS player_possession_stats (
 );
 
 CREATE INDEX IF NOT EXISTS idx_player_possession_team ON player_possession_stats (team_id);
+
+
+-- ──────────────────────────────────────────────────────────
+-- 12a. MATCH TEAM STATS (SofaScore — per-team per-match stats)
+--      Source: SofaScore statistics API (/event/{id}/statistics)
+--      PK: (event_id, side)
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS match_team_stats (
+    event_id             BIGINT  NOT NULL,
+    team_id              BIGINT,
+    side                 TEXT    NOT NULL CHECK (side IN ('home', 'away')),
+    possession           REAL,
+    total_shots          INTEGER,
+    shots_on_target      INTEGER,
+    shots_off_target     INTEGER,
+    blocked_shots        INTEGER,
+    corners              INTEGER,
+    fouls                INTEGER,
+    big_chances_created  INTEGER,
+    passes               INTEGER,
+    accurate_passes      INTEGER,
+    league_id            TEXT,
+    loaded_at            TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (event_id, side)
+);
+
+CREATE INDEX IF NOT EXISTS idx_match_team_stats_event ON match_team_stats (event_id);
+CREATE INDEX IF NOT EXISTS idx_match_team_stats_team ON match_team_stats (team_id);
 
 
 -- ──────────────────────────────────────────────────────────
