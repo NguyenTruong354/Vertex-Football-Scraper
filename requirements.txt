@@ -7,6 +7,7 @@ aiohttp>=3.9.0             # Async HTTP for Understat
 curl_cffi>=0.6.0           # Cloudflare bypass for SofaScore/FBref
 nodriver>=0.40.0           # Undetected Chrome for browser-based automation
 requests>=2.31.0           # Standard synchronous HTTP
+playwright>=1.42.0         # Playwright CDP integration for FBref CF bypass
 
 # --- HTML Parsing ---
 beautifulsoup4>=4.12.0     # Scraping logic
