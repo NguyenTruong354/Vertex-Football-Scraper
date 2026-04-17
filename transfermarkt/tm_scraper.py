@@ -316,7 +316,11 @@ def parse_team_page(
         if header:
             logo_img = header.find("img")
     if logo_img:
-        meta["logo_url"] = logo_img.get("src") or logo_img.get("data-src")
+        l_url = logo_img.get("src") or logo_img.get("data-src")
+        if l_url:
+            # Replace /tiny/ with /head/ or /big/ to get a higher quality logo
+            l_url = l_url.replace("/tiny/", "/big/").replace("/normal/", "/big/").replace("/medium/", "/big/")
+        meta["logo_url"] = l_url
 
     # ── Extract data from "dataHeader" section ──
     # Transfermarkt has structured data in spans with specific labels
